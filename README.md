@@ -28,7 +28,9 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-Optional extras: `[docling]` (higher-quality PDF layout and tables), `[llamacpp]`
+If `rag` reports that Python's sqlite3 cannot load extensions (common with
+pyenv or other from-source Python builds), run `pip install sqlean.py`; it is
+picked up automatically. Optional extras: `[sqlite]` (that same package), `[docling]` (higher-quality PDF layout and tables), `[llamacpp]`
 (in-process GGUF embedding), `[onnx]` (Qwen3-Embedding-0.6B on CPU).
 
 ## Embedding model: Qwen3-Embedding-8B, Q4_K_M

@@ -5,3 +5,5 @@ __pycache__/
 *.ragpack
 *.ragpack.partial
 /workspaces/
+env/
+venv/

@@ -8,12 +8,13 @@ that run past the time limit. The C# server should mirror this design.
 
 from __future__ import annotations
 
-import sqlite3
 import time
 from pathlib import Path
 from typing import Any
 
-from rag.core.db.connect import connect
+from rag.core.db.connect import connect, sqlite_module
+
+sqlite3 = sqlite_module()  # constants and exceptions must match the connection's module
 
 _ALLOWED_ACTIONS = {
     sqlite3.SQLITE_SELECT,

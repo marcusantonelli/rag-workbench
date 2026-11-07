@@ -31,6 +31,7 @@ dependencies = [
 docling = ["docling>=2.100"]
 llamacpp = ["llama-cpp-python>=0.3"]
 onnx = ["qwen3-embed>=1.14"]
+sqlite = ["sqlean.py>=3.45"]   # for Pythons built without SQLite extension loading
 dev = ["pytest>=8", "reportlab>=4"]
 
 [project.scripts]

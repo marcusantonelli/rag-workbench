@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sqlite3
 import tempfile
 import uuid
 import zipfile
@@ -26,14 +25,14 @@ class PackError(RuntimeError):
 
 
 def _snapshot(src: Path, dest: Path, *, load_vec: bool) -> None:
-    from rag.core.db.connect import connect
+    from rag.core.db.connect import connect, sqlite_module
 
     conn = connect(src, readonly=True, load_vec=load_vec)
     try:
         conn.execute("VACUUM INTO ?", (str(dest),))
     finally:
         conn.close()
-    out = sqlite3.connect(dest)
+    out = sqlite_module().connect(dest)
     try:
         out.execute("PRAGMA journal_mode = DELETE")  # read-only consumers need no -wal/-shm files
     finally:

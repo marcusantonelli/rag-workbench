@@ -177,3 +177,35 @@ def test_eval_runs(tmp_path, searcher):
     ]), encoding="utf-8")
     report = run_eval(searcher, golden)
     assert report["overall"]["n"] == 3 and report["overall"]["recall@20"] == 1.0
+
+
+@pytest.mark.parametrize("module", ["pysqlite3", "sqlean"])
+def test_fallback_sqlite_modules_build_and_search(tmp_path, corpus, module):
+    """Run a build, search, SQL guard and export through a drop-in sqlite module."""
+    import subprocess
+    import sys
+
+    pytest.importorskip({"pysqlite3": "pysqlite3.dbapi2", "sqlean": "sqlean"}[module])
+    script = f"""
+import json, os, sys
+from pathlib import Path
+from rag.core.db.connect import sqlite_module
+from rag.builder.engine import Builder
+from rag.core.workspace import Workspace
+from rag.core.db.sqlguard import run_query, QueryRejected
+from rag.core.db.pack import export_pack
+assert sqlite_module().__name__.startswith({module!r}), sqlite_module().__name__
+ws = Workspace.init(Path({str(tmp_path / 'ws')!r}), {TEST_EMBEDDING!r})
+stats = Builder(ws).build([Path({str(corpus / 'calibration.csv')!r}), Path({str(corpus / 'handoff.txt')!r})])
+assert stats.failed == 0, stats.errors
+assert run_query(ws.tables_db, "SELECT COUNT(*) FROM t_calibration")["rows"] == [[3]]
+try:
+    run_query(ws.tables_db, "DROP TABLE t_calibration"); sys.exit("guard failed")
+except QueryRejected:
+    pass
+export_pack(ws, Path({str(tmp_path / 'p.ragpack')!r}))
+print("ok")
+"""
+    env = {**__import__("os").environ, "RAG_SQLITE_MODULE": module}
+    out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
+    assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr[-2000:]
