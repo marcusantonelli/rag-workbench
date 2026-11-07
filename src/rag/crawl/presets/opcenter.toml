@@ -1,0 +1,68 @@
+# rag-crawl preset: Siemens Opcenter and Camstar.
+# Copy it with `rag-crawl preset opcenter > opcenter.toml`, edit, then
+# `rag-crawl run opcenter.toml OUT --budget 2GB`.
+
+[topic]
+name = "Siemens Opcenter and Camstar"
+# A file is kept only if these appear at least min_term_hits times (a title hit counts double).
+# Opcenter Execution grew out of Camstar (semiconductor, medical device, electronics) and
+# SIMATIC IT (process, discrete); Opcenter APS was Preactor. Trim the list to narrow the crawl.
+terms = ["opcenter", "camstar", "simatic it", "preactor"]
+# These raise priority and score but never qualify a file on their own.
+related = [
+  "manufacturing execution", "mes", "manufacturing operations management", "mom",
+  "execution core", "execution semiconductor", "execution medical device", "execution electronics",
+  "execution process", "execution discrete", "execution pharma", "execution foundation",
+  "advanced planning and scheduling", "aps", "quality management", "opcenter quality",
+  "opcenter intelligence", "rd&l", "insights hub", "shop floor", "electronic batch record",
+  "device history record", "genealogy", "work in process", "wip", "spc",
+]
+min_term_hits = 2
+languages = ["en"]
+
+[crawl]
+seeds = [
+  "https://www.siemens.com/en-us/products/opcenter/",
+  "https://blogs.sw.siemens.com/opcenter/",
+  "https://resources.sw.siemens.com/en-US/",
+]
+# Crawled freely (focus rules still apply). siemens.com covers blogs.sw., resources.sw.,
+# plm.automation. and the rest. docs.sw.siemens.com disallows crawlers in robots.txt and
+# Support Center content needs a login, so neither is fetched.
+allowed_domains = ["siemens.com"]
+follow_external = true
+max_offsite_hops = 1
+max_tunnel = 1
+max_depth = 8
+max_pages_per_host = 20000
+delay_s = 1.0
+workers = 4
+max_file_mb = 200
+html_min_words = 250
+
+[search]
+# Optional. "brave" needs BRAVE_API_KEY (free tier at brave.com/search/api);
+# "searxng" needs searxng_url pointing at your own SearXNG instance.
+provider = ""
+queries = [
+  "Opcenter Execution filetype:pdf",
+  "Camstar filetype:pdf",
+  "\"Opcenter Execution Semiconductor\"",
+  "\"Opcenter Execution Medical Device\"",
+  "\"Opcenter Execution Electronics\"",
+  "\"Opcenter Execution Core\"",
+  "\"Opcenter Execution Process\"",
+  "\"Opcenter Execution Discrete\"",
+  "\"Opcenter APS\"",
+  "\"Opcenter Quality\"",
+  "\"Opcenter Intelligence\"",
+  "\"Camstar Enterprise Platform\"",
+  "Camstar MES modeling",
+  "Opcenter MES implementation case study",
+  "Opcenter Execution integration Teamcenter",
+]
+pages_per_query = 5
+
+[sitemaps]
+enabled = true
+max_files = 300

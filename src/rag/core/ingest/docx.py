@@ -34,19 +34,31 @@ def _style_level(style_name: str) -> int:
 
 
 def _table_rows(table) -> list[list[str]]:
+    """Rows of cell text. A merged cell repeats in every column it spans, so columns
+    stay aligned (python-docx returns the same cell for each spanned position)."""
     rows: list[list[str]] = []
     for row in table.rows:
-        cells: list[str] = []
-        prev_id = None
-        for cell in row.cells:
-            # Merged cells repeat the same underlying cell object; keep one.
-            if id(cell._tc) == prev_id:
-                continue
-            prev_id = id(cell._tc)
-            cells.append(" ".join(p.text.strip() for p in cell.paragraphs if p.text.strip()))
+        cells = [" ".join(p.text.strip() for p in cell.paragraphs if p.text.strip()) for cell in row.cells]
         if any(cells):
             rows.append(cells)
     return rows
+
+
+def _split_header(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    """Header and data rows; a two-row header (merged group cells over sub-columns)
+    becomes "Group / Sub" column names."""
+    head = rows[0]
+    merged = any(a and a == b for a, b in zip(head, head[1:]))
+    if merged and len(rows) >= 3:
+        sub = rows[1]
+        names = []
+        for parent, child in zip(head, sub + [""] * (len(head) - len(sub))):
+            if child and parent and child != parent:
+                names.append(f"{parent} / {child}")
+            else:
+                names.append(child or parent)
+        return names, rows[2:]
+    return head, rows[1:]
 
 
 def extract_docx(path: Path, ctx: ExtractContext, *, file_type: str = "docx") -> ExtractedDoc:
@@ -101,7 +113,7 @@ def extract_docx(path: Path, ctx: ExtractContext, *, file_type: str = "docx") ->
             if len(rows) == 1 or max(len(r) for r in rows) == 1:
                 blocks.append(Block(kind="paragraph", text=" / ".join(" ".join(r) for r in rows)))
                 continue
-            headers, data = rows[0], rows[1:]
+            headers, data = _split_header(rows)
             blocks.append(Block(kind="table", text=markdown_table(headers, data),
                                 meta={"headers": headers, "rows": data, "caption": None}))
 

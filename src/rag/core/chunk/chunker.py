@@ -56,7 +56,9 @@ def finalize(chunk: Chunk, display_path: str, count: Callable[[str], int]) -> Ch
             extra = "\nidentifiers: " + terms
     chunk.embed_text = f"{header}\n{body}{extra}"
     chunk.n_tokens = count(chunk.text)
-    chunk.text_hash = sha256_text(normalize_for_hash(chunk.embed_text))
+    # Hash the content, not the header: the same text in two files (a copied SOP)
+    # is embedded once and collapsed to one search result.
+    chunk.text_hash = sha256_text(chunk.kind + "\n" + normalize_for_hash(chunk.text))
     return chunk
 
 
@@ -166,7 +168,7 @@ class Chunker:
         rows = meta.get("rows") or []
         caption = meta.get("caption")
         base = dict(kind="table", embed_text="", heading_path=heading_path, page_start=block.page,
-                    page_end=block.page, line_start=block.line_start, line_end=block.line_end)
+                    page_end=block.page_end or block.page, line_start=block.line_start, line_end=block.line_end)
         if table_name:
             preview = markdown_table(headers, rows[:5])
             text = ((f"**{caption}**\n\n" if caption else "") + preview +

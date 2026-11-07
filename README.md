@@ -147,6 +147,78 @@ statement per call, rows capped at 200, a 2-second time limit.
 `file_start`, `stage` (page / ocr / chunk / embed progress), `file_done`,
 `file_failed`, `file_unchanged`, `file_removed`, `skipped`, `done`.
 
+## Test corpus with known answers
+
+`tools/make_test_corpus.py` writes a fictional semiconductor back-end plant's
+documents (Halden Microsystems: 29 ingestible files across every type, plus files
+that must be excluded) with 47 questions, expected answers, answer locations and,
+for table questions, the SQL that returns the answer:
+
+```bash
+python tools/make_test_corpus.py halden
+rag init halden-ws
+rag build halden-ws halden/docs
+rag eval halden-ws halden/questions/golden.jsonl
+```
+
+`halden/questions/ANSWERS.md` is the answer key for asking the same questions
+through the agent. The corpus contains the traps real document sets have: a
+superseded revision beside the current one, a byte-identical copy, a two-column
+newsletter, a table spanning two pages, a table without ruling lines, scanned and
+half-scanned PDFs, merged Word and Excel headers, a hidden sheet, a cp1252 log,
+a semicolon CSV, and generated code that must be skipped.
+
+## rag-crawl: collect public documents on a topic
+
+`rag-crawl` downloads on-topic documents from the web, only in the file types the
+Builder reads, until it reaches a size target:
+
+```bash
+rag-crawl run --preset opcenter-semiconductor opcenter-semi --budget 2GB
+rag-crawl report opcenter-semi --top 20
+rag build my-ws opcenter-semi/files
+```
+
+- **Budget:** `--budget` is the target; the crawl stops starting new downloads
+  once the saved total reaches it. `--max` (default budget + 15%) is a hard cap
+  that is never exceeded, even with parallel downloads. If the topic runs out of
+  material first, it stops and says so ("frontier exhausted"); it never pads.
+- **Resume:** run the same command again to continue, or with a larger budget to
+  collect more. State lives in `OUT/crawl.db`; `OUT/manifest.jsonl` records each
+  file's source URL, size, title and relevance.
+- **Quality:** a file is kept only if it mentions the topic terms enough
+  (`topic.terms`, `min_term_hits`) and, if set, a second subject too
+  (`topic.also_required`, used by the semiconductor preset to drop Medical
+  Device and Process material). Thin pages, listing/tag pages, non-English
+  pages, unreadable files and duplicates (same bytes, or same article text at
+  another URL) are skipped.
+- **Focus:** links whose URL or anchor text names a term are always followed;
+  other links only one hop from the last on-topic page (`max_tunnel`). Other
+  domains are visited one hop out, and only for links that name a term.
+- **Manners:** robots.txt and crawl-delay are obeyed, each host gets one
+  request at a time with at least `delay_s` between requests, HTTP 429/503
+  pause the host (honouring Retry-After), nothing behind a login is fetched,
+  and sites hosting uploaded copies of licensed manuals (Scribd and similar)
+  are blocked by default.
+- **Discovery:** seeds, then the seed hosts' sitemaps, then links. Web search is
+  optional: set `[search] provider = "brave"` and the `BRAVE_API_KEY`
+  environment variable (Brave Search API, free tier), or point
+  `provider = "searxng"` at your own SearXNG instance.
+
+Presets: `opcenter-semiconductor` (Opcenter Execution Semiconductor / Camstar
+Semiconductor Suite) and `opcenter` (all of Opcenter). Print one with
+`rag-crawl preset opcenter-semiconductor > semi.toml`, edit it, and run
+`rag-crawl run semi.toml OUT --budget 2GB`.
+
+What it cannot reach: the Opcenter manuals on docs.sw.siemens.com (crawlers are
+disallowed there) and anything in the Siemens Support Center (login). Public
+material (fact sheets, what's-new sheets, white papers, case studies, blog posts,
+trade press) is likely a few hundred MB to a few GB, not tens of GB.
+
+Size planning: 1 GB of PDFs is very roughly 30,000-60,000 chunks. Measure your
+embedding rate with `rag check-embedder` and a small build before embedding a
+large crawl; with the 8B model, a GPU makes the difference between hours and days.
+
 ## Tests
 
 ```bash
@@ -155,7 +227,11 @@ pytest
 
 The suite generates a corpus with every file type (`tests/fixtures/make_fixtures.py`)
 and covers extraction, chunking, incremental builds, pack verification, search,
-the SQL guard and the llama-server client (against a fake server).
+the SQL guard and the llama-server client (against a fake server). It also builds
+the Halden corpus and checks that every golden answer location exists and every
+SQL answer is right, and runs `rag-crawl` against a fake two-host web (robots,
+sitemaps, redirects, login walls, rate limits, duplicates, languages, budgets,
+resume, search).
 
 ## Layout
 
@@ -171,6 +247,8 @@ src/rag/
     chunk/               chunker, tokens, identifiers, topic-shift breakpoints
     models/embed.py      llama-server, llama-cpp, qwen3-onnx, hash-test
     retrieve/search.py   hybrid search (reference for the C# server)
+  crawl/                 rag-crawl: crawler, robots/fetching, relevance, presets
+tools/make_test_corpus.py  Halden test corpus, golden questions, answer key
 tests/                   pytest suite and fixture generator
 examples/                golden set and sheets.toml examples
 ```

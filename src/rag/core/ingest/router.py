@@ -17,7 +17,7 @@ EXTENSION_TYPES = {
 }
 
 # Bump when an extractor's output changes, so cached extractions are redone.
-EXTRACTOR_VERSION = "1"
+EXTRACTOR_VERSION = "2"
 
 
 def detect_type(path: Path) -> str | None:

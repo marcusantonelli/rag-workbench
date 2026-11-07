@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rag-builder"
-version = "0.1.0"
+version = "0.2.0"
 description = "Builds SQLite + sqlite-vec RAG packs from mixed documents, with a small Python retrieval path for testing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,12 +36,14 @@ dev = ["pytest>=8", "reportlab>=4"]
 
 [project.scripts]
 rag = "rag.cli:main"
+rag-crawl = "rag.crawl.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "rag.core.db" = ["*.sql"]
+"rag.crawl.presets" = ["*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

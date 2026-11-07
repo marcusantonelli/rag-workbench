@@ -25,6 +25,7 @@ from rag.core.util import long_path, markdown_table, printable_ratio
 
 _BULLET_RE = re.compile(r"^(•|▪|●|-|\*|\d{1,2}[.)]|[a-z][.)])\s")
 _PAGE_NUM_RE = re.compile(r"^(page\s*)?\d{1,4}(\s*(of|/)\s*\d{1,4})?$", re.I)
+_PAGE_REF_RE = re.compile(r"\bpage\s+\d{1,4}(\s*(of|/)\s*\d{1,4})?\b", re.I)
 _CAPTION_RE = re.compile(r"^(figure|fig\.|table)\s*\d", re.I)
 
 
@@ -85,22 +86,71 @@ def _inside(word: dict, bbox: tuple[float, float, float, float]) -> bool:
     return x0 - 1 <= cx <= x1 + 1 and top - 1 <= cy <= bottom + 1
 
 
+def _group_lines(words: list[dict]) -> list[list[dict]]:
+    words = sorted(words, key=lambda w: (round(w["top"]), w["x0"]))
+    groups: list[list[dict]] = []
+    for w in words:
+        if groups and abs(groups[-1][0]["top"] - w["top"]) <= 2.5:
+            groups[-1].append(w)
+        else:
+            groups.append([w])
+    return groups
+
+
+def _has_channel(words: list[dict]) -> bool:
+    """True when an empty vertical channel splits most lines (a table, not prose)."""
+    lines = _group_lines(words)
+    if len(lines) < 3:
+        return False
+    x0 = min(w["x0"] for w in words)
+    x1 = max(w["x1"] for w in words)
+    span = x1 - x0
+    x = x0 + 0.1 * span
+    while x <= x1 - 0.1 * span:
+        crossing = sum(1 for ln in lines if any(w["x0"] < x < w["x1"] for w in ln))
+        both = sum(1 for ln in lines if any(w["x1"] <= x for w in ln) and any(w["x0"] >= x for w in ln))
+        if crossing <= 1 and both >= 0.6 * len(lines):
+            return True
+        x += 2
+    return False
+
+
 def _find_gutter(words: list[dict], width: float) -> float | None:
-    """Return the x of a two-column gutter, or None for single-column pages."""
-    if len(words) < 40:
+    """The x of a two-column gutter, or None for single-column (or tabular) pages.
+
+    Strict on purpose: misreading one column as two scrambles every sentence, while
+    missing a real second column only joins the two columns' lines.
+    """
+    lines = _group_lines(words)
+    if len(lines) < 16:
         return None
-    best_x, best_hits = None, len(words)
+    best_x, best_cross = None, len(lines)
     x = width * 0.35
     while x <= width * 0.65:
-        hits = sum(1 for w in words if w["x0"] < x < w["x1"])
-        if hits < best_hits:
-            best_x, best_hits = x, hits
+        crossing = sum(1 for ln in lines if any(w["x0"] < x < w["x1"] for w in ln))
+        if crossing < best_cross or (crossing == best_cross and best_x is not None
+                                      and abs(x - width / 2) < abs(best_x - width / 2)):
+            best_x, best_cross = x, crossing
         x += 2
-    if best_x is None or best_hits > 0.02 * len(words):
+    if best_x is None or best_cross > 0.03 * len(lines):
         return None
-    left = sum(1 for w in words if w["x1"] <= best_x)
-    right = len(words) - left
-    if min(left, right) < 0.2 * len(words):
+    left = [w for w in words if w["x1"] <= best_x]
+    right = [w for w in words if w["x0"] >= best_x]
+    left_lines, right_lines = _group_lines(left), _group_lines(right)
+    if len(left_lines) < 8 or len(right_lines) < 8:
+        return None
+    # The two columns run side by side for most of their height.
+    lt, lb = min(w["top"] for w in left), max(w["bottom"] for w in left)
+    rt, rb = min(w["top"] for w in right), max(w["bottom"] for w in right)
+    overlap = min(lb, rb) - max(lt, rt)
+    if overlap < 0.5 * min(lb - lt, rb - rt):
+        return None
+    # Left-column lines mostly run up to the gutter (wrapped prose), not short entries.
+    left_x0 = min(w["x0"] for w in left)
+    ends = sorted(max(w["x1"] for w in ln) for ln in left_lines)
+    if ends[len(ends) // 2] < best_x - 0.35 * (best_x - left_x0):
+        return None
+    if _has_channel(left) or _has_channel(right):
         return None
     return best_x
 
@@ -118,9 +168,14 @@ def _words_to_lines(words: list[dict]) -> list[_Line]:
         g.sort(key=lambda w: w["x0"])
         sizes = [float(w.get("size") or 0) for w in g]
         fonts = [str(w.get("fontname") or "") for w in g]
+        size = statistics.median(sizes) if sizes and statistics.median(sizes) > 0 else 10.0
+        parts = [g[0]["text"]]
+        for prev, w in zip(g, g[1:]):
+            gap = float(w["x0"]) - float(prev["x1"])
+            parts.append((" | " if gap > 1.8 * size else " ") + w["text"])
         lines.append(
             _Line(
-                text=" ".join(w["text"] for w in g),
+                text="".join(parts),
                 size=statistics.median(sizes) if sizes else 0.0,
                 top=min(w["top"] for w in g),
                 bottom=max(w["bottom"] for w in g),
@@ -159,7 +214,7 @@ def extract_pdf_native(path: Path, ctx: ExtractContext) -> ExtractedDoc:
                 except Exception:  # noqa: BLE001 - broken text layers happen
                     raw = ""
                 compact = re.sub(r"\s+", "", raw)
-                if len(compact) < cfg["min_text_chars"] or printable_ratio(compact) < cfg["min_printable_ratio"]:
+                if _needs_ocr(page, compact, cfg):
                     items.ocr = True
                     _ocr_page(pdoc, i, items, ctx)
                 else:
@@ -186,6 +241,67 @@ def extract_pdf_native(path: Path, ctx: ExtractContext) -> ExtractedDoc:
         extractor="pdf-native",
         warnings=warnings,
     )
+
+
+def _needs_ocr(page, compact: str, cfg) -> bool:
+    """OCR a page whose text layer is missing or garbage, or that is mostly one big image.
+
+    A short page with a real text layer (the tail of a table, a signature page with
+    a footer) stays digital: OCR would lose its structure.
+    """
+    if compact and printable_ratio(compact) < cfg["min_printable_ratio"]:
+        return True
+    if len(compact) >= cfg["min_text_chars"]:
+        return False
+    if len(compact) < 20:
+        return True
+    area = float(page.width) * float(page.height) or 1.0
+    cover = 0.0
+    for img in page.images:
+        w = max(0.0, float(img["x1"]) - float(img["x0"]))
+        h = max(0.0, float(img["bottom"]) - float(img["top"]))
+        cover = max(cover, w * h / area)
+    return cover >= 0.5
+
+
+def _merge_continued_tables(blocks: list[Block]) -> list[Block]:
+    """Join a table that continues onto the next page into one table block.
+
+    Continued when two table blocks are adjacent (nothing but stripped page
+    furniture between), on consecutive pages, with the same column count; a
+    repeated header row is dropped, an unrepeated one is kept as data.
+    """
+    out: list[Block] = []
+    for b in blocks:
+        prev = out[-1] if out else None
+        # Short page-furniture lines between the two halves (a footer the filters missed).
+        between: list[Block] = []
+        if b.kind == "table" and prev is not None and prev.kind != "table":
+            k = len(out) - 1
+            while k >= 0 and len(between) < 2 and out[k].kind == "paragraph" and len(out[k].text.split()) <= 15 \
+                    and (_PAGE_REF_RE.search(out[k].text) or _PAGE_NUM_RE.match(out[k].text.strip())):
+                between.append(out[k])
+                k -= 1
+            if between and k >= 0 and out[k].kind == "table":
+                prev = out[k]
+            else:
+                between = []
+        if (b.kind == "table" and prev is not None and prev.kind == "table" and b.page and prev.page
+                and b.page == (prev.page_end or prev.page) + 1
+                and len(b.meta.get("headers") or []) == len(prev.meta.get("headers") or [])
+                and not b.meta.get("caption")):
+            same_header = [h.strip().lower() for h in b.meta["headers"]] == \
+                          [h.strip().lower() for h in prev.meta["headers"]]
+            extra = b.meta["rows"] if same_header else [b.meta["headers"]] + b.meta["rows"]
+            prev.meta["rows"] = list(prev.meta["rows"]) + list(extra)
+            prev.page_end = b.page
+            cap = prev.meta.get("caption")
+            prev.text = (f"**{cap}**\n\n" if cap else "") + markdown_table(prev.meta["headers"], prev.meta["rows"])
+            for _ in between:
+                out.pop()   # the furniture lines go; they sat between the halves
+            continue
+        out.append(b)
+    return out
 
 
 def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
@@ -274,6 +390,8 @@ def _heading_levels(pages: list[_PageItems]) -> tuple[float, dict[float, int]]:
 
 def _is_heading(ln: _Line, body: float, levels: dict[float, int]) -> int:
     text = ln.text.strip()
+    if " | " in text:
+        return 0   # a row of aligned columns, not a heading
     if not text or len(text) > 120 or len(text.split()) > 15 or text.endswith((".", ",", ";")):
         return 0
     level = levels.get(round(ln.size, 1), 0)
@@ -305,6 +423,9 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             normed = re.sub(r"\d+", "#", ln.text.strip().lower())
             if normed in furniture or _PAGE_NUM_RE.match(ln.text.strip()):
                 continue
+            y = ln.top if ln.top < p.height else ln.top - p.height   # right column is offset by height
+            if p.height and y > 0.92 * p.height and _PAGE_REF_RE.search(ln.text) and len(ln.text.split()) <= 15:
+                continue   # a footer with a page number, even on a short document
             events.append((ln.top, "line", ln))
         for top, rows in p.tables:
             events.append((top, "table", rows))
@@ -318,11 +439,16 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             if not para:
                 return
             text = ""
+            prev_row = False
             for ln in para:
-                if text.endswith("-") and ln.text[:1].islower():
+                row = " | " in ln.text
+                if text and (row or prev_row):
+                    text = f"{text}\n{ln.text}"          # aligned rows keep one line each
+                elif text.endswith("-") and ln.text[:1].islower():
                     text = text[:-1] + ln.text
                 else:
                     text = f"{text} {ln.text}".strip()
+                prev_row = row
             blocks.append(Block(kind="paragraph", text=text, page=p.number))
             para.clear()
 
@@ -356,9 +482,9 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             elif kind == "figure":
                 flush()
                 if page_image is None:
-                    page_image = _render_page(pdoc, p.number - 1, 2.0)
+                    page_image = _render_page(pdoc, p.number - 1, 3.0)
                 x0, t, x1, b = obj  # type: ignore[misc]
-                s = 2.0
+                s = 3.0
                 crop = page_image.crop((int(x0 * s), int(t * s), int(x1 * s), int(b * s)))
                 if crop.width < 20 or crop.height < 20:
                     continue
@@ -367,6 +493,7 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                 blocks.append(make_figure_block(crop, ctx, page=p.number, index=figure_index, caption=caption))
         flush()
 
+    blocks = _merge_continued_tables(blocks)
     return _drop_repeated_figures(blocks, len(pages), int(cfg["furniture_min_pages"]))
 
 

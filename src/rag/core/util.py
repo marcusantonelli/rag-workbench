@@ -84,7 +84,10 @@ def md_escape_cell(text: str) -> str:
 
 
 def markdown_table(headers: list[str], rows: Iterable[list[Any]]) -> str:
-    headers = [md_escape_cell(h) or f"col_{i + 1}" for i, h in enumerate(headers)]
+    rows = [list(r) for r in rows]
+    width = max([len(headers)] + [len(r) for r in rows])
+    headers = list(headers) + [""] * (width - len(headers))
+    headers = [md_escape_cell(str(h)) or f"col_{i + 1}" for i, h in enumerate(headers)]
     lines = ["| " + " | ".join(headers) + " |", "| " + " | ".join("---" for _ in headers) + " |"]
     for row in rows:
         cells = [md_escape_cell(cell_to_str(c)) for c in row]
