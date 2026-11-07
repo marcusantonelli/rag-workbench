@@ -81,7 +81,8 @@ def cmd_run(args) -> int:
     finally:
         crawler.close()
     _print_summary(summary, budget)
-    print(f"\nNext: rag build <workspace> \"{out / 'files'}\"")
+    if summary.saved_files:
+        print(f"\nNext: rag build <workspace> \"{out / 'files'}\"")
     return 0
 
 

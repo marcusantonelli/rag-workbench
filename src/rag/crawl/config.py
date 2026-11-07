@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
         "delay_s": 1.0,           # minimum gap between requests to one host (robots may raise it)
         "workers": 4,             # parallel hosts; each host still gets one request at a time
         "timeout_s": 60,
+        "retry_unreachable_s": 15,  # wait before retrying a host that refused/failed to connect
         "max_file_mb": 200,       # matches the Builder's default per-file limit
         "min_file_kb": 2,
         "min_words": 50,          # text-bearing files with fewer words are skipped

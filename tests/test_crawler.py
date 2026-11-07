@@ -96,7 +96,7 @@ FRENCH = ("Opcenter Execution est le système de gestion de la production de Sie
 class Site:
     """A tiny programmable web server that records every request."""
 
-    def __init__(self, host: str):
+    def __init__(self, host: str, port: int = 0):
         self.routes: dict[str, object] = {}
         self.log: list[tuple[str, float, dict]] = []
         self.hits: dict[str, int] = {}
@@ -126,7 +126,7 @@ class Site:
             def log_message(self, *a):
                 pass
 
-        self.server = ThreadingHTTPServer((host, 0), Handler)
+        self.server = ThreadingHTTPServer((host, port), Handler)
         self.port = self.server.server_address[1]
         self.base = f"http://{host}:{self.port}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -392,7 +392,7 @@ def test_size_parsing_and_cli_report(web, tmp_path, capsys):
     assert "Saved" in out and "Highest-scoring files" in out
 
 
-def test_unreachable_host_is_reported_not_marked_robots(tmp_path):
+def test_unreachable_host_is_dropped_quickly_with_a_clear_reason(tmp_path):
     import socket
 
     s = socket.socket()
@@ -401,21 +401,56 @@ def test_unreachable_host_is_reported_not_marked_robots(tmp_path):
     s.close()   # nothing listens here
     cfg = load_config(None, {
         "topic": {"terms": ["opcenter"]},
-        "crawl": {"seeds": [f"http://127.0.0.1:{port}/opcenter/"], "allowed_domains": ["127.0.0.1"],
-                  "delay_s": 0.01, "timeout_s": 2},
+        "crawl": {"seeds": [f"http://127.0.0.1:{port}/opcenter/", f"http://127.0.0.1:{port}/opcenter/b.pdf"],
+                  "allowed_domains": ["127.0.0.1"], "delay_s": 0.01, "timeout_s": 2,
+                  "retry_unreachable_s": 0.05},
         "sitemaps": {"enabled": False},
     })
-    import rag.crawl.crawler as cr
-
-    orig = cr.Crawler._handle
-    summary, c = run(cfg, tmp_path / "out", max_requests=20)
+    started = time.monotonic()
+    summary, c = run(cfg, tmp_path / "out", max_requests=50)
+    assert time.monotonic() - started < 20
+    assert "no site could be reached" in summary.stop_reason
     import sqlite3
 
-    status, reason = sqlite3.connect(tmp_path / "out" / "crawl.db").execute(
-        "SELECT status, reason FROM urls").fetchone()
-    assert reason and "robots" not in reason.split(":")[0] or "unreachable" in reason
-    assert status in ("queued", "failed")
-    assert cr.Crawler._handle is orig
+    rows = sqlite3.connect(tmp_path / "out" / "crawl.db").execute("SELECT status, reason FROM urls").fetchall()
+    assert rows and all(st == "failed" and "unreachable" in reason for st, reason in rows)
+    assert all("robots" != reason for _, reason in rows)
+    # The next run (network back) tries those hosts again instead of treating them as done.
+    from rag.crawl.state import CrawlState
+
+    st = CrawlState(tmp_path / "out" / "crawl.db")
+    try:
+        assert st.status_counts() == {"failed": len(rows)}     # a report changes nothing
+        assert st.retry_unreachable() == len(rows)
+        assert st.status_counts() == {"queued": len(rows)}
+    finally:
+        st.close()
+
+
+def test_site_down_on_first_run_is_collected_on_the_next(tmp_path):
+    import socket
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    cfg = load_config(None, {
+        "topic": {"terms": ["opcenter"]},
+        "crawl": {"seeds": [f"http://127.0.0.1:{port}/opcenter/"], "allowed_domains": ["127.0.0.1"],
+                  "delay_s": 0.01, "timeout_s": 2, "retry_unreachable_s": 0.05},
+    })
+    first, _ = run(cfg, tmp_path / "out")
+    assert first.saved_files == 0 and "no site could be reached" in first.stop_reason
+
+    site = Site("127.0.0.1", port)
+    try:
+        site.routes["/robots.txt"] = (200, {"Content-Type": "text/plain"}, b"User-agent: *\nAllow: /\n")
+        site.html("/opcenter/", article("Opcenter overview", WORDS))
+        second, _ = run(cfg, tmp_path / "out")
+    finally:
+        site.close()
+    assert second.saved_files == 1
+    assert "/opcenter/" in site.paths()
 
 
 def test_crawl_output_builds_into_a_pack(web, tmp_path):

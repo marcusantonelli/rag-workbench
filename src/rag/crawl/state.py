@@ -53,6 +53,13 @@ class CrawlState:
         # Anything in flight when the last run stopped goes back in the queue.
         self.conn.execute("UPDATE urls SET status = 'queued' WHERE status = 'active'")
 
+    def retry_unreachable(self) -> int:
+        """Requeue URLs whose host could not be reached last time (network down, proxy, firewall)."""
+        with self.lock:
+            cur = self.conn.execute("UPDATE urls SET status = 'queued', attempts = 0, reason = NULL "
+                                    "WHERE status = 'failed' AND reason LIKE 'host unreachable%'")
+            return cur.rowcount
+
     def close(self) -> None:
         with self.lock:
             self.conn.close()

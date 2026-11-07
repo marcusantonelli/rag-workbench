@@ -37,6 +37,7 @@ from rag.crawl.net import (Fetcher, Response, RobotsCache, RobotsUnreachable, ca
 from rag.crawl.state import CrawlState
 
 MAX_ATTEMPTS = 4
+HOST_GIVE_UP = 3          # consecutive connection failures before a host is dropped
 _REDIRECT = (301, 302, 303, 307, 308)
 _LOGIN_RE = re.compile(r"(login|signin|sign-in|sso|oauth|/auth\b|saml|account/|okta|adfs)", re.I)
 
@@ -56,6 +57,7 @@ class _Host:
     delay: float = 1.0
     fetched: int = 0
     backoff: float = 0.0
+    unreachable: int = 0
 
 
 @dataclass
@@ -98,6 +100,7 @@ class Crawler:
 
         self.lock = threading.Condition()
         self.hosts: dict[str, _Host] = {}
+        self.dead_hosts: set[str] = set()
         self.seq = itertools.count()
         self.saved = self.state.saved_bytes()
         self.saved_files = len(self.state.files())
@@ -107,6 +110,7 @@ class Crawler:
         self.stop_event = threading.Event()
         self.stop_reason = ""
         self.manifest_lock = threading.Lock()
+        self.retried = self.state.retry_unreachable()
         host_counts = self.state.host_counts()
         for row in self.state.queued():
             self._push(row["url"], row["host"], row["priority"])
@@ -210,6 +214,7 @@ class Crawler:
             self.log(f"search added {n_search} URLs")
         if self.cfg["sitemaps"]["enabled"]:
             origins = {f"{urlsplit(s).scheme}://{urlsplit(s).netloc}" for s in self.c["seeds"]}
+            missed = 0
             for origin in sorted(origins):
                 if self.stop_event.is_set():
                     return
@@ -219,6 +224,9 @@ class Crawler:
                     delay = max(float(self.c["delay_s"]), self.robots.delay(origin + "/"))
                 except RobotsUnreachable as exc:
                     self.log(f"sitemaps of {origin} skipped: {exc}")
+                    with self.lock:
+                        self._host(host_of(origin + "/")).unreachable += 1
+                    missed += 1
                     continue
                 for loc in sitemap_urls(origin + "/", self.fetcher, self.robots, keep=keep,
                                         max_files=int(self.cfg["sitemaps"]["max_files"]),
@@ -228,6 +236,8 @@ class Crawler:
                         added += 1
                 if added:
                     self.log(f"sitemaps of {origin} added {added} URLs")
+            if missed:
+                return      # some sites were unreachable: discover again on the next run
         self.state.set_meta("discovered", "1")
 
     # ---------------------------------------------------------------- scheduling
@@ -256,7 +266,11 @@ class Crawler:
                         best_host, best_time = name, h.next_time
                 if best_host is None:
                     if self.active == 0:
-                        self._stop("no more on-topic URLs to fetch (frontier exhausted)")
+                        if self.hosts and all(n in self.dead_hosts for n in self.hosts):
+                            self._stop("no site could be reached; check the internet connection, "
+                                       "firewall or proxy (HTTPS_PROXY is honoured)")
+                        else:
+                            self._stop("no more on-topic URLs to fetch (frontier exhausted)")
                         return None
                     self.lock.wait(0.5)
                     continue
@@ -304,6 +318,9 @@ class Crawler:
         row = self.state.get(url)
         if row is None:
             return 0.0
+        if host in self.dead_hosts:
+            self.state.set_status(url, "failed", "host unreachable", attempt=True)
+            return 0.0
         self.state.set_status(url, "active")
         try:
             if not self.robots.known(url):
@@ -312,11 +329,9 @@ class Crawler:
                     self._host(host).delay = max(float(self.c["delay_s"]), d)
             allowed = self.robots.allowed(url)
         except RobotsUnreachable as exc:
-            if row["attempts"] + 1 < MAX_ATTEMPTS:
-                self._requeue(url, row, "robots.txt unreachable")
-                return 60.0
-            self.state.set_status(url, "failed", str(exc)[:300], attempt=True)
-            return 0.0
+            return self._unreachable(url, host, row, exc)
+        with self.lock:
+            self._host(host).unreachable = 0
         if not allowed:
             code = self.robots.status_of(url)
             reason = "robots" if code == 200 or code is None else f"robots.txt HTTP {code} (host treated as off-limits)"
@@ -415,6 +430,28 @@ class Crawler:
         else:
             self._handle_file(url, row, resp.body, ftype)
         return 0.0
+
+    def _unreachable(self, url: str, host: str, row, exc: Exception) -> float:
+        """A connection to the host failed outright: retry a couple of times, then drop the host."""
+        detail = str(exc).split(": ", 1)[-1][:200]
+        with self.lock:
+            h = self._host(host)
+            h.unreachable += 1
+            n = h.unreachable
+        if n >= HOST_GIVE_UP or row["attempts"] + 1 >= MAX_ATTEMPTS:
+            self.state.set_status(url, "failed", f"host unreachable: {detail}"[:300], attempt=True)
+            with self.lock:
+                self.dead_hosts.add(host)
+                dropped = [item.url for item in h.queue]
+                h.queue.clear()
+            for u in dropped:
+                self.state.set_status(u, "failed", "host unreachable", attempt=True)
+            self.log(f"giving up on {host}: {n} connection attempts failed ({detail})")
+            return 0.0
+        wait = float(self.c.get("retry_unreachable_s", 15)) * n
+        self.log(f"{host} unreachable ({detail}); retrying in {wait:.0f}s")
+        self._requeue(url, row, "robots.txt unreachable")
+        return wait
 
     def _requeue(self, url: str, row, reason: str) -> None:
         self.state.set_status(url, "queued", reason, attempt=True)
@@ -530,6 +567,8 @@ class Crawler:
         if self.saved >= self.budget:
             self.stop_reason = "target already reached"
         else:
+            if self.retried:
+                self.log(f"retrying {self.retried} URLs on hosts that were unreachable last time")
             self.seed()
             workers = [threading.Thread(target=self._worker, daemon=True, name=f"crawl-{i}")
                        for i in range(max(1, int(self.c["workers"])))]

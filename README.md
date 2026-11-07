@@ -200,6 +200,9 @@ rag build my-ws opcenter-semi/files
   pause the host (honouring Retry-After), nothing behind a login is fetched,
   and sites hosting uploaded copies of licensed manuals (Scribd and similar)
   are blocked by default.
+- **Network problems:** an unreachable site is retried twice, then dropped; if no
+  site can be reached the crawl stops and says so, and the next run retries them.
+  `HTTPS_PROXY` is honoured.
 - **Discovery:** seeds, then the seed hosts' sitemaps, then links. Web search is
   optional: set `[search] provider = "brave"` and the `BRAVE_API_KEY`
   environment variable (Brave Search API, free tier), or point
