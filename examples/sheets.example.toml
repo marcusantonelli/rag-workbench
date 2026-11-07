@@ -1,0 +1,11 @@
+# Copy to <workspace>/sheets.toml to override spreadsheet handling per workbook.
+# Rules match on the file name (glob) and optionally a sheet name.
+
+[[sheet]]
+file = "*Shipments*.xlsx"
+sheet = "Summary"
+header_row = 3        # 1-based row of the header inside the sheet
+
+[[sheet]]
+file = "*Template*.xlsx"
+skip = true           # all sheets of matching workbooks are skipped
