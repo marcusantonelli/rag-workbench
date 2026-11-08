@@ -70,6 +70,23 @@ def test_incremental_update_change_and_prune(tmp_path, corpus):
     assert res["rows"] == [[45, sum(range(45))]]
 
 
+def test_files_read_by_an_older_extractor_are_reextracted(tmp_path, corpus):
+    import sqlite3
+
+    ws = Workspace.init(tmp_path / "ws", TEST_EMBEDDING)
+    assert Builder(ws).build([corpus]).added == 11
+    db = sqlite3.connect(ws.rag_db)
+    db.execute("UPDATE documents SET extractor = replace(extractor, '@v', '@old') WHERE file_type = 'pdf'")
+    db.commit()
+    n_pdf = db.execute("SELECT COUNT(*) FROM documents WHERE file_type = 'pdf'").fetchone()[0]
+    db.close()
+    again = Builder(ws).build([corpus])
+    assert again.updated == n_pdf > 0 and again.unchanged == 11 - n_pdf
+    assert Builder(ws).build([corpus]).unchanged == 11
+    chunks, fts, vec = _consistent(ws)
+    assert chunks == fts == vec
+
+
 def test_embedding_mismatch_is_refused(tmp_path, corpus):
     ws = Workspace.init(tmp_path / "ws", TEST_EMBEDDING)
     Builder(ws).build([corpus / "handoff.txt"])

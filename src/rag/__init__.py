@@ -6,6 +6,6 @@ and a manifest. A small Python retrieval path is included for testing packs
 before the C# retrieval server exists.
 """
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 SCHEMA_VERSION = 1
 PACK_FORMAT = "ragpack/1"

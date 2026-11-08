@@ -1,6 +1,7 @@
 """The Builder engine: files in, rag.db + tables.db out.
 
-For each file: hash it; skip it if unchanged; otherwise copy it into the
+For each file: hash it; skip it if unchanged (and read by the current extractor
+version); otherwise copy it into the
 library, extract (cached by hash), load its tables into tables.db, chunk,
 embed (reusing vectors for identical text) and write everything for that file
 in one transaction. A failure in one file is logged and never stops the build.
@@ -28,7 +29,7 @@ from rag.core.chunk.tokens import TokenCounter
 from rag.core.db.store import DocRecord, RagStore, now_iso
 from rag.core.db.tables import TablesStore, card_text
 from rag.core.ingest.context import ExtractContext
-from rag.core.ingest.router import detect_type, extract
+from rag.core.ingest.router import EXTRACTOR_VERSION, detect_type, extract
 from rag.core.models.embed import make_embedder
 from rag.core.types import Chunk, TableData
 from rag.core.util import long_path, sha256_file
@@ -174,7 +175,10 @@ class Builder:
             self.emit("file_failed", path=sf.display_path, error=str(exc), index=index, total=total)
             return
         existing = store.find_document(sf.source_key)
-        if existing is not None and existing["sha256"] == digest and existing["status"] in ("ok", "partial"):
+        current = (existing is not None
+                   and str(existing["extractor"] or "").endswith(f"@v{EXTRACTOR_VERSION}"))
+        if (existing is not None and existing["sha256"] == digest and existing["status"] in ("ok", "partial")
+                and current):
             stats.unchanged += 1
             self.emit("file_unchanged", path=sf.display_path, index=index, total=total)
             return
@@ -205,7 +209,8 @@ class Builder:
             )
             doc, cached = extract(sf.path, ftype, ctx, cache_dir=self.ws.cache_dir,
                                   overrides_file=self.ws.root / "sheets.toml", use_cache=not no_cache)
-            rec.title, rec.n_pages, rec.extractor = doc.title, doc.n_pages, doc.extractor
+            # The version suffix lets a later build re-extract files read by an older extractor.
+            rec.title, rec.n_pages, rec.extractor = doc.title, doc.n_pages, f"{doc.extractor}@v{EXTRACTOR_VERSION}"
             rec.warnings = list(doc.warnings)
 
             stage = "tables"

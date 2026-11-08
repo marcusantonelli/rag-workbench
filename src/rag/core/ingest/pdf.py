@@ -64,19 +64,24 @@ class _Line:
     bottom: float
     x0: float
     bold: bool = False
+    style: str = ""         # dominant font + colour, to tell a wrapped heading from the next one
+    group: int = 0          # reading-order group (column) on the page
+    key: float = 0.0        # sort key: group * page height + top
 
 
 @dataclass
 class _PageItems:
     number: int
     lines: list[_Line] = field(default_factory=list)
-    tables: list[tuple[float, list[list[str]]]] = field(default_factory=list)   # (top, rows)
+    tables: list[tuple[float, list[list[str]], tuple[float, float, float, float]]] = field(
+        default_factory=list)   # (top, rows, bbox)
     figures: list[tuple[float, tuple[float, float, float, float]]] = field(default_factory=list)
     ocr: bool = False
     ocr_blocks: list[Block] = field(default_factory=list)
     ocr_conf: float | None = None
     width: float = 0
     height: float = 0
+    groups: list[tuple[float, float, float, float]] = field(default_factory=list)   # bbox per group
 
 
 def _inside(word: dict, bbox: tuple[float, float, float, float]) -> bool:
@@ -97,62 +102,145 @@ def _group_lines(words: list[dict]) -> list[list[dict]]:
     return groups
 
 
-def _has_channel(words: list[dict]) -> bool:
-    """True when an empty vertical channel splits most lines (a table, not prose)."""
+_NUMBERED_HEADING_RE = re.compile(r"^(\d+(\.\d+)*\.?|[A-Z]\.|[IVX]+\.)\s+\S")
+
+
+def _line_spans(lines: list[list[dict]]) -> list[list[tuple[float, float]]]:
+    """Word extents padded by about half a space, so an x inside an ordinary word gap
+    still counts as crossing the line: a column gutter must be wider than word spacing."""
+    out = []
+    for ln in lines:
+        pad = 0.35 * statistics.median(float(w.get("size") or 10.0) for w in ln)
+        out.append([(float(w["x0"]) - pad, float(w["x1"]) + pad) for w in ln])
+    return out
+
+
+def _aligned_starts(words: list[dict]) -> bool:
+    """Most lines of a real column start at its left edge (allowing a bullet's hanging
+    indent). Half-lines cut out of one column start wherever a word happened to fall."""
     lines = _group_lines(words)
-    if len(lines) < 3:
-        return False
-    x0 = min(w["x0"] for w in words)
-    x1 = max(w["x1"] for w in words)
-    span = x1 - x0
-    x = x0 + 0.1 * span
-    while x <= x1 - 0.1 * span:
-        crossing = sum(1 for ln in lines if any(w["x0"] < x < w["x1"] for w in ln))
-        both = sum(1 for ln in lines if any(w["x1"] <= x for w in ln) and any(w["x0"] >= x for w in ln))
-        if crossing <= 1 and both >= 0.6 * len(lines):
-            return True
-        x += 2
-    return False
+    starts = sorted(min(float(w["x0"]) for w in ln) for ln in lines)
+    if len(starts) < 3:
+        return True
+    size = statistics.median(float(w.get("size") or 10.0) for w in words)
+    edge = starts[len(starts) // 10]
+    near = sum(1 for t in starts if edge - 3.0 <= t <= edge + 2.0 * size)
+    return near >= 0.7 * len(starts)
 
 
-def _find_gutter(words: list[dict], width: float) -> float | None:
-    """The x of a two-column gutter, or None for single-column (or tabular) pages.
+def _column_channel(words: list[dict], lines: list[list[dict]]) -> float | None:
+    """x of the best vertical channel between two text columns in this region, or None.
 
-    Strict on purpose: misreading one column as two scrambles every sentence, while
-    missing a real second column only joins the two columns' lines.
+    A channel may be crossed by a few full-width lines (a title, a footer); those are
+    read on their own. Both sides must hold real text (several lines, a usable width).
     """
+    x0 = min(float(w["x0"]) for w in words)
+    x1 = max(float(w["x1"]) for w in words)
+    width = x1 - x0
+    if width < 150:
+        return None
+    n = len(lines)
+    allowed = max(1, int(0.25 * n))
+    spans = _line_spans(lines)
+    xs = [x0 + 0.08 * width + i for i in range(0, int(0.84 * width), 2)]
+    crossing = [sum(1 for sp in spans if any(a < x < b for a, b in sp)) for x in xs]
+    best: tuple[int, float, float] | None = None     # (crossing, -stretch width, x)
+    i = 0
+    while i < len(xs):
+        if crossing[i] > allowed:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(xs) and crossing[j + 1] <= allowed:
+            j += 1
+        low = min(crossing[i:j + 1])
+        # The centre of the longest stretch at the run's lowest crossing count.
+        k, run_best = i, (0, i, i)
+        while k <= j:
+            if crossing[k] == low:
+                m = k
+                while m + 1 <= j and crossing[m + 1] == low:
+                    m += 1
+                if m - k >= run_best[0]:
+                    run_best = (m - k, k, m)
+                k = m + 1
+            else:
+                k += 1
+        c = (xs[run_best[1]] + xs[run_best[2]]) / 2
+        left = [w for w in words if float(w["x1"]) <= c]
+        right = [w for w in words if float(w["x0"]) >= c]
+        min_side = max(60.0, 0.15 * width)
+        if (left and right
+                and max(float(w["x1"]) for w in left) - min(float(w["x0"]) for w in left) >= min_side
+                and max(float(w["x1"]) for w in right) - min(float(w["x0"]) for w in right) >= min_side
+                and len(_group_lines(left)) >= 3 and len(_group_lines(right)) >= 3
+                and _aligned_starts(right)):
+            cand = (low, -(xs[run_best[2]] - xs[run_best[1]]), c)
+            if best is None or cand < best:
+                best = cand
+        i = j + 1
+    return None if best is None else best[2]
+
+
+def _looks_like_columns(left: list[dict], right: list[dict]) -> bool:
+    """False when the two sides are the cells of an unruled table rather than two text columns.
+
+    Table cells sit on shared rows (aligned tops, matching line counts) and are short.
+    Text columns either run on their own baselines or both hold full prose lines.
+    """
+    lines_l, lines_r = _group_lines(left), _group_lines(right)
+    if not lines_l or not lines_r:
+        return False
+    small, big = sorted((lines_l, lines_r), key=len)
+    other_tops = [float(ln[0]["top"]) for ln in big]
+    paired = sum(1 for ln in small if any(abs(float(ln[0]["top"]) - t) <= 2.0 for t in other_tops)) / len(small)
+    ratio = len(small) / len(big)
+    words_l = statistics.median(len(ln) for ln in lines_l)
+    words_r = statistics.median(len(ln) for ln in lines_r)
+    return not (paired >= 0.7 and ratio >= 0.75 and min(words_l, words_r) <= 4)
+
+
+def _reading_groups(words: list[dict], depth: int = 0) -> list[list[dict]]:
+    """Split a page's words into groups in reading order: full-width lines stay in
+    place, and the text between them is read one column at a time (recursively, so
+    a sidebar plus two columns comes out as three groups)."""
+    if not words:
+        return []
     lines = _group_lines(words)
-    if len(lines) < 16:
-        return None
-    best_x, best_cross = None, len(lines)
-    x = width * 0.35
-    while x <= width * 0.65:
-        crossing = sum(1 for ln in lines if any(w["x0"] < x < w["x1"] for w in ln))
-        if crossing < best_cross or (crossing == best_cross and best_x is not None
-                                      and abs(x - width / 2) < abs(best_x - width / 2)):
-            best_x, best_cross = x, crossing
-        x += 2
-    if best_x is None or best_cross > 0.03 * len(lines):
-        return None
-    left = [w for w in words if w["x1"] <= best_x]
-    right = [w for w in words if w["x0"] >= best_x]
-    left_lines, right_lines = _group_lines(left), _group_lines(right)
-    if len(left_lines) < 8 or len(right_lines) < 8:
-        return None
-    # The two columns run side by side for most of their height.
-    lt, lb = min(w["top"] for w in left), max(w["bottom"] for w in left)
-    rt, rb = min(w["top"] for w in right), max(w["bottom"] for w in right)
-    overlap = min(lb, rb) - max(lt, rt)
-    if overlap < 0.5 * min(lb - lt, rb - rt):
-        return None
-    # Left-column lines mostly run up to the gutter (wrapped prose), not short entries.
-    left_x0 = min(w["x0"] for w in left)
-    ends = sorted(max(w["x1"] for w in ln) for ln in left_lines)
-    if ends[len(ends) // 2] < best_x - 0.35 * (best_x - left_x0):
-        return None
-    if _has_channel(left) or _has_channel(right):
-        return None
-    return best_x
+    if depth >= 4 or len(lines) < 4:
+        return [words]
+    ch = _column_channel(words, lines)
+    if ch is None:
+        return [words]
+    out: list[list[dict]] = []
+    band: list[dict] = []
+    spanning: list[dict] = []
+
+    def flush_band() -> None:
+        if not band:
+            return
+        left = [w for w in band if float(w["x1"]) <= ch]
+        right = [w for w in band if float(w["x0"]) >= ch]
+        if left and right and _aligned_starts(right) and _looks_like_columns(left, right):
+            out.extend(_reading_groups(left, depth + 1))
+            out.extend(_reading_groups(right, depth + 1))
+        else:
+            out.append(list(band))
+        band.clear()
+
+    for ln, sp in zip(lines, _line_spans(lines)):
+        if any(a < ch < b for a, b in sp):
+            flush_band()
+            spanning.extend(ln)
+        else:
+            if spanning:
+                out.append(list(spanning))
+                spanning.clear()
+            band.extend(ln)
+    flush_band()
+    if spanning:
+        out.append(spanning)
+    return out
 
 
 def _words_to_lines(words: list[dict]) -> list[_Line]:
@@ -173,6 +261,7 @@ def _words_to_lines(words: list[dict]) -> list[_Line]:
         for prev, w in zip(g, g[1:]):
             gap = float(w["x0"]) - float(prev["x1"])
             parts.append((" | " if gap > 1.8 * size else " ") + w["text"])
+        styles = [f"{w.get('fontname', '')}|{w.get('non_stroking_color', '')}" for w in g]
         lines.append(
             _Line(
                 text="".join(parts),
@@ -181,6 +270,7 @@ def _words_to_lines(words: list[dict]) -> list[_Line]:
                 bottom=max(w["bottom"] for w in g),
                 x0=min(w["x0"] for w in g),
                 bold=sum("bold" in f.lower() for f in fonts) > len(fonts) / 2,
+                style=Counter(styles).most_common(1)[0][0],
             )
         )
     return lines
@@ -313,7 +403,7 @@ def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
             rows = [r for r in rows if any(r)]
             if len(rows) >= 2 and max(len(r) for r in rows) >= 2:
                 table_bboxes.append(table.bbox)
-                items.tables.append((table.bbox[1], rows))
+                items.tables.append((table.bbox[1], rows, tuple(float(v) for v in table.bbox)))
     except Exception:  # noqa: BLE001
         pass
     page_area = items.width * items.height or 1
@@ -322,20 +412,33 @@ def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
         area = max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
         if area / page_area >= cfg["figure_min_area"]:
             items.figures.append((bbox[1], bbox))
-    words = page.extract_words(extra_attrs=["size", "fontname"], keep_blank_chars=False)
+    try:
+        words = page.extract_words(extra_attrs=["size", "fontname", "non_stroking_color"], keep_blank_chars=False)
+    except Exception:  # noqa: BLE001 - odd colour spaces: fall back to font only
+        words = page.extract_words(extra_attrs=["size", "fontname"], keep_blank_chars=False)
     words = [w for w in words if not any(_inside(w, b) for b in table_bboxes)]
-    gutter = _find_gutter(words, items.width)
-    if gutter is None:
-        items.lines = _words_to_lines(words)
-    else:
-        left = [w for w in words if w["x1"] <= gutter]
-        right = [w for w in words if w["x1"] > gutter]
-        # Read the left column fully, then the right one; offset the right
-        # column's positions so later y-sorting keeps that order.
-        items.lines = _words_to_lines(left) + [
-            _Line(ln.text, ln.size, ln.top + items.height, ln.bottom + items.height, ln.x0, ln.bold)
-            for ln in _words_to_lines(right)
-        ]
+    height = items.height or 1000.0
+    for k, group in enumerate(_reading_groups(words)):
+        items.groups.append((min(float(w["x0"]) for w in group), min(float(w["top"]) for w in group),
+                             max(float(w["x1"]) for w in group), max(float(w["bottom"]) for w in group)))
+        for ln in _words_to_lines(group):
+            ln.group = k
+            ln.key = k * height + ln.top
+            items.lines.append(ln)
+
+
+def _reading_key(p: _PageItems, bbox: tuple[float, float, float, float]) -> float:
+    """Where a table or figure falls in the page's reading order."""
+    height = p.height or 1000.0
+    x0, top, x1, _ = bbox
+    cx = (x0 + x1) / 2
+    for k, (gx0, gt, gx1, gb) in enumerate(p.groups):
+        if gx0 - 2 <= cx <= gx1 + 2 and gt - 2 <= top <= gb + 2:
+            return k * height + top
+    for k, (_, gt, _, _) in enumerate(p.groups):
+        if gt > top:
+            return k * height + top
+    return len(p.groups) * height + top
 
 
 def _ocr_page(pdoc, index: int, items: _PageItems, ctx: ExtractContext) -> None:
@@ -423,14 +526,13 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             normed = re.sub(r"\d+", "#", ln.text.strip().lower())
             if normed in furniture or _PAGE_NUM_RE.match(ln.text.strip()):
                 continue
-            y = ln.top if ln.top < p.height else ln.top - p.height   # right column is offset by height
-            if p.height and y > 0.92 * p.height and _PAGE_REF_RE.search(ln.text) and len(ln.text.split()) <= 15:
+            if p.height and ln.top > 0.92 * p.height and _PAGE_REF_RE.search(ln.text) and len(ln.text.split()) <= 15:
                 continue   # a footer with a page number, even on a short document
-            events.append((ln.top, "line", ln))
-        for top, rows in p.tables:
-            events.append((top, "table", rows))
+            events.append((ln.key, "line", ln))
+        for top, rows, bbox in p.tables:
+            events.append((_reading_key(p, bbox), "table", rows))
         for top, bbox in p.figures:
-            events.append((top, "figure", bbox))
+            events.append((_reading_key(p, bbox), "figure", bbox))
         events.sort(key=lambda e: e[0])
 
         para: list[_Line] = []
@@ -454,6 +556,7 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
 
         page_image = None
         consumed: set[int] = set()
+        last_heading: list[_Line | None] = [None]
         for idx, (top, kind, obj) in enumerate(events):
             if idx in consumed:
                 continue
@@ -462,15 +565,28 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                 level = _is_heading(ln, body, levels)
                 if level:
                     flush()
-                    blocks.append(Block(kind="heading", text=ln.text.strip(), level=level, page=p.number))
+                    prev_h = last_heading[0]
+                    if (prev_h is not None and blocks and blocks[-1].kind == "heading"
+                            and blocks[-1].level == level and prev_h.group == ln.group
+                            and 0 <= ln.top - prev_h.bottom <= 0.6 * max(prev_h.bottom - prev_h.top, 1)
+                            and abs(ln.size - prev_h.size) < 0.5 and ln.style == prev_h.style
+                            and not _NUMBERED_HEADING_RE.match(ln.text.strip())
+                            and len(blocks[-1].text) + len(ln.text) <= 150):
+                        blocks[-1].text = f"{blocks[-1].text} {ln.text.strip()}"   # a wrapped heading
+                    else:
+                        blocks.append(Block(kind="heading", text=ln.text.strip(), level=level, page=p.number))
+                    last_heading[0] = ln
                     continue
+                last_heading[0] = None
                 if para:
                     prev = para[-1]
                     gap = ln.top - prev.bottom
-                    if gap > max(prev.bottom - prev.top, 1) * 0.9 or _BULLET_RE.match(ln.text):
+                    if (ln.group != prev.group or gap > max(prev.bottom - prev.top, 1) * 0.9
+                            or _BULLET_RE.match(ln.text)):
                         flush()
                 para.append(ln)
             elif kind == "table":
+                last_heading[0] = None
                 flush()
                 rows: list[list[str]] = obj  # type: ignore[assignment]
                 caption = _caption_near(blocks, events, idx, consumed)
@@ -480,6 +596,7 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                 blocks.append(Block(kind="table", text=text, page=p.number,
                                     meta={"headers": headers, "rows": data, "caption": caption}))
             elif kind == "figure":
+                last_heading[0] = None
                 flush()
                 if page_image is None:
                     page_image = _render_page(pdoc, p.number - 1, 3.0)

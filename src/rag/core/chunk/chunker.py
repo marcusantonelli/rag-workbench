@@ -287,6 +287,12 @@ class Chunker:
                 section.append(block)
         flush()
 
+        # One- and two-word prose scraps (a leftover nav label, a logo's text such as
+        # "CAMSTAR") can't answer anything and crowd out real results.
+        kept = [c for c in chunks if not (c.kind == "prose" and len(c.text.split()) < 3 and len(c.text) < 25)]
+        if kept:
+            chunks = kept
+
         # A document that is only headings (e.g. a title page) still gets one chunk.
         if not chunks and stack:
             chunks.append(Chunk(kind="prose", text=" / ".join(t for _, t in stack), embed_text=""))

@@ -89,13 +89,14 @@ To try everything without a model: `rag init test-ws --embedder hash-test`
 Rebuilds are incremental: unchanged files (same SHA-256) are skipped, changed
 files replace their old chunks and tables in one transaction, `--prune` removes
 documents deleted from the given folders, and identical text is embedded once.
-A file that fails is logged (`rag status`) and never stops the build.
+Files read by an older extractor version are re-extracted on the next build
+(chunks whose text didn't change keep their embeddings). A file that fails is logged (`rag status`) and never stops the build.
 
 ## How each type is handled
 
 | Input | Extractor | Becomes |
 | --- | --- | --- |
-| Text PDF | pdfplumber: lines, font-size headings, ruled tables, embedded images; two-column pages; repeated headers/footers removed | Markdown blocks per page |
+| Text PDF | pdfplumber: lines, font-size headings, ruled tables, embedded images; multi-column layouts (sidebars, 2–3 columns, full-width titles) read column by column; repeated headers/footers removed | Markdown blocks per page |
 | Scanned PDF page | RapidOCR (ONNX, models bundled) on the rendered page | Paragraph blocks with OCR confidence |
 | Word | python-docx: heading styles, lists, tables, embedded pictures (OCR'd) | Markdown blocks |
 | TXT / Markdown | line-based; front matter, pipe tables, code fences | Blocks with line ranges |
