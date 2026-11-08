@@ -194,6 +194,22 @@ def test_eval_runs(tmp_path, searcher):
     ]), encoding="utf-8")
     report = run_eval(searcher, golden)
     assert report["overall"]["n"] == 3 and report["overall"]["recall@20"] == 1.0
+    assert "retrieved" not in report["questions"][0]
+
+    from rag.eval import report_markdown
+
+    with golden.open("a", encoding="utf-8") as fh:
+        fh.write("\n" + json.dumps({"id": "z", "question": "price of a wire bonder", "expect": []}))
+    shown = run_eval(searcher, golden, show=3)
+    for q in shown["questions"]:
+        ranks = [c["rank"] for c in q["retrieved"]]
+        assert ranks[:3] == list(range(1, len(ranks[:3]) + 1))
+        assert any(c["match"] for c in q["retrieved"]) == bool(q["first_hit_rank"])
+        if q["first_hit_rank"] and q["first_hit_rank"] > 3:
+            assert q["retrieved"][-1]["rank"] == q["first_hit_rank"] and q["retrieved"][-1]["match"]
+    assert len(shown["unanswerable"][0]["retrieved"]) == 3
+    md = report_markdown(shown)
+    assert "## a: minimum pull strength" in md and "✅" in md and "# Not answerable" in md
 
 
 @pytest.mark.parametrize("module", ["pysqlite3", "sqlean"])

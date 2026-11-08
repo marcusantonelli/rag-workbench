@@ -81,7 +81,14 @@ rag sql my-ws "SELECT device, SUM(test_fail) FROM t_burn_in_yields_q3_yields GRO
 rag export my-ws kb.ragpack
 rag search kb.ragpack "seal leak root cause"   # works on packs too
 rag eval my-ws examples/golden.example.jsonl
+rag eval my-ws golden.jsonl --report eval.md --out eval.json   # + the chunks each question retrieved
 ```
+
+`--report` writes a readable Markdown file: every question with its top 6
+retrieved chunks (file, page, section, full text), the correct ones marked ✅,
+and the first correct chunk appended when it ranked lower. Unanswerable
+questions show what the agent would be handed. `--show N` changes how many
+chunks are listed, and adds them to the `--out` JSON as well.
 
 To try everything without a model: `rag init test-ws --embedder hash-test`
 (a deterministic lexical stand-in; never ship packs built with it).

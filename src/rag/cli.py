@@ -222,10 +222,16 @@ def cmd_eval(args) -> int:
     from rag.eval import run_eval
 
     searcher, ws, tmp = _searcher(Path(args.workspace))
-    report = run_eval(searcher, Path(args.golden))
+    show = args.show if args.show is not None else (6 if args.report else 0)
+    report = run_eval(searcher, Path(args.golden), show=show)
     report["config_fingerprint"] = ws.config.fingerprint()
     if args.out:
-        Path(args.out).write_text(json.dumps(report, indent=2), encoding="utf-8")
+        Path(args.out).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    if args.report:
+        from rag.eval import report_markdown
+
+        Path(args.report).write_text(report_markdown(report), encoding="utf-8")
+        print(f"report with retrieved chunks: {args.report}")
     o = report["overall"]
     print(f"{o['n']} questions  recall@5 {o['recall@5']}  recall@20 {o['recall@20']}  MRR@10 {o['mrr@10']}")
     for t, s in report["by_type"].items():
@@ -326,6 +332,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("workspace")
     s.add_argument("golden")
     s.add_argument("--out", help="write the full JSON report here")
+    s.add_argument("--show", type=int, help="include the top N retrieved chunks per question in --out "
+                                            "(default 6 when --report is given)")
+    s.add_argument("--report", help="write a readable Markdown report with the retrieved chunks")
     s.set_defaults(fn=cmd_eval)
 
     s = sub.add_parser("check-embedder", help="test the embedding backend")
