@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 APP_DIR_NAME = "RAG Workbench"
+APP_ID = "com.ragworkbench.desktop"   # matches the Tauri identifier
 
 
 def data_dir() -> Path:
@@ -21,7 +22,10 @@ def data_dir() -> Path:
     if override:
         root = Path(override)
     elif sys.platform == "win32":
-        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / APP_DIR_NAME
+        # Not "%LOCALAPPDATA%\RAG Workbench": the per-user installer puts the program there, and
+        # an uninstall must not take the models and workspaces with it. The installer's
+        # "Delete the application data" option removes this folder (named by the app id).
+        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / APP_ID
     elif sys.platform == "darwin":
         root = Path.home() / "Library" / "Application Support" / APP_DIR_NAME
     else:

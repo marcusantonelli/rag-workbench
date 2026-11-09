@@ -3,7 +3,7 @@ import { call, EngineCallError, inTauri, onEvent } from "./api";
 import type { AppInfo, Job, KbSummary, RecentKb, RuntimeStatus } from "./types";
 
 export type Tab = "search" | "documents" | "tables" | "evaluate" | "build" | "about";
-export type Screen = { kind: "home" } | { kind: "kb"; id: string } | { kind: "settings" };
+export type Screen = { kind: "home" } | { kind: "kb"; id: string } | { kind: "settings" } | { kind: "cli" };
 
 export interface Toast {
   id: number;

@@ -358,10 +358,18 @@ def list_devices(exe: Path) -> tuple[list[dict[str, Any]], str]:
     return devices, text.strip()
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+PREFERRED_PORT = 8081   # the CLI's default embedding URL, so `rag` can use the app's model
+
+
+def _free_port(preferred: int = PREFERRED_PORT) -> int:
+    for port in (preferred, 0):
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return s.getsockname()[1]
+    raise OSError("no free port")
 
 
 # ----------------------------------------------------------------------------------------------
@@ -568,7 +576,7 @@ class Runtime:
                 return self.status()
             use_gpu, note = self._gpu_plan(model)
             self._device_note = note
-            port = int(self.cfg.get("port") or 0) or _free_port()
+            port = _free_port(int(self.cfg.get("port") or 0) or PREFERRED_PORT)
             ctx = str(int(self.cfg.get("ctx") or 8192))
             cmd = [str(exe), "-m", str(model), "--embedding", "--pooling", "last", "-c", ctx, "-b", ctx, "-ub", ctx,
                    "--host", "127.0.0.1", "--port", str(port)]

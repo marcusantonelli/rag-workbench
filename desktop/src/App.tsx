@@ -5,6 +5,7 @@ import { Toasts } from "./components/Toasts";
 import { Home } from "./views/Home";
 import { KbView } from "./views/KbView";
 import { SettingsView } from "./views/SettingsView";
+import { CommandLineView } from "./views/CommandLineView";
 import { onFileDrop } from "./platform";
 
 export function App() {
@@ -34,6 +35,7 @@ export function App() {
           </div>
         )}
         {info && screen.kind === "settings" && <SettingsView />}
+        {info && screen.kind === "cli" && <CommandLineView />}
         {info && screen.kind === "kb" && kb && <KbView key={kb.id} kb={kb} />}
         {info && (screen.kind === "home" || (screen.kind === "kb" && !kb)) && <Home />}
       </main>

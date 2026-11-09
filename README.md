@@ -18,7 +18,8 @@ TXT, Markdown, HTML/HTM, CSV, XLSX, SQL, C#, Python.
 This is the Builder engine and CLI, plus **RAG Workbench**, a desktop app (Windows and
 Linux installers) that opens packs, searches and evaluates them, builds and exports new
 ones, and sets up the embedding model on the best hardware it finds. See
-[desktop/README.md](desktop/README.md). Reranking is deliberately left out of v1.
+[desktop/README.md](desktop/README.md). The app's installers include the `rag` command too;
+the command-line guide is [docs/cli.md](docs/cli.md). Reranking is deliberately left out of v1.
 
 ## Install
 

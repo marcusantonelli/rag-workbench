@@ -5,6 +5,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 5173, strictPort: true },
+  // The command-line guide lives in ../docs/cli.md and is bundled into the app.
+  server: { port: 5173, strictPort: true, fs: { allow: [".."] } },
   build: { target: "es2021", outDir: "dist", sourcemap: false, chunkSizeWarningLimit: 1500 },
 });

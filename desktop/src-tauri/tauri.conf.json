@@ -27,23 +27,53 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "deb", "appimage"],
+    "targets": [
+      "nsis",
+      "msi",
+      "deb",
+      "appimage"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "Build, inspect and test RAG knowledge bases",
     "longDescription": "Turn folders of documents into .ragpack knowledge bases, search them the way an agent will, inspect every chunk, and measure retrieval with golden questions.",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "resources": {
       "../engine-dist/rag-engine/": "engine/"
     },
     "fileAssociations": [
-      { "ext": ["ragpack"], "name": "RAG pack", "description": "RAG knowledge base pack", "role": "Viewer" }
+      {
+        "ext": [
+          "ragpack"
+        ],
+        "name": "RAG pack",
+        "description": "RAG knowledge base pack",
+        "role": "Viewer"
+      }
     ],
     "windows": {
-      "webviewInstallMode": { "type": "embedBootstrapper" },
-      "nsis": { "installMode": "currentUser", "displayLanguageSelector": false }
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
     },
     "linux": {
-      "deb": { "depends": ["libvulkan1"] }
+      "deb": {
+        "depends": [
+          "libvulkan1"
+        ],
+        "files": {
+          "/usr/bin/rag": "linux/rag"
+        }
+      }
     }
   }
 }

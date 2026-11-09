@@ -117,7 +117,8 @@ class LlamaServerEmbedder(_Base):
                 last_exc = exc
                 time.sleep(1.5 * (attempt + 1))
         raise EmbedderError(
-            f"cannot reach llama-server at {self.url} ({last_exc}). Start it with:\n"
+            f"cannot reach llama-server at {self.url} ({last_exc}).\n"
+            "Open RAG Workbench and start its embedding model (it serves on port 8081), or start one yourself:\n"
             "  llama-server -m Qwen3-Embedding-8B-Q4_K_M.gguf --embedding --pooling last "
             "-ub 8192 -c 8192 --port 8081 -ngl 99"
         )

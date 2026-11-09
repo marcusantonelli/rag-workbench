@@ -265,7 +265,18 @@ def cmd_check_embedder(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import sys
+
+    from rag import __version__
+
+    # Windows consoles may not be UTF-8; print what they can rather than crash on "›".
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")  # type: ignore[attr-defined]
+        except (AttributeError, ValueError):
+            pass
     p = argparse.ArgumentParser(prog="rag", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", action="version", version=f"rag {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("init", help="create a workspace")
@@ -342,7 +353,20 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=cmd_check_embedder)
 
     args = p.parse_args(argv)
-    return int(args.fn(args) or 0)
+    from rag.core.db.connect import ExtensionLoadingUnavailable
+    from rag.core.db.pack import PackError
+    from rag.core.db.store import EmbeddingMismatch
+    from rag.core.models.embed import EmbedderError
+
+    try:
+        return int(args.fn(args) or 0)
+    except (EmbedderError, EmbeddingMismatch, PackError, ExtensionLoadingUnavailable, FileNotFoundError) as exc:
+        # Expected problems get one clear line, not a traceback.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("stopped", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

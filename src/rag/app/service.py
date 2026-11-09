@@ -154,6 +154,8 @@ class Service:
             "kb.verify": self.kb_verify,
             "eval.run": self.eval_run,
             "eval.markdown": self.eval_markdown,
+            "cli.status": self.cli_status,
+            "cli.set_enabled": self.cli_set_enabled,
             "jobs.list": self.jobs_list,
             "jobs.get": self.jobs_get,
             "jobs.cancel": self.jobs_cancel,
@@ -795,6 +797,22 @@ class Service:
         from rag.eval import report_markdown
 
         return report_markdown(report)
+
+    # ---------------------------------------------------------------------------- command line
+    def cli_status(self) -> dict[str, Any]:
+        from rag.app import cli_install
+
+        out = cli_install.status()
+        out["embedding_url"] = self.runtime.url()
+        return out
+
+    def cli_set_enabled(self, enabled: bool) -> dict[str, Any]:
+        from rag.app import cli_install
+
+        try:
+            return cli_install.set_enabled(bool(enabled))
+        except (RuntimeError, OSError) as exc:
+            raise ServiceError("cli", str(exc)) from exc
 
     # ---------------------------------------------------------------------------- jobs
     def jobs_list(self) -> list[dict[str, Any]]:

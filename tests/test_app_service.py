@@ -391,3 +391,59 @@ def test_unsafe_archive_is_refused(tmp_path):
     with pytest.raises(RuntimeErrorWithHint):
         _extract(bad, tmp_path / "out")
     assert not (tmp_path / "escape.txt").exists()
+
+
+def test_windows_path_editing_is_idempotent_and_exact():
+    from rag.app.cli_install import path_add, path_has, path_remove
+
+    folder = r"C:\Users\m\AppData\Local\RAG Workbench\engine"
+    base = r"C:\Windows\system32;C:\Tools;"
+    added = path_add(base, folder)
+    assert added == r"C:\Windows\system32;C:\Tools;" + folder
+    assert path_add(added, folder) == added                       # once only
+    assert path_has(added, folder) and not path_has(base, folder)
+    assert path_remove(added, folder) == r"C:\Windows\system32;C:\Tools"
+    # A neighbouring folder with a longer name is left alone.
+    assert path_has(path_remove(added + r";" + folder + "-old", folder), folder + "-old")
+
+
+def test_cli_status_outside_the_installed_app(svc):
+    st = svc.call("cli.status", {})
+    assert st["mode"] == "development" and st["can_toggle"] is False
+    with pytest.raises(ServiceError) as err:
+        svc.call("cli.set_enabled", {"enabled": True})
+    assert err.value.code == "cli"
+
+
+def test_managed_server_prefers_the_cli_port():
+    import socket
+
+    from rag.app.runtime import PREFERRED_PORT, _free_port
+
+    try:
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", PREFERRED_PORT))
+        free = True
+    except OSError:
+        free = False
+    if free:
+        assert _free_port() == PREFERRED_PORT
+    with socket.socket() as held:
+        held.bind(("127.0.0.1", 0))
+        taken = held.getsockname()[1]
+        assert _free_port(taken) not in (taken, 0)                # falls back to any free port
+
+
+def test_rag_cli_version_and_one_line_errors(tmp_path):
+    out = subprocess.run([sys.executable, "-m", "rag.cli", "--version"], capture_output=True, text=True)
+    assert out.returncode == 0 and out.stdout.startswith("rag ")
+    bad = subprocess.run([sys.executable, "-m", "rag.cli", "status", str(tmp_path / "nope")],
+                         capture_output=True, text=True)
+    assert bad.returncode == 2 and bad.stderr.startswith("error:") and "Traceback" not in bad.stderr
+    ws = tmp_path / "ws"
+    subprocess.run([sys.executable, "-m", "rag.cli", "init", str(ws)], check=True, capture_output=True)
+    cfg = (ws / "config.toml").read_text().replace("127.0.0.1:8081", "127.0.0.1:9")   # nothing listens
+    (ws / "config.toml").write_text(cfg)
+    down = subprocess.run([sys.executable, "-m", "rag.cli", "search", str(ws), "anything"],
+                          capture_output=True, text=True, timeout=120)
+    assert down.returncode == 2 and "RAG Workbench" in down.stderr and "Traceback" not in down.stderr

@@ -30,8 +30,32 @@ def main() -> int:
     subprocess.check_call([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
                            "--distpath", str(DIST), "--workpath", str(WORK), str(SPEC)], cwd=SPEC.parent)
     exe = DIST / "rag-engine" / ("rag-engine.exe" if os.name == "nt" else "rag-engine")
-    print(f"built {exe}")
-    return smoke(exe)
+    cli = DIST / "rag-engine" / ("rag.exe" if os.name == "nt" else "rag")
+    print(f"built {exe} and {cli}")
+    return smoke(exe) or smoke_cli(cli)
+
+
+def smoke_cli(cli: Path) -> int:
+    """The bundled `rag` command: version, then init, build, search and export a tiny workspace."""
+    def run(*args: str) -> str:
+        out = subprocess.run([str(cli), *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        if out.returncode != 0:
+            raise SystemExit(f"rag {' '.join(args)} failed ({out.returncode}):\n{out.stdout}\n{out.stderr}")
+        return out.stdout
+
+    print(run("--version").strip())
+    with tempfile.TemporaryDirectory() as tmp:
+        docs, ws = Path(tmp) / "docs", Path(tmp) / "ws"
+        docs.mkdir()
+        (docs / "note.md").write_text("# Leak test\n\nHelium leak rate limit is 5e-8 atm cc/s for TO-39 packages.\n")
+        run("init", str(ws), "--embedder", "hash-test")
+        run("build", str(ws), str(docs))
+        found = run("search", str(ws), "helium leak rate")
+        assert "5e-8" in found, found
+        run("export", str(ws), str(Path(tmp) / "t.ragpack"))
+        run("unpack", str(Path(tmp) / "t.ragpack"), str(Path(tmp) / "unpacked"))
+    print("rag command smoke test passed")
+    return 0
 
 
 def smoke(exe: Path) -> int:

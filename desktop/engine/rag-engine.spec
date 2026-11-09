@@ -30,17 +30,16 @@ if not _vec:
     raise SystemExit("sqlite-vec's vec0 library was not found; reinstall sqlite-vec")
 binaries += [(p, "sqlite_vec") for p in _vec]
 
-a = Analysis(
-    ["entry.py"],
-    pathex=[],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hidden,
-    excludes=["tkinter", "matplotlib", "IPython", "pytest", "reportlab", "torch", "docling", "transformers",
-              "pysqlite3", "sqlean", "llama_cpp", "qwen3_embed"],
-    noarchive=False,
-)
-pyz = PYZ(a.pure)
-exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="rag-engine", console=True,
-          upx=False, strip=False, debug=False)
-coll = COLLECT(exe, a.binaries, a.datas, name="rag-engine", upx=False, strip=False)
+EXCLUDES = ["tkinter", "matplotlib", "IPython", "pytest", "reportlab", "torch", "docling", "transformers",
+            "pysqlite3", "sqlean", "llama_cpp", "qwen3_embed"]
+
+# Two programs sharing one folder of libraries: the app's engine and the `rag` command.
+engine = Analysis(["entry.py"], binaries=binaries, datas=datas, hiddenimports=hidden, excludes=EXCLUDES)
+cli = Analysis(["cli_entry.py"], binaries=binaries, datas=datas, hiddenimports=hidden, excludes=EXCLUDES)
+
+engine_exe = EXE(PYZ(engine.pure), engine.scripts, [], exclude_binaries=True, name="rag-engine", console=True,
+                 upx=False, strip=False, debug=False)
+cli_exe = EXE(PYZ(cli.pure), cli.scripts, [], exclude_binaries=True, name="rag", console=True,
+              upx=False, strip=False, debug=False)
+coll = COLLECT(engine_exe, cli_exe, engine.binaries, engine.datas, cli.binaries, cli.datas,
+               name="rag-engine", upx=False, strip=False)

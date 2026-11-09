@@ -15,6 +15,10 @@ A native app for building, inspecting and testing knowledge bases:
   Qwen3-Embedding-8B (Q4_K_M, 4.7 GB), or uses a `.gguf` you already have, and runs it
   on the best hardware it finds.
 
+- **Use `rag` in a terminal**: the installers include the command-line tool. The
+  Command line page in the app shows the guide ([docs/cli.md](../docs/cli.md)) and, on
+  Windows, a switch that adds `rag` to your PATH.
+
 The crawler stays a separate tool (`rag-crawl`).
 
 ## Install
@@ -54,10 +58,28 @@ The llama.cpp build is pinned (`b12207`) so every install behaves the same.
 
 | | Windows | Linux |
 |---|---|---|
-| Settings, models, llama.cpp, opened packs, new workspaces | `%LOCALAPPDATA%\RAG Workbench` | `~/.local/share/rag-workbench` |
+| Settings, models, llama.cpp, opened packs, new workspaces | `%LOCALAPPDATA%\com.ragworkbench.desktop` | `~/.local/share/rag-workbench` |
+| The program (per-user install) | `%LOCALAPPDATA%\RAG Workbench` | `/usr/lib/RAG Workbench` |
+
+Data is kept apart from the program so uninstalling never deletes models or workspaces;
+the Windows uninstaller asks whether to delete the data folder too.
 
 Opened packs are unpacked (and checksum-verified) once into `packs/` and reused; the 12
 most recent are kept. Set `RAG_WORKBENCH_HOME` to use another folder (portable installs).
+
+## The `rag` command
+
+The installers ship `rag` next to the engine (same files, no Python needed):
+
+- **Linux .deb**: installed as `/usr/bin/rag`.
+- **Windows**: Command line page, **Add the rag command to PATH** (edits your user PATH; no
+  admin rights). Open a new terminal afterwards. Turning it off removes the entry; uninstalling
+  the app leaves a harmless PATH entry behind, so turn it off first if you care.
+- **AppImage**: can't add commands to the PATH; use the .deb or pip.
+
+While the app's embedding model is running it listens on `127.0.0.1:8081` (when that port is
+free), the address workspaces use by default, so `rag build` and `rag search` use it with no
+setup. See [docs/cli.md](../docs/cli.md), which is also the app's Command line page.
 
 ## How it fits together
 
@@ -81,7 +103,10 @@ most recent are kept. Set `RAG_WORKBENCH_HOME` to use another folder (portable i
   and stops the engine on exit).
 - `../src/rag/app/`: the engine. `service.py` (every method the UI can call),
   `runtime.py` (hardware, downloads, llama-server), `transport.py` (stdio and HTTP).
-- `engine/rag-engine.spec` and `scripts/build_engine.py`: freeze the engine.
+- `engine/rag-engine.spec` and `scripts/build_engine.py`: freeze the engine and the `rag`
+  command (two programs sharing one folder) and smoke-test both.
+- `src-tauri/linux/rag`: the `/usr/bin/rag` launcher in the .deb.
+- `../docs/cli.md`: the command-line guide, bundled into the app's Command line page.
 
 ## Developing
 

@@ -1,4 +1,4 @@
-import { Database, FolderOpen, Package, Plus, Settings, X } from "lucide-react";
+import { Database, FolderOpen, Package, Plus, Settings, SquareTerminal, X } from "lucide-react";
 import { useState } from "react";
 import { useApp } from "../state";
 import { PACK_FILTER, pickPaths } from "../platform";
@@ -67,6 +67,13 @@ export function Sidebar() {
       <div className="side-foot">
         <JobsTray />
         <RuntimeBadge />
+        <button
+          className={`side-action ${screen.kind === "cli" ? "active" : ""}`}
+          onClick={() => setScreen({ kind: "cli" })}
+        >
+          <SquareTerminal size={16} />
+          <span>Command line</span>
+        </button>
         <button
           className={`side-action ${screen.kind === "settings" ? "active" : ""}`}
           onClick={() => setScreen({ kind: "settings" })}
