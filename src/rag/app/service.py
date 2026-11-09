@@ -119,6 +119,9 @@ class Service:
         self.settings = settings or Settings()
         self._emit = emit or (lambda name, data: None)
         self.runtime = Runtime(self.settings, emit=self._emit)
+        from rag.app.terminal import Terminal
+
+        self.terminal = Terminal(self.emit, self.runtime.url)
         self.kbs: dict[str, KnowledgeBase] = {}
         self.jobs: dict[str, Job] = {}
         self._lock = threading.RLock()
@@ -156,6 +159,8 @@ class Service:
             "eval.markdown": self.eval_markdown,
             "cli.status": self.cli_status,
             "cli.set_enabled": self.cli_set_enabled,
+            "terminal.run": self.terminal_run,
+            "terminal.stop": self.terminal_stop,
             "jobs.list": self.jobs_list,
             "jobs.get": self.jobs_get,
             "jobs.cancel": self.jobs_cancel,
@@ -197,6 +202,7 @@ class Service:
             self.emit("log", {"level": "warning", "message": f"llama-server autostart failed: {exc}"})
 
     def shutdown(self) -> None:
+        self.terminal.shutdown()
         for job in list(self.jobs.values()):
             job.cancel.set()
         self.runtime.stop()
@@ -813,6 +819,17 @@ class Service:
             return cli_install.set_enabled(bool(enabled))
         except (RuntimeError, OSError) as exc:
             raise ServiceError("cli", str(exc)) from exc
+
+    def terminal_run(self, command: str, cwd: str | None = None) -> dict[str, Any]:
+        from rag.app.terminal import CommandRejected
+
+        try:
+            return self.terminal.run(command, cwd)
+        except CommandRejected as exc:
+            raise ServiceError("rejected", str(exc)) from exc
+
+    def terminal_stop(self, run_id: str) -> dict[str, Any]:
+        return self.terminal.stop(run_id)
 
     # ---------------------------------------------------------------------------- jobs
     def jobs_list(self) -> list[dict[str, Any]]:

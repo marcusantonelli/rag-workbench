@@ -13,6 +13,9 @@ writes the same files as the app, so you can build in one and inspect in the oth
 | Linux (AppImage) | Not available; install the .deb, or use pip. |
 | Any machine with Python 3.11+ | From the source (the git bundle): `pip install .` in the rag-builder folder. |
 
+You can also skip the setup: the app's **Command line** page has a terminal that runs `rag`
+commands (see "In the app" below).
+
 Check it works:
 
 ```
@@ -40,6 +43,21 @@ workspace's `config.toml`).
 Test the connection with `rag check-embedder WORKSPACE`.
 
 Browsing commands (`rag tables`, `rag describe`, `rag sql`, `rag status`) never need the model.
+
+## In the app
+
+Command line, then Terminal, runs `rag` without any setup:
+
+- Type what comes after `rag` (the prompt already says `rag`), e.g.
+  `search my-kb.ragpack "leak test limits"`, and press Enter.
+- Only `rag` commands run there: no other programs, pipes (`|`), `&&` or redirects (`>`).
+  Anything else is refused before it runs.
+- Commands run in the folder shown under **Runs in** (your home folder at first), so relative
+  paths start there. **Change…** picks another folder.
+- **File…**, **Folder…** and **Open knowledge base…** insert a path, quoted, where the cursor is.
+- It always uses the app's embedding model when it's running, whatever its port.
+- Up and down recall earlier commands, Tab completes a command name, Ctrl+C (or **Stop**)
+  stops the running command, and Ctrl+L clears the screen.
 
 ## Workspaces and packs
 
@@ -136,12 +154,15 @@ pack or a rejected SQL query. Errors go to stderr as one line starting with `err
 
 `--json` on `build`, `search` and `sql` gives machine-readable output.
 
+Set `RAG_EMBEDDING_URL` (for example `http://gpu-box:8081`) to point every workspace at one
+llama-server without editing their `config.toml` files.
+
 ## Troubleshooting
 
 - **`error: cannot reach llama-server at http://127.0.0.1:8081`**: open the app and start
   the embedding model, or start llama-server yourself (see above). If another program
-  holds port 8081, the app uses a different port; point the workspace at it by editing
-  `url` under `[embedding]` in its `config.toml`.
+  holds port 8081, the app uses a different port; set `RAG_EMBEDDING_URL` to the address
+  shown on the Command line page, or use the app's terminal, which finds it automatically.
 - **`embedded with different settings`**: the workspace was built with another model or
   vector size. Use the same model, or rebuild with `rag build WS PATH --force`.
 - **`'rag' is not recognized`** (Windows): open a new terminal after turning the command on;

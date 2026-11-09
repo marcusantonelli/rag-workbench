@@ -447,3 +447,70 @@ def test_rag_cli_version_and_one_line_errors(tmp_path):
     down = subprocess.run([sys.executable, "-m", "rag.cli", "search", str(ws), "anything"],
                           capture_output=True, text=True, timeout=120)
     assert down.returncode == 2 and "RAG Workbench" in down.stderr and "Traceback" not in down.stderr
+
+
+def test_terminal_only_accepts_rag_commands():
+    from rag.app.terminal import CommandRejected, split_command
+
+    assert split_command('rag search my.ragpack "leak test limits" -k 3', windows=False) == \
+        ["search", "my.ragpack", "leak test limits", "-k", "3"]
+    assert split_command('search kb "x"', windows=False) == ["search", "kb", "x"]          # "rag" is optional
+    # Windows paths keep their backslashes, quoted or not.
+    assert split_command(r'rag build ws D:\KB\Procedures "C:\My Docs\Specs"', windows=True) == \
+        ["build", "ws", r"D:\KB\Procedures", r"C:\My Docs\Specs"]
+    assert split_command("rag help search", windows=False) == ["search", "--help"]
+    assert split_command("rag --version", windows=False) == ["--version"]
+    # Shell syntax is just text: it reaches rag as arguments, never a shell.
+    assert split_command("rag status ws && rm -rf /", windows=False) == ["status", "ws", "&&", "rm", "-rf", "/"]
+    for bad in ("ls -la", "python -c 1", "rag shell", "", "rag", 'rag search "unclosed', "cmd /c dir"):
+        with pytest.raises(CommandRejected):
+            split_command(bad, windows=False)
+
+
+def test_terminal_runs_rag_and_streams_output(svc, corpus, tmp_path):
+    def run_and_wait(command, cwd=None, timeout=180):
+        start = len(svc.events)
+        info = svc.call("terminal.run", {"command": command, "cwd": cwd})
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            mine = [d for n, d in svc.events[start:] if n == "terminal" and d["run_id"] == info["run_id"]]
+            if any(d["type"] == "exit" for d in mine):
+                lines = [ln["text"] for d in mine if d["type"] == "output" for ln in d["lines"]]
+                return info, lines, next(d for d in mine if d["type"] == "exit")
+            time.sleep(0.05)
+        raise AssertionError("command did not finish")
+
+    info, lines, done = run_and_wait("rag --version")
+    assert done["code"] == 0 and lines[0].startswith("rag ") and info["cwd"] == str(Path.home())
+    _, _, done = run_and_wait("init ws --embedder hash-test", cwd=str(tmp_path))
+    assert done["code"] == 0 and (tmp_path / "ws" / "rag.db").exists()        # relative to the working folder
+    _, lines, done = run_and_wait(f'build ws "{corpus}"', cwd=str(tmp_path))
+    assert done["code"] == 0 and any(ln.startswith("Done in") for ln in lines)
+    _, lines, done = run_and_wait('search ws "minimum pull strength"', cwd=str(tmp_path))
+    assert done["code"] == 0 and lines[0].startswith("[S1]")
+    _, lines, done = run_and_wait("status missing-ws", cwd=str(tmp_path))
+    assert done["code"] == 2 and any(ln.startswith("error:") for ln in lines)
+    with pytest.raises(ServiceError) as err:
+        svc.call("terminal.run", {"command": "ls"})
+    assert err.value.code == "rejected"
+
+    # A command that hangs (model address that never answers) can be stopped.
+    cfg = (tmp_path / "ws" / "config.toml").read_text()
+    (tmp_path / "slow").mkdir()
+    subprocess.run([sys.executable, "-m", "rag.cli", "init", str(tmp_path / "slow" / "ws")], check=True,
+                   capture_output=True)
+    slow_cfg = tmp_path / "slow" / "ws" / "config.toml"
+    slow_cfg.write_text(slow_cfg.read_text().replace("127.0.0.1:8081", "10.255.255.1:9"))
+    assert cfg  # the hash-test workspace is untouched
+    start = len(svc.events)
+    info = svc.call("terminal.run", {"command": 'search ws "anything"', "cwd": str(tmp_path / "slow")})
+    time.sleep(1.5)
+    with pytest.raises(ServiceError):
+        svc.call("terminal.run", {"command": "--version"})                     # one at a time
+    assert svc.call("terminal.stop", {"run_id": info["run_id"]})["stopped"] is True
+    deadline = time.monotonic() + 20
+    while not any(n == "terminal" and d.get("type") == "exit" for n, d in svc.events[start:]):
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+    done = next(d for n, d in svc.events[start:] if n == "terminal" and d.get("type") == "exit")
+    assert done["stopped"] is True and done["code"] != 0

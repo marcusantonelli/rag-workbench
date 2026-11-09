@@ -15,9 +15,10 @@ A native app for building, inspecting and testing knowledge bases:
   Qwen3-Embedding-8B (Q4_K_M, 4.7 GB), or uses a `.gguf` you already have, and runs it
   on the best hardware it finds.
 
-- **Use `rag` in a terminal**: the installers include the command-line tool. The
-  Command line page in the app shows the guide ([docs/cli.md](../docs/cli.md)) and, on
-  Windows, a switch that adds `rag` to your PATH.
+- **Use `rag` in a terminal**: the installers include the command-line tool. The app's
+  Command line page has a built-in terminal that runs `rag` commands (and nothing else),
+  the guide ([docs/cli.md](../docs/cli.md)), and on Windows a switch that adds `rag` to
+  your PATH.
 
 The crawler stays a separate tool (`rag-crawl`).
 
@@ -107,6 +108,8 @@ setup. See [docs/cli.md](../docs/cli.md), which is also the app's Command line p
   command (two programs sharing one folder) and smoke-test both.
 - `src-tauri/linux/rag`: the `/usr/bin/rag` launcher in the .deb.
 - `../docs/cli.md`: the command-line guide, bundled into the app's Command line page.
+- `../src/rag/app/terminal.py`: the in-app terminal. It splits the command line itself (no
+  shell), accepts only rag's subcommands, and always runs the bundled `rag`.
 
 ## Developing
 

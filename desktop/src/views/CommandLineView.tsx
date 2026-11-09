@@ -6,6 +6,9 @@ import guide from "../../../docs/cli.md?raw";
 import { call } from "../api";
 import { useApp } from "../state";
 import { Notice, Switch } from "../components/ui";
+import { Terminal } from "../components/Terminal";
+
+let lastTab: "terminal" | "guide" = "terminal";
 
 interface CliStatus {
   mode: "windows" | "linux" | "appimage" | "development";
@@ -55,6 +58,11 @@ export function CommandLineView() {
   const { fail, runtime } = useApp();
   const [status, setStatus] = useState<CliStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<"terminal" | "guide">(lastTab);
+  const pick = (t: "terminal" | "guide") => {
+    lastTab = t;
+    setTab(t);
+  };
 
   const load = useCallback(() => {
     call<CliStatus>("cli.status").then(setStatus).catch(fail);
@@ -77,6 +85,12 @@ export function CommandLineView() {
   return (
     <div className="cli-view">
       <h1>Command line</h1>
+      <nav className="tabs flat" role="tablist" aria-label="Command line views">
+        <button role="tab" aria-selected={tab === "terminal"} className={`tab ${tab === "terminal" ? "active" : ""}`} onClick={() => pick("terminal")}>Terminal</button>
+        <button role="tab" aria-selected={tab === "guide"} className={`tab ${tab === "guide" ? "active" : ""}`} onClick={() => pick("guide")}>Guide and setup</button>
+      </nav>
+      {tab === "terminal" && <Terminal />}
+      {tab === "guide" && <>
       <section className="panel">
         <h2>The rag command on this computer</h2>
         {!status ? (
@@ -109,9 +123,8 @@ export function CommandLineView() {
               </Notice>
             ) : (
               <Notice tone="warn" title={`The embedding model is on port ${port}`}>
-                Port 8081 was busy, so rag won't find it by default. Free the port and restart the model, or set
-                <code> url = "{status.embedding_url}"</code> under <code>[embedding]</code> in the workspace's
-                config.toml.
+                Port 8081 was busy, so rag in other terminals won't find it by default. This page's terminal
+                uses it anyway; elsewhere, set <code>RAG_EMBEDDING_URL={status.embedding_url}</code>.
               </Notice>
             )
           ) : (
@@ -126,6 +139,7 @@ export function CommandLineView() {
           {guide.replace(/^# .*\n/, "")}
         </ReactMarkdown>
       </article>
+      </>}
     </div>
   );
 }

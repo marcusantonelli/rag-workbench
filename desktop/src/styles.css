@@ -467,6 +467,44 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 }
 .copy-btn:hover { color: var(--ink); border-color: var(--rule-strong); }
 
+.tabs.flat { position: static; padding: 0; margin-bottom: 18px; background: none; }
+.cli-view { max-width: 1100px; }
+
+/* The terminal: a slate block in both themes, like a console in the cleanroom. */
+.terminal-wrap { display: grid; gap: 8px; }
+.terminal-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.terminal-bar .grow, .terminal-bar.grow { flex: 1; }
+.terminal-bar select { padding: 5px 8px; }
+.terminal {
+  --t-bg: #18222b; --t-ink: #dfe7ec; --t-dim: #8c9aa6; --t-err: #f2a7a7; --t-amber: #f0bf2e;
+  background: var(--t-bg); color: var(--t-ink); border-radius: var(--r-md) var(--r-md) 0 0;
+  font: 12.5px/1.55 var(--mono); padding: 14px 16px; height: min(60vh, 560px); overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; cursor: text;
+}
+.term-welcome { white-space: normal; color: var(--t-dim); display: grid; gap: 6px; font-family: var(--sans); font-size: 13.5px; }
+.term-welcome b { color: var(--t-ink); font-family: var(--mono); }
+.term-welcome ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.term-example { font: 12.5px var(--mono); color: var(--t-ink); background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 4px; padding: 3px 8px; cursor: pointer; text-align: left; }
+.term-example:hover { border-color: var(--t-amber); }
+.term-dim { font-size: 12.5px; }
+.term-entry + .term-entry { margin-top: 12px; }
+.term-cmd { color: var(--t-ink); font-weight: 600; }
+.term-prompt { color: var(--t-amber); font-weight: 700; }
+.term-stderr { color: var(--t-err); }
+.term-status { color: var(--t-dim); font-style: italic; }
+.term-failed .term-status { color: var(--t-err); }
+.term-busy { color: var(--t-amber); }
+.term-input {
+  display: flex; align-items: center; gap: 8px; margin-top: -8px; padding: 6px 6px 6px 16px;
+  background: var(--t-bg, #18222b); border-top: 1px solid rgba(255, 255, 255, 0.08); border-radius: 0 0 var(--r-md) var(--r-md);
+}
+.term-input { --t-bg: #18222b; }
+.term-input .term-prompt { color: #f0bf2e; font: 700 13px var(--mono); }
+.term-input input { flex: 1; background: transparent; border: 0; color: #dfe7ec; font: 13px var(--mono); padding: 8px 2px; }
+.term-input input:focus-visible { outline: none; }
+.term-input:focus-within { box-shadow: inset 0 0 0 2px #f0bf2e55; }
+.term-input .btn-ghost { color: #f2a7a7; }
+
 /* ---------------------------------------------------------------- build, details, settings */
 .panel { background: var(--panel); border: 1px solid var(--rule); border-radius: var(--r-md); padding: 18px 20px; margin-bottom: 16px; }
 .panel > h2 { margin-bottom: 6px; }

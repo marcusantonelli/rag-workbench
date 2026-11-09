@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 import urllib.error
@@ -216,6 +217,10 @@ BACKENDS = {
 
 def make_embedder(cfg: dict[str, Any]) -> _Base:
     backend = cfg.get("backend", "llama-server")
+    # RAG_EMBEDDING_URL points every workspace at one llama-server (the desktop app's
+    # terminal sets it to the app's running model).
+    if backend == "llama-server" and os.environ.get("RAG_EMBEDDING_URL"):
+        cfg = {**cfg, "url": os.environ["RAG_EMBEDDING_URL"]}
     if backend not in BACKENDS:
         raise EmbedderError(f"unknown embedding backend {backend!r}; choose from {', '.join(BACKENDS)}")
     if int(cfg["dims"]) > int(cfg.get("native_dims", cfg["dims"])):
