@@ -1,0 +1,138 @@
+# RAG Workbench (desktop app)
+
+A native app for building, inspecting and testing knowledge bases:
+
+- **Open `.ragpack` files** (double-click, drag onto the window, or Open pack) and search
+  them the way the agent will: every passage shows its file, page and section, how it ranked
+  in the vector and keyword searches, and the exact text the MCP tool hands the agent.
+- **Browse** each document's chunks in order, look at extracted tables and run the same
+  read-only SQL the agent can run.
+- **Evaluate** retrieval with a golden question file: recall@5, recall@20 and MRR, by question
+  type, and the retrieved chunks for every question with the correct ones marked.
+- **Build** knowledge bases from files and folders (incremental, cancellable) and **export**
+  them as `.ragpack` files for the retrieval server.
+- **Manage the embedding model**: the first run downloads llama.cpp and
+  Qwen3-Embedding-8B (Q4_K_M, 4.7 GB), or uses a `.gguf` you already have, and runs it
+  on the best hardware it finds.
+
+The crawler stays a separate tool (`rag-crawl`).
+
+## Install
+
+Download the installer from the GitHub Actions run or release (see "Building the installers"):
+
+- **Windows**: `RAG Workbench_0.3.0_x64-setup.exe` installs for the current user without admin
+  rights. The `.msi` is for machine-wide or managed installs. The installers are not code
+  signed yet, so SmartScreen will warn; choose More info, then Run anyway.
+- **Linux**: `.deb` for Debian/Ubuntu (`sudo apt install ./RAG.Workbench_0.3.0_amd64.deb`), or the
+  `.AppImage` for anything else (`chmod +x` and run it).
+
+On first start, Settings shows the hardware it found. **Download and start** fetches llama.cpp
+for this machine and the model (resumable, checksums verified), then starts it. Offline
+machines: copy `Qwen3-Embedding-8B-Q4_K_M.gguf` over and choose **Use a .gguf file I already
+have**.
+
+## Hardware selection
+
+| Machine | llama.cpp build | Runs on |
+|---|---|---|
+| Windows + NVIDIA | CUDA 13.5 (driver 580+) or CUDA 12.4 | the NVIDIA GPU |
+| Windows or Linux + AMD, Intel or other GPU (integrated too) | Vulkan | that GPU |
+| Linux + NVIDIA | Vulkan (llama.cpp has no Linux CUDA binaries) | the NVIDIA GPU |
+| No GPU | CPU | the CPU |
+
+After installing, the app asks llama.cpp which devices it can actually use
+(`llama-server --list-devices`). If none is usable, or the GPU reports less free memory
+than the model needs (model size + 1.5 GB), the model runs on the CPU, and Settings says why.
+**Force CPU** runs on the CPU regardless (leaving the GPU free). **Use the GPU even if it
+reports too little free memory** overrides the size check. **Use my own llama-server** points
+the app at a server you run elsewhere.
+
+The llama.cpp build is pinned (`b12207`) so every install behaves the same.
+
+## Where things are kept
+
+| | Windows | Linux |
+|---|---|---|
+| Settings, models, llama.cpp, opened packs, new workspaces | `%LOCALAPPDATA%\RAG Workbench` | `~/.local/share/rag-workbench` |
+
+Opened packs are unpacked (and checksum-verified) once into `packs/` and reused; the 12
+most recent are kept. Set `RAG_WORKBENCH_HOME` to use another folder (portable installs).
+
+## How it fits together
+
+```text
+┌──────────── RAG Workbench (Tauri) ─────────────┐
+│ React UI  ── invoke("engine_call") ──┐         │
+│           ◄─ "engine-event" ─────────┤ Rust    │
+└──────────────────────────────────────┼─────────┘
+                       JSON lines over stdio
+                                       ▼
+                   rag-engine (the Python Builder, frozen with PyInstaller)
+                   knowledge bases, search, SQL, eval, builds, exports, jobs
+                                       │ HTTP 127.0.0.1
+                                       ▼
+                   llama-server + Qwen3-Embedding-8B (started and watched by the engine)
+```
+
+- `src/`: the React UI. `api.ts` talks to the engine over Tauri IPC in the app, or over HTTP
+  in a browser during development.
+- `src-tauri/`: the native shell (`src/lib.rs` starts the engine, relays calls and events,
+  and stops the engine on exit).
+- `../src/rag/app/`: the engine. `service.py` (every method the UI can call),
+  `runtime.py` (hardware, downloads, llama-server), `transport.py` (stdio and HTTP).
+- `engine/rag-engine.spec` and `scripts/build_engine.py`: freeze the engine.
+
+## Developing
+
+Prerequisites: Python 3.11+ with rag-builder installed (`pip install -e ..`), Node 20+, and
+Rust (for the native shell). On Linux also:
+`sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev`.
+
+**In a browser** (fastest; no Rust needed):
+
+```bash
+python -m rag.app --http 8765     # terminal 1: the engine
+npm install && npm run dev        # terminal 2: open http://localhost:5173
+```
+
+File dialogs become text prompts (type a path) and drag-and-drop is off; everything else is
+the same.
+
+**As the native app**, with the engine running from your Python:
+
+```bash
+RAG_ENGINE_PYTHON=$(which python) npm run tauri:dev
+```
+
+(Windows PowerShell: `$env:RAG_ENGINE_PYTHON = (Get-Command python).Source; npm run tauri:dev`.)
+
+## Building the installers
+
+The GitHub Actions workflow `.github/workflows/desktop.yml` builds the Windows `.exe`/`.msi`
+and Linux `.deb`/`.AppImage` on every `v*` tag (attached to a draft release) and from the
+Actions tab (Run workflow). Push the repository to GitHub to use it.
+
+To build locally on the target OS:
+
+```bash
+python desktop/scripts/build_engine.py     # freezes the engine and smoke-tests it
+cd desktop && npm ci
+npx tauri build                            # Windows: nsis + msi; Linux: deb + appimage
+```
+
+Installers land in `desktop/src-tauri/target/release/bundle/`. Windows installers have to be
+built on Windows.
+
+## Troubleshooting
+
+- **"llama-server exited"**: Settings → Show log. On Linux, the Vulkan build needs the Vulkan
+  loader (`sudo apt install libvulkan1 mesa-vulkan-drivers`); turn on Force CPU to work
+  without it.
+- **Downloads fail on a company network**: set `HTTPS_PROXY` before starting the app, or
+  download the `.gguf` elsewhere and use the file option. llama.cpp builds can be copied
+  into the data folder's `runtime/` too.
+- **"Different embedding model"**: the pack was built with a different model name than the
+  one loaded. Load the same model; searching with another model returns unrelated passages.
+- **The engine stopped**: the app restarts it on the next action; its last output is in the
+  error message.

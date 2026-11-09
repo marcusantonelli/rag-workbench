@@ -15,8 +15,10 @@ A pack (`.ragpack`, a zip) holds:
 Inputs: text PDFs, scanned PDFs (OCR per page), Word (.docx; .doc via LibreOffice),
 TXT, Markdown, HTML/HTM, CSV, XLSX, SQL, C#, Python.
 
-This is the Builder engine and CLI. The desktop app (Tauri) will drive the same
-engine through `rag build --json`. Reranking is deliberately left out of v1.
+This is the Builder engine and CLI, plus **RAG Workbench**, a desktop app (Windows and
+Linux installers) that opens packs, searches and evaluates them, builds and exports new
+ones, and sets up the embedding model on the best hardware it finds. See
+[desktop/README.md](desktop/README.md). Reranking is deliberately left out of v1.
 
 ## Install
 
@@ -149,9 +151,14 @@ plain output is the compact Markdown form. `Searcher(rerank=...)` is the v2 hook
 `rag sql` runs agent-style SQL read-only: an authorizer allows only reads, one
 statement per call, rows capped at 200, a 2-second time limit.
 
-## Desktop app integration
+## Desktop app
 
-`rag build WS PATH... --json` prints one JSON object per line: `start`,
+RAG Workbench (`desktop/`) runs this engine as `rag-engine`, a JSON-lines service over
+stdio (`python -m rag.app --stdio`, or `--http 8765` for browser development). Every
+call it accepts is in `src/rag/app/service.py`. Build, export, evaluation and model
+downloads run as cancellable jobs that report progress as events.
+
+For scripts, `rag build WS PATH... --json` prints one JSON object per line: `start`,
 `file_start`, `stage` (page / ocr / chunk / embed progress), `file_done`,
 `file_failed`, `file_unchanged`, `file_removed`, `skipped`, `done`.
 
@@ -259,6 +266,9 @@ src/rag/
     models/embed.py      llama-server, llama-cpp, qwen3-onnx, hash-test
     retrieve/search.py   hybrid search (reference for the C# server)
   crawl/                 rag-crawl: crawler, robots/fetching, relevance, presets
+  app/                   rag-engine for the desktop app: service, model runtime, transports
+desktop/                 RAG Workbench: React UI, Tauri shell, engine freeze, installers
+.github/workflows/       desktop.yml builds the Windows and Linux installers
 tools/make_test_corpus.py  Halden test corpus, golden questions, answer key
 tests/                   pytest suite and fixture generator
 examples/                golden set and sheets.toml examples

@@ -41,6 +41,10 @@ def _matches(row: dict[str, Any], exp: dict[str, Any]) -> bool:
     return True
 
 
+class EvalCancelled(RuntimeError):
+    pass
+
+
 def _chunk_view(rank: int, row: dict[str, Any], matched: bool) -> dict[str, Any]:
     ps, pe = row.get("page_start"), row.get("page_end")
     ls, le = row.get("line_start"), row.get("line_end")
@@ -50,7 +54,8 @@ def _chunk_view(rank: int, row: dict[str, Any], matched: bool) -> dict[str, Any]
             "where": where, "kind": row["kind"], "heading": row.get("heading_path"), "text": row["text"]}
 
 
-def run_eval(searcher, golden_path: Path, *, k_values=(5, 20), show: int = 0) -> dict[str, Any]:
+def run_eval(searcher, golden_path: Path, *, k_values=(5, 20), show: int = 0,
+             progress=None, should_stop=None) -> dict[str, Any]:
     """Score retrieval. With show=N, each question also lists the top N chunks it
     retrieved (and, if the first correct chunk ranked below N, that chunk too)."""
     questions = [json.loads(line) for line in Path(golden_path).read_text(encoding="utf-8").splitlines()
@@ -60,7 +65,11 @@ def run_eval(searcher, golden_path: Path, *, k_values=(5, 20), show: int = 0) ->
     unanswerable = [q for q in questions if not q.get("expect")]
     questions = [q for q in questions if q.get("expect")]
     per_q = []
-    for q in questions:
+    for n, q in enumerate(questions, start=1):
+        if should_stop is not None and should_stop():
+            raise EvalCancelled()
+        if progress is not None:
+            progress({"event": "question", "index": n, "total": len(questions), "id": q.get("id")})
         res = searcher.search(q["question"], expand=False)
         order = res.candidates[: max(k_values + (10,))]
         rows = searcher._load(order)

@@ -50,6 +50,7 @@ class SearchResult:
     tables: list[dict[str, Any]] = field(default_factory=list)
     timings_ms: dict[str, float] = field(default_factory=dict)
     candidates: list[int] = field(default_factory=list)   # fused order before cutoff (for eval)
+    ranks: dict[int, dict[str, Any]] = field(default_factory=dict)   # chunk_id -> vector/keyword rank, fused score
 
     def to_dict(self) -> dict[str, Any]:
         return {"query": self.query, "results": self.results, "tables": self.tables, "timings_ms": self.timings_ms}
@@ -182,7 +183,12 @@ class Searcher:
             candidates = [c for _, c in sorted(zip(rr, candidates), key=lambda x: x[0], reverse=True)]
             timings["rerank"] = round((time.perf_counter() - t2) * 1000, 1)
 
-        result = SearchResult(query=query, candidates=ordered, timings_ms=timings)
+        vec_rank = {cid: r for r, cid in enumerate(vec_ids, start=1)}
+        kw_rank = {cid: r for r, cid in enumerate(kw_ids, start=1)}
+        result = SearchResult(query=query, candidates=ordered, timings_ms=timings, ranks={
+            cid: {"vector": vec_rank.get(cid), "keyword": kw_rank.get(cid), "fused": round(scores[cid], 5),
+                  "rank": i}
+            for i, cid in enumerate(ordered, start=1)})
         budget = int(s.get("max_result_tokens", 6000))
         used = 0
         tag = 0

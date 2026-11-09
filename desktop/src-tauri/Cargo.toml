@@ -1,0 +1,25 @@
+[package]
+name = "rag-workbench"
+version = "0.3.0"
+description = "Build, inspect and test RAG knowledge bases"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "rag_workbench_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

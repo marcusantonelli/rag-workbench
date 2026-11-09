@@ -110,8 +110,12 @@ def discover(inputs: list[Path], include: list[str], exclude: list[str], max_mb:
 
 
 class Builder:
-    def __init__(self, ws: Workspace, *, embedder=None, progress: Callable[[Event], None] | None = None):
+    def __init__(self, ws: Workspace, *, embedder=None, progress: Callable[[Event], None] | None = None,
+                 should_stop: Callable[[], bool] | None = None):
         self.ws = ws
+        # Checked between files: a cancelled build keeps every file finished so far.
+        self.should_stop = should_stop or (lambda: False)
+        self.cancelled = False
         self.cfg = ws.config
         self.progress = progress or (lambda e: None)
         self._embedder = embedder
@@ -146,10 +150,14 @@ class Builder:
             chunker = Chunker(ChunkSettings.from_config(self.cfg["chunking"]), self.count, self.embedder)
 
             for i, sf in enumerate(files, start=1):
+                if self.should_stop():
+                    self.cancelled = True
+                    self.emit("cancelled", index=i, total=len(files))
+                    break
                 stats.seen += 1
                 self._process(sf, i, len(files), store, tables, chunker, stats, no_cache)
 
-            if prune:
+            if prune and not self.cancelled:
                 stats.removed = self._prune(files, inputs, store, tables)
             store.set_meta("last_build_at", now_iso())
             store.set_meta("app_version", __version__)

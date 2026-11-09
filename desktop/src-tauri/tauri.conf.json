@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "RAG Workbench",
+  "version": "0.3.0",
+  "identifier": "com.ragworkbench.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "RAG Workbench",
+        "width": 1360,
+        "height": 880,
+        "minWidth": 960,
+        "minHeight": 620,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi", "deb", "appimage"],
+    "category": "DeveloperTool",
+    "shortDescription": "Build, inspect and test RAG knowledge bases",
+    "longDescription": "Turn folders of documents into .ragpack knowledge bases, search them the way an agent will, inspect every chunk, and measure retrieval with golden questions.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": {
+      "../engine-dist/rag-engine/": "engine/"
+    },
+    "fileAssociations": [
+      { "ext": ["ragpack"], "name": "RAG pack", "description": "RAG knowledge base pack", "role": "Viewer" }
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": { "installMode": "currentUser", "displayLanguageSelector": false }
+    },
+    "linux": {
+      "deb": { "depends": ["libvulkan1"] }
+    }
+  }
+}
