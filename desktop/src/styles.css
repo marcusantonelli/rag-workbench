@@ -548,3 +548,12 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 .setup-progress { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; margin-top: 14px; }
 .setup-progress .progress { grid-column: 1 / -1; }
 .log { font-family: var(--mono); font-size: 12px; background: color-mix(in srgb, var(--ink) 5%, transparent); padding: 12px; border-radius: var(--r-sm); max-height: 320px; overflow: auto; white-space: pre-wrap; margin-top: 12px; }
+
+/* Merge */
+.merge-options { align-items: end; }
+.merge-options select { min-width: 280px; }
+.merge-plan { border: 1px solid var(--rule); margin-top: 12px; }
+.merge-plan code { font-size: 12px; }
+.merge-conflicts { margin-top: 10px; font-size: 13px; }
+.merge-conflicts summary { cursor: pointer; color: var(--muted); }
+.merge-conflicts ul { margin: 6px 0 0; padding-left: 18px; max-height: 200px; overflow: auto; }

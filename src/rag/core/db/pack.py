@@ -74,7 +74,7 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
         manifest = {
             "format": PACK_FORMAT,
             "pack_id": str(uuid.uuid4()),
-            "name": name or ws.root.name,
+            "name": name or ws.name,
             "built_at": now_iso(),
             "app_version": __version__,
             "schema_version": SCHEMA_VERSION,
@@ -132,4 +132,7 @@ def unpack_pack(pack_path: Path, dest: Path) -> dict[str, Any]:
         raise PackError(f"checksum mismatch in pack: {', '.join(bad[:5])}")
     for d in ("cache", "assets", "library"):
         (dest / d).mkdir(exist_ok=True)
+    from rag.core.workspace import write_marker
+
+    write_marker(dest, name=manifest.get("name"), from_pack=manifest.get("pack_id"))
     return manifest

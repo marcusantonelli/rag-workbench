@@ -155,6 +155,8 @@ class Service:
             "kb.remove_documents": self.kb_remove_documents,
             "kb.export": self.kb_export,
             "kb.verify": self.kb_verify,
+            "kb.merge": self.kb_merge,
+            "kb.discover": self.kb_discover,
             "eval.run": self.eval_run,
             "eval.markdown": self.eval_markdown,
             "cli.status": self.cli_status,
@@ -338,10 +340,14 @@ class Service:
         if p.is_file():
             kb = self._open_pack(p, kid)
         else:
-            if not (p / "rag.db").exists():
-                raise ServiceError("not_workspace", f"{p} is not a knowledge base folder (no rag.db).",
-                                   "Open a .ragpack file, or a workspace folder made by the Builder.")
-            kb = KnowledgeBase(id=kid, kind="workspace", path=p, root=p, name=p.name)
+            from rag.core.workspace import NotAWorkspace, Workspace
+
+            try:
+                ws = Workspace.open(p)
+            except NotAWorkspace as exc:
+                raise ServiceError("not_workspace", str(exc),
+                                   "Open a .ragpack file, or a workspace folder made by RAG Workbench or rag init.") from exc
+            kb = KnowledgeBase(id=kid, kind="workspace", path=p, root=p, name=ws.name)
         with self._lock:
             self.kbs[kid] = kb
         self.settings.remember(str(p), kb.kind, kb.name, _now())
@@ -397,10 +403,8 @@ class Service:
             overrides["embedding"]["model"] = rt.get("model_id")
         elif backend == "hash-test":
             overrides["embedding"].update({"model": "hash-test", "native_dims": int(dims)})
-        Workspace.init(root, overrides)
+        Workspace.init(root, overrides, name=name.strip())
         summary = self.kb_open(str(root))
-        self.kbs[summary["id"]].name = name
-        self.settings.remember(str(root), "workspace", name, _now())
         return self.kb_summary(summary["id"])
 
     def kb_close(self, kb: str) -> dict[str, Any]:
@@ -746,26 +750,87 @@ class Service:
 
         return self._job("export", f"Export {target.name}", work, kb=k.id)
 
-    def kb_verify(self, kb: str) -> dict[str, Any]:
-        from rag.core.db.pack import PackError, unpack_pack
+    def kb_merge(self, kb: str, sources: list[str], on_conflict: str = "newer", keep_copies: bool = False,
+                 dry_run: bool = False) -> dict[str, Any]:
+        """Copy compatible packs or workspaces into this workspace. A dry run answers at once; a merge is a job."""
+        from rag.core.db.merge import MergeError, merge
 
         k = self._kb(kb)
-        if k.kind != "pack":
-            raise ServiceError("bad_params", "Only packs carry checksums.")
+        if k.readonly:
+            raise ServiceError("readonly", "Packs are read-only snapshots.",
+                               "Merge into a workspace (New knowledge base), then export a new pack.")
+        if k.building:
+            raise ServiceError("busy", "Wait for the build to finish before merging.")
+        paths = [Path(p) for p in sources]
+        if not paths:
+            raise ServiceError("bad_params", "Choose at least one knowledge base to merge in.")
+        missing = [str(p) for p in paths if not p.exists()]
+        if missing:
+            raise ServiceError("not_found", "Not found: " + ", ".join(missing[:5]))
+        if dry_run:
+            try:
+                return merge(k.path, paths, on_conflict=on_conflict, keep_copies=keep_copies, dry_run=True)
+            except MergeError as exc:
+                raise ServiceError("bad_params", str(exc)) from exc
 
         def work(job: Job) -> Any:
-            import tempfile
+            k.building = True
+            self.emit("kb", {"id": k.id, "building": True})
+            counters = {"files_total": 0, "files_done": 0}
 
+            def progress(e: dict[str, Any]) -> None:
+                counters["files_total"], counters["files_done"] = e["total"], e["index"]
+                job.report({**counters, "current": e["path"], "stage": e["source"]},
+                           log={"event": e["decision"], "path": e["path"]} if e["decision"] in ("add", "replace")
+                           else None)
+
+            try:
+                res = merge(k.path, paths, on_conflict=on_conflict, keep_copies=keep_copies, progress=progress,
+                            should_stop=job.cancel.is_set)
+            except MergeError as exc:
+                raise ServiceError("bad_params", str(exc)) from exc
+            finally:
+                k.building = False
+                self.emit("kb", {"id": k.id, "building": False})
+            return res
+
+        return self._job("merge", f"Merge into {k.name}", work, kb=k.id)
+
+    def kb_verify(self, kb: str) -> dict[str, Any]:
+        """Check a pack's checksums and contents, or a workspace's marker, databases and links."""
+        from rag.core.check import check_path
+
+        k = self._kb(kb)
+        if k.building:
+            raise ServiceError("busy", "Wait for the build to finish before checking.")
+
+        def work(job: Job) -> Any:
             job.report({"stage": "verify"}, force=True)
-            with tempfile.TemporaryDirectory(prefix="ragpack_verify_") as tmp:
-                try:
-                    manifest = unpack_pack(k.path, Path(tmp))
-                except PackError as exc:
-                    return {"ok": False, "message": str(exc)}
-            return {"ok": True, "files": len(manifest["files"]),
-                    "message": f"All {len(manifest['files'])} files match their checksums."}
+            res = check_path(k.path)
+            errors = [p["message"] for p in res["problems"] if p["level"] == "error"]
+            warnings = [p["message"] for p in res["problems"] if p["level"] == "warning"]
+            if errors:
+                res["message"] = "; ".join(errors[:3]).capitalize() + "."
+            elif k.kind == "pack":
+                res["message"] = f"All files match their checksums ({res.get('checksums', '')}) and the databases are whole."
+            else:
+                res["message"] = "The marker, settings and databases are whole and consistent."
+            if warnings:
+                res["message"] += " Also: " + "; ".join(warnings[:3]) + "."
+            return res
 
-        return self._job("verify", f"Verify {k.path.name}", work, kb=k.id)
+        return self._job("verify", f"Check {k.name}", work, kb=k.id)
+
+    def kb_discover(self, folder: str | None = None) -> dict[str, Any]:
+        """Workspaces and packs in a folder (default: the workspaces folder), whether opened or not."""
+        from rag.core.listing import list_knowledge_bases
+
+        f = Path(folder) if folder else self.settings.workspaces_dir
+        rows = list_knowledge_bases(f, sizes=False)
+        open_paths = {str(k.path) for k in self.kbs.values()}
+        for r in rows:
+            r["open"] = r["path"] in open_paths
+        return {"folder": str(f), "items": rows}
 
     # ---------------------------------------------------------------------------- evaluation
     def eval_run(self, kb: str, golden: str, show: int = 6, allow_mismatch: bool = False) -> dict[str, Any]:

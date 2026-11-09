@@ -6,8 +6,8 @@ import { terminal, useTerminal } from "../terminalStore";
 import { Button } from "./ui";
 import { pickPaths } from "../platform";
 
-const SUBCOMMANDS = ["build", "check-embedder", "describe", "eval", "export", "init", "remove", "search", "sql",
-  "status", "tables", "unpack", "help", "--version"];
+const SUBCOMMANDS = ["build", "check-embedder", "describe", "eval", "export", "init", "list", "merge", "remove", "search", "sql",
+  "status", "tables", "unpack", "verify", "help", "--version"];
 
 function quote(p: string): string {
   return /[\s"']/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p;

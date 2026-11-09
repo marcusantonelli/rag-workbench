@@ -218,7 +218,7 @@ export interface SqlResult {
 
 export interface Job {
   id: string;
-  kind: "build" | "export" | "eval" | "verify" | "runtime_setup";
+  kind: "build" | "export" | "eval" | "verify" | "merge" | "runtime_setup";
   title: string;
   kb: string | null;
   state: "running" | "done" | "failed" | "cancelled";

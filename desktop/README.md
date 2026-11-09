@@ -9,8 +9,10 @@ A native app for building, inspecting and testing knowledge bases:
   read-only SQL the agent can run.
 - **Evaluate** retrieval with a golden question file: recall@5, recall@20 and MRR, by question
   type, and the retrieved chunks for every question with the correct ones marked.
-- **Build** knowledge bases from files and folders (incremental, cancellable) and **export**
-  them as `.ragpack` files for the retrieval server.
+- **Build** knowledge bases from files and folders (incremental, cancellable), **merge** in
+  other packs or workspaces built with the same model (no re-embedding), and **export**
+  them as `.ragpack` files for the retrieval server. **Check workspace** (About tab) runs
+  the same checks as `rag verify`.
 - **Manage the embedding model**: the first run downloads llama.cpp and
   Qwen3-Embedding-8B (Q4_K_M, 4.7 GB), or uses a `.gguf` you already have, and runs it
   on the best hardware it finds.
@@ -26,10 +28,10 @@ The crawler stays a separate tool (`rag-crawl`).
 
 Download the installer from the GitHub Actions run or release (see "Building the installers"):
 
-- **Windows**: `RAG Workbench_0.3.0_x64-setup.exe` installs for the current user without admin
+- **Windows**: `RAG Workbench_0.3.3_x64-setup.exe` installs for the current user without admin
   rights. The `.msi` is for machine-wide or managed installs. The installers are not code
   signed yet, so SmartScreen will warn; choose More info, then Run anyway.
-- **Linux**: `.deb` for Debian/Ubuntu (`sudo apt install ./RAG.Workbench_0.3.0_amd64.deb`), or the
+- **Linux**: `.deb` for Debian/Ubuntu (`sudo apt install ./RAG.Workbench_0.3.3_amd64.deb`), or the
   `.AppImage` for anything else (`chmod +x` and run it).
 
 On first start, Settings shows the hardware it found. **Download and start** fetches llama.cpp

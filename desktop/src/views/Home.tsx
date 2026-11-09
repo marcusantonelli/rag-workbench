@@ -1,15 +1,33 @@
 import { Database, Package } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "../state";
 import { Button, Notice } from "../components/ui";
 import { PACK_FILTER, pickPaths } from "../platform";
 import { NewKbDialog } from "./NewKbDialog";
-import { when } from "../format";
+import { count, when } from "../format";
 import { call } from "../api";
 
+interface Found {
+  path: string;
+  kind: "pack" | "workspace";
+  name: string;
+  documents: number | null;
+  chunks: number | null;
+  tables: number | null;
+  updated: string | null;
+  note: string;
+}
+
 export function Home() {
-  const { recent, openKb, runtime, setScreen, refreshRecent, info } = useApp();
+  const { recent, openKb, runtime, setScreen, refreshRecent, info, kbs } = useApp();
   const [creating, setCreating] = useState(false);
+  const [found, setFound] = useState<{ folder: string; items: Found[] } | null>(null);
+  useEffect(() => {
+    call<{ folder: string; items: Found[] }>("kb.discover").then(setFound).catch(() => setFound(null));
+  }, [kbs.length, creating]);
+
+  const recentPaths = new Set(recent.map((r) => r.path));
+  const notRecent = (found?.items ?? []).filter((r) => !recentPaths.has(r.path));
 
   const openPack = async () => {
     const p = await pickPaths({ title: "Open a knowledge base", filters: PACK_FILTER });
@@ -77,6 +95,29 @@ export function Home() {
           </ul>
         )}
       </section>
+      {notRecent.length > 0 && (
+        <section className="home-recent">
+          <h2>{recent.length ? "Also in your workspaces folder" : "In your workspaces folder"}</h2>
+          <p className="muted small" title={found!.folder}>{found!.folder}</p>
+          <ul className="recent-list">
+            {notRecent.map((r) => (
+              <li key={r.path}>
+                <button className="recent-main" onClick={() => openKb(r.path)} title={r.path}>
+                  {r.kind === "pack" ? <Package size={16} /> : <Database size={16} />}
+                  <span className="recent-text">
+                    <span className="recent-name">{r.name}</span>
+                    <span className="recent-path">
+                      {r.documents != null ? `${count(r.documents, "document")}, ${count(r.chunks ?? 0, "chunk")}, ${count(r.tables ?? 0, "table")}` : ""}
+                      {r.note ? ` (${r.note})` : ""}
+                    </span>
+                  </span>
+                  <span className="recent-when">{r.updated ? when(r.updated) : ""}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {info && <p className="home-foot">Version {info.version}. Data folder: {info.data_dir}</p>}
       {creating && <NewKbDialog onClose={() => setCreating(false)} />}
     </div>

@@ -5,6 +5,7 @@ import { useApp, useJob } from "../state";
 import type { KbSummary } from "../types";
 import { Button, Notice, Progress, Switch } from "../components/ui";
 import { RuntimeGate } from "./KbView";
+import { MergePanel } from "./MergePanel";
 import { basename, bytes, count } from "../format";
 import { onFileDrop, pickPaths, pickSavePath } from "../platform";
 
@@ -180,6 +181,8 @@ export function BuildView({ kb }: { kb: KbSummary }) {
           )}
         </section>
       )}
+
+      <MergePanel kb={kb} busy={running || kb.building} />
 
       <section className="panel">
         <h2>Export a pack</h2>

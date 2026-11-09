@@ -19,6 +19,10 @@ export function JobsTray() {
           value = p.files_done;
           total = p.files_total;
           detail = total ? `${value ?? 0} of ${total} files` : "Scanning files";
+        } else if (j.kind === "merge") {
+          value = p.files_done;
+          total = p.files_total;
+          detail = total ? `${value ?? 0} of ${total} documents` : "Opening";
         } else if (j.kind === "eval") {
           value = p.done;
           total = p.total;

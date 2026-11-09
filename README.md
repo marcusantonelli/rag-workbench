@@ -74,7 +74,7 @@ longer than a 0.6B one; serving it from the GPU inference server is the alternat
 ## Use
 
 ```bash
-rag init my-ws                                # writes my-ws/config.toml; review it
+rag init my-ws --name "Plant docs"            # writes my-ws/config.toml; review it
 rag build my-ws "D:\KB\Procedures" "D:\KB\Code" --prune
 rag status my-ws
 rag search my-ws "minimum pull strength for 5 mil aluminum wire"
@@ -85,7 +85,27 @@ rag export my-ws kb.ragpack
 rag search kb.ragpack "seal leak root cause"   # works on packs too
 rag eval my-ws examples/golden.example.jsonl
 rag eval my-ws golden.jsonl --report eval.md --out eval.json   # + the chunks each question retrieved
+rag merge all-ws line-a.ragpack line-b.ragpack  # combine compatible packs/workspaces, no re-embedding
+rag list                                      # workspaces and packs in the app's workspaces folder
+rag verify my-ws                              # marker, databases, links (packs: checksums too)
 ```
+
+Every workspace has a small `.ragworkspace` marker (JSON: format, id, display name,
+creation time; hidden on Windows). A folder is only treated as a workspace when it has
+the marker, or, for workspaces made before markers existed, a `config.toml` plus a
+`rag.db` that really is one of rag's databases; those get a marker the first time they
+are opened. `rag verify` goes further: SQLite integrity, schema version, chunk, keyword
+and vector counts agreeing, every table the chunks point at existing, figure and
+original-file copies present, and for packs every checksum.
+
+`rag merge DEST SRC...` copies documents, chunks, vectors, keyword rows, tables and
+figures from packs or workspaces embedded the same way (same model, vector size and
+query instruction); anything else is refused with the difference spelled out. Files
+already in DEST with the same content are skipped, the same file with different content
+follows `--on-conflict newer|keep|replace` (default: the newer build), the same content
+under another path is skipped unless `--keep-copies`, and colliding table names are
+renamed (`t_x` → `t_x_2`) everywhere they are mentioned. `--dry-run` reports without
+changing anything.
 
 `--report` writes a readable Markdown file: every question with its top 6
 retrieved chunks (file, page, section, full text), the correct ones marked ✅,
@@ -261,7 +281,9 @@ src/rag/
   eval.py                golden-set evaluation
   builder/engine.py      discovery, incremental build, progress events
   core/
-    db/                  schemas, store (rag.db), tables (tables.db), sqlguard, pack
+    db/                  schemas, store (rag.db), tables (tables.db), sqlguard, pack, merge
+    workspace.py         workspace layout and the .ragworkspace marker
+    check.py, listing.py rag verify and rag list
     ingest/              router + one extractor per type, OCR, figures
     chunk/               chunker, tokens, identifiers, topic-shift breakpoints
     models/embed.py      llama-server, llama-cpp, qwen3-onnx, hash-test

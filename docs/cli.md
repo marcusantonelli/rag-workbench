@@ -61,7 +61,8 @@ Command line, then Terminal, runs `rag` without any setup:
 
 ## Workspaces and packs
 
-A **workspace** is a folder you build into (`config.toml`, `rag.db`, `tables.db`). A **pack**
+A **workspace** is a folder you build into (`config.toml`, `rag.db`, `tables.db` and a small
+hidden `.ragworkspace` marker that names it). A **pack**
 is a `.ragpack` file: a checked, read-only snapshot of a workspace to copy to the retrieval
 server. Commands that read (search, tables, sql, eval) accept either. Commands that write
 (build, remove, export) need a workspace.
@@ -70,6 +71,10 @@ Workspaces you create in the app live in its data folder:
 
 - Windows: `%LOCALAPPDATA%\com.ragworkbench.desktop\workspaces\`
 - Linux: `~/.local/share/rag-workbench/workspaces/`
+
+`rag list` shows what's there (name, documents, chunks, tables, model, last update, size);
+`rag list D:\KB\packs` looks in another folder, including any `.ragpack` files in it.
+`rag verify WS` (or `PACK`) checks one is whole.
 
 ## Common tasks
 
@@ -101,6 +106,19 @@ rag describe plant-kb.ragpack t_burnin_results_2025q3
 rag sql plant-kb.ragpack "SELECT part_number, SUM(qty_fail) FROM t_burnin_results_2025q3 GROUP BY part_number"
 ```
 
+Combine knowledge bases built with the same model, without embedding anything again:
+
+```
+rag merge plant-all line-a.ragpack line-b.ragpack --dry-run
+rag merge plant-all line-a.ragpack line-b.ragpack
+rag export plant-all plant-all.ragpack
+```
+
+`plant-all` is created if it doesn't exist. Files already there are skipped; when the same
+file differs, the newer build wins (`--on-conflict keep` or `replace` to choose); a file
+whose content is already there under another path is skipped (`--keep-copies` adds it).
+Packs or workspaces embedded with a different model or vector size are refused.
+
 Measure retrieval with known answers:
 
 ```
@@ -117,12 +135,15 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 
 | Command | What it does |
 |---|---|
-| `rag init WS [--dims N] [--embedder NAME]` | Create a workspace. `--dims 2048` or `1024` stores smaller vectors; it can't be changed later without a full rebuild. |
+| `rag init WS [--name NAME] [--dims N] [--embedder NAME]` | Create a workspace. `--dims 2048` or `1024` stores smaller vectors; it can't be changed later without a full rebuild. |
+| `rag list [FOLDER] [--json]` | Workspaces and packs in a folder; the app's workspaces folder by default. |
+| `rag verify WS\|PACK [--json]` | Check it's whole: marker, settings, database integrity, counts that must agree, tables, figures; packs also every checksum. Exits 1 if something is wrong. |
 | `rag build WS PATH... [--prune] [--force] [--json]` | Read files and folders into the workspace. `--force` rebuilds everything; `--json` prints progress as JSON lines. |
 | `rag remove WS PATTERN...` | Remove documents by path or glob, e.g. `"*/Archive/*"`. |
 | `rag status WS` | Counts by type, failed files and embedding settings. |
 | `rag export WS OUT.ragpack [--name NAME] [--include-originals]` | Write a pack. Originals let the agent open source files but make the pack larger. |
 | `rag unpack PACK DEST` | Extract a pack and verify it. |
+| `rag merge DEST SRC... [--on-conflict newer\|keep\|replace] [--keep-copies] [--dry-run]` | Copy compatible packs or workspaces into DEST (created if missing). No re-embedding. |
 | `rag search WS\|PACK "question" [-k N] [--type pdf] [--json]` | The passages the agent would get, with sources. |
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |
@@ -165,5 +186,9 @@ llama-server without editing their `config.toml` files.
   shown on the Command line page, or use the app's terminal, which finds it automatically.
 - **`embedded with different settings`**: the workspace was built with another model or
   vector size. Use the same model, or rebuild with `rag build WS PATH --force`.
+- **`is not a workspace`**: the folder has no `.ragworkspace` marker and isn't an older
+  workspace either. Check the path with `rag list` on its parent folder.
+- **`can't merge: embedded differently`**: the two were built with different models or
+  vector sizes; their vectors can't be compared. Rebuild one from its files instead.
 - **`'rag' is not recognized`** (Windows): open a new terminal after turning the command on;
   terminals opened before don't see the change.

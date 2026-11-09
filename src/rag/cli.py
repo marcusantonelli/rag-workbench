@@ -1,11 +1,14 @@
 """`rag` command line: build packs, export them, and test retrieval.
 
-    rag init WS                         create a workspace (config.toml + empty databases)
+    rag init WS [--name NAME]           create a workspace (marker, config.toml, empty databases)
+    rag list [FOLDER]                   workspaces and packs in a folder (default: the app's workspaces)
+    rag verify WS|PACK                  check a workspace or pack is whole
     rag build WS PATH... [--json]       ingest files/folders (incremental by content hash)
     rag remove WS PATTERN...            remove documents by display path glob
     rag status WS                       counts, failures, embedding settings
     rag export WS OUT.ragpack           write a verified pack
     rag unpack PACK DEST                extract and verify a pack (e.g. to keep building it)
+    rag merge WS SRC...                 copy compatible packs/workspaces into WS (no re-embedding)
     rag search WS|PACK "question"       hybrid search (keyword + vector, RRF)
     rag tables WS|PACK                  list tables in tables.db
     rag describe WS|PACK TABLE          schema, column ranges, sample rows
@@ -71,8 +74,8 @@ def cmd_init(args) -> int:
     if args.embedder == "qwen3-onnx":
         overrides["embedding"].update({"model": "n24q02m/Qwen3-Embedding-0.6B-ONNX", "native_dims": 1024,
                                        "dims": args.dims or 1024})
-    ws = Workspace.init(Path(args.workspace), overrides)
-    print(f"Workspace ready at {ws.root}\n  embedding: {ws.config['embedding']['backend']} "
+    ws = Workspace.init(Path(args.workspace), overrides, name=args.name)
+    print(f"Workspace \"{ws.name}\" ready at {ws.root}\n  embedding: {ws.config['embedding']['backend']} "
           f"{ws.config['embedding']['model']} ({ws.config['embedding']['dims']} dims)\n"
           f"  edit {ws.config_path} before the first build if needed.")
     return 0
@@ -148,6 +151,114 @@ def cmd_unpack(args) -> int:
     manifest = unpack_pack(Path(args.pack), Path(args.dest))
     print(f"Unpacked and verified {len(manifest['files'])} files into {args.dest}")
     return 0
+
+
+def cmd_merge(args) -> int:
+    from rag.core.db.merge import MergeError, merge
+
+    def progress(e):
+        if args.json:
+            print(json.dumps(e), flush=True)
+
+    try:
+        res = merge(Path(args.dest), [Path(s) for s in args.sources], on_conflict=args.on_conflict,
+                    keep_copies=args.keep_copies, dry_run=args.dry_run, progress=progress)
+    except MergeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({"event": "merged", **res}))
+        return 0 if all(s["compatible"] for s in res["sources"]) else 2
+    verb = "Would merge" if res["dry_run"] else "Merged"
+    if res["created"]:
+        print(f"Created workspace {res['dest']}")
+    ok = True
+    for s in res["sources"]:
+        if not s["compatible"]:
+            ok = False
+            print(f"Skipped {s['name']}: {s['reason']}")
+            continue
+        print(f"{verb} {s['name']}: {s['add']} new, {s['replace']} replaced "
+              f"({_n(s['chunks'], 'chunk')}, {_n(s['tables'], 'table')})")
+        skipped = [(s["identical"], "already there"), (s["copies"], "same content under another path"),
+                   (s["kept"], "kept the destination's version"), (s["failed_skipped"], "failed to build")]
+        for n, why in skipped:
+            if n:
+                print(f"  skipped {n}: {why}")
+        for old, new in s["renamed_tables"]:
+            print(f"  table {old} renamed to {new}")
+        for c in s["conflicts"][:20]:
+            print(f"  {c['decision']:8} {c['path']}")
+    if res["dry_run"]:
+        print("Nothing was changed (--dry-run).")
+    return 0 if ok else 2
+
+
+def _human(n: int | None) -> str:
+    if n is None:
+        return ""
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return ""
+
+
+def _local_time(iso: str | None) -> str:
+    from datetime import datetime
+
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return iso[:16]
+
+
+def _n(n: int, word: str) -> str:
+    return f"{n} {word}" + ("" if n == 1 else "s")
+
+
+def cmd_list(args) -> int:
+    from rag.core.listing import default_folder, list_knowledge_bases
+
+    folder = Path(args.folder) if args.folder else default_folder()
+    rows = list_knowledge_bases(folder, sizes=not args.no_size)
+    if args.json:
+        print(json.dumps({"folder": str(folder), "items": rows}, default=str))
+        return 0
+    if not folder.is_dir():
+        print(f"{folder} doesn't exist yet." + ("" if args.folder else
+              " Workspaces made in RAG Workbench go there; give a folder to list another one."))
+        return 0
+    if not rows:
+        print(f"No workspaces or packs in {folder}")
+        return 0
+    print(f"In {folder}:\n")
+    headers = ["Name", "Kind", "Docs", "Chunks", "Tables", "Model", "Updated", "Size", "Folder or file"]
+    table = [[r["name"], r["kind"], str(r["documents"] if r["documents"] is not None else ""),
+              str(r["chunks"] if r["chunks"] is not None else ""), str(r["tables"] if r["tables"] is not None else ""),
+              (r["model"] or "").split("/")[-1] + (f" ({r['dims']})" if r["dims"] else ""),
+              _local_time(r["updated"]), _human(r["size_bytes"]),
+              (Path(r["path"]).name if Path(r["path"]) != folder else ".") + (f"  [{r['note']}]" if r["note"] else "")]
+             for r in rows]
+    widths = [max(len(h), *(len(row[i]) for row in table)) for i, h in enumerate(headers)]
+    right = {2, 3, 4, 7}
+    fmt = lambda cells: "  ".join(c.rjust(w) if i in right else c.ljust(w)  # noqa: E731
+                                  for i, (c, w) in enumerate(zip(cells, widths))).rstrip()
+    print(fmt(headers))
+    print(fmt(["-" * w for w in widths]))
+    for row in table:
+        print(fmt(row))
+    return 0
+
+
+def cmd_verify(args) -> int:
+    from rag.core.check import check_path, format_report
+
+    res = check_path(Path(args.target))
+    print(json.dumps(res, default=str) if args.json else format_report(res))
+    return 0 if res["ok"] else 1
 
 
 def _searcher(path: Path):
@@ -283,7 +394,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("workspace")
     s.add_argument("--embedder", choices=["llama-server", "llama-cpp", "qwen3-onnx", "hash-test"])
     s.add_argument("--dims", type=int, help="stored dims (MRL truncation), e.g. 2048")
+    s.add_argument("--name", help="display name (default: the folder name)")
     s.set_defaults(fn=cmd_init)
+
+    s = sub.add_parser("list", help="list workspaces and packs in a folder (default: the app's workspaces folder)")
+    s.add_argument("folder", nargs="?", help="folder to look in")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--no-size", action="store_true", help="skip adding up folder sizes (faster on big folders)")
+    s.set_defaults(fn=cmd_list)
+
+    s = sub.add_parser("verify", help="check a workspace or pack is whole (marker, databases, links, checksums)")
+    s.add_argument("target", help="workspace folder or .ragpack file")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_verify)
 
     s = sub.add_parser("build", help="ingest files and folders")
     s.add_argument("workspace")
@@ -315,6 +438,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("pack")
     s.add_argument("dest")
     s.set_defaults(fn=cmd_unpack)
+
+    s = sub.add_parser("merge", help="merge packs or workspaces into a workspace (no re-embedding)",
+                       description="Copy the documents, vectors and tables of compatible knowledge bases "
+                                   "(same embedding model and vector size) into DEST. DEST is created from "
+                                   "the first source's settings if it doesn't exist.")
+    s.add_argument("dest", help="workspace folder to merge into")
+    s.add_argument("sources", nargs="+", help=".ragpack files or workspace folders")
+    s.add_argument("--on-conflict", choices=["newer", "keep", "replace"], default="newer",
+                   help="the same file with different content in both: keep the newer build (default), "
+                        "keep DEST's, or take the source's")
+    s.add_argument("--keep-copies", action="store_true",
+                   help="also add files whose content DEST already has under another path")
+    s.add_argument("--dry-run", action="store_true", help="report what would happen; change nothing")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_merge)
 
     s = sub.add_parser("search", help="hybrid search")
     s.add_argument("workspace")

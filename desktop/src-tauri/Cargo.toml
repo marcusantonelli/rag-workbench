@@ -1,6 +1,6 @@
 [package]
 name = "rag-workbench"
-version = "0.3.2"
+version = "0.3.3"
 description = "Build, inspect and test RAG knowledge bases"
 edition = "2021"
 rust-version = "1.77"

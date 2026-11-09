@@ -514,3 +514,28 @@ def test_terminal_runs_rag_and_streams_output(svc, corpus, tmp_path):
         time.sleep(0.05)
     done = next(d for n, d in svc.events[start:] if n == "terminal" and d.get("type") == "exit")
     assert done["stopped"] is True and done["code"] != 0
+
+
+def test_merge_a_pack_into_a_workspace(svc, corpus, tmp_path):
+    a = svc.call("kb.create", {"name": "Line A", "dims": 256, "backend": "hash-test"})
+    b = svc.call("kb.create", {"name": "Line B", "dims": 256, "backend": "hash-test"})
+    assert wait_job(svc, svc.call("kb.build", {"kb": a["id"], "inputs": [str(corpus / "handoff.txt")]}))["state"] == "done"
+    assert wait_job(svc, svc.call("kb.build", {"kb": b["id"], "inputs": [str(corpus / "calibration.csv"),
+                                                                         str(corpus / "Seal Leak.md")]}))["state"] == "done"
+    ex = wait_job(svc, svc.call("kb.export", {"kb": b["id"], "out": str(tmp_path / "b.ragpack")}))
+    pack = svc.call("kb.open", {"path": ex["result"]["path"]})
+
+    plan = svc.call("kb.merge", {"kb": a["id"], "sources": [pack["path"]], "dry_run": True})
+    assert plan["sources"][0]["add"] == 2 and plan["sources"][0]["tables"] == 1
+    assert svc.call("kb.summary", {"kb": a["id"]})["counts"]["documents"] == 1
+
+    job = wait_job(svc, svc.call("kb.merge", {"kb": a["id"], "sources": [pack["path"]]}))
+    assert job["state"] == "done", job["error"]
+    assert job["result"]["sources"][0]["add"] == 2 and job["progress"]["files_done"] == 2
+    summary = svc.call("kb.summary", {"kb": a["id"]})
+    assert summary["counts"]["documents"] == 3 and summary["counts"]["tables"] == 1
+    assert svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})["results"]
+
+    with pytest.raises(ServiceError) as err:
+        svc.call("kb.merge", {"kb": pack["id"], "sources": [a["path"]]})
+    assert err.value.code == "readonly"

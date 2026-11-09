@@ -72,21 +72,23 @@ export function AboutView({ kb }: { kb: KbSummary }) {
         <Button icon={<FolderOpen size={16} />} onClick={() => call("app.open_path", { path: kb.path, reveal: kb.kind === "pack" }).catch(fail)}>
           Show in folder
         </Button>
-        {kb.kind === "pack" && (
-          <Button
-            icon={<ShieldCheck size={16} />}
-            disabled={verify?.state === "running"}
-            onClick={async () => {
-              const j = await startJob("kb.verify", { kb: kb.id });
-              if (j) setVerifyId(j.id);
-            }}
-          >
-            {verify?.state === "running" ? "Checking…" : "Check file integrity"}
-          </Button>
-        )}
+        <Button
+          icon={<ShieldCheck size={16} />}
+          disabled={verify?.state === "running" || kb.building}
+          onClick={async () => {
+            const j = await startJob("kb.verify", { kb: kb.id });
+            if (j) setVerifyId(j.id);
+          }}
+        >
+          {verify?.state === "running" ? "Checking…" : kb.kind === "pack" ? "Check file integrity" : "Check workspace"}
+        </Button>
       </div>
       {verify?.state === "done" && (
-        <Notice tone={verify.result.ok ? "success" : "error"} title={verify.result.ok ? "Pack is intact" : "Pack is damaged"}>
+        <Notice
+          tone={!verify.result.ok ? "error" : verify.result.problems?.length ? "warn" : "success"}
+          title={verify.result.ok ? (kb.kind === "pack" ? "Pack is intact" : "Workspace is intact")
+            : kb.kind === "pack" ? "Pack is damaged" : "Workspace has problems"}
+        >
           {verify.result.message}
         </Notice>
       )}

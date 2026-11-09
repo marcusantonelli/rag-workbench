@@ -225,7 +225,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (method: string, params: Record<string, unknown>) => {
       try {
         const j = await call<Job>(method, params);
-        setJobs((all) => ({ ...all, [j.id]: j }));
+        // A quick job can finish (and its events arrive) before this reply does: keep the newer state.
+        setJobs((all) => ({ ...all, [j.id]: { ...j, ...all[j.id] } }));
         return j;
       } catch (e) {
         fail(e);
