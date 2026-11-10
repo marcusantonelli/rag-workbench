@@ -10,6 +10,7 @@
 pub mod encode;
 pub mod error;
 pub mod format;
+pub mod kernels;
 pub mod reader;
 pub mod rotate;
 pub mod search;

@@ -206,7 +206,8 @@ fn run() -> Result<ExitCode, String> {
             let t = std::time::Instant::now();
             let truth: Vec<Vec<shammy_core::Hit>> = queries.iter().map(|q| r.search_exact(q, k, &none)).collect::<Result<_, _>>().map_err(e)?;
             println!("{} live rows x {} dims, {} queries (stored vectors), k = {k}", live, info.dims, queries.len());
-            println!("exact search: {:.1} ms per query\n", t.elapsed().as_secs_f64() * 1e3 / queries.len() as f64);
+            println!("exact search: {:.1} ms per query", t.elapsed().as_secs_f64() * 1e3 / queries.len() as f64);
+            println!("stage 1 kernel: {}\n", shammy_core::kernels::hamming_kernel_name(info.sketch_dims as usize / 8));
             let grid: Vec<usize> = match custom {
                 Some(c) => c.split(',').map(|x| x.trim().parse().map_err(|_| format!("--stage1: '{x}' is not a number"))).collect::<Result<_, _>>()?,
                 None => {

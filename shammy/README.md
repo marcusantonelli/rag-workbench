@@ -45,7 +45,7 @@ shammy bench kb.shammy                                  # recall and ms per sear
 - **Milestone 1 (done):** format 1.0, append-only writer with commits and tombstones, reader,
   scalar single-threaded search, verify, crash and corruption tests, bit-exact parity with the
   reference.
-- **Milestone 2, in steps:** `shammy bench` (done); then fast bit counting for stage 1, a
+- **Milestone 2, in steps:** `shammy bench` and fast bit counting for stage 1 (done); then a
   multi-threaded scan, fast kernels for stages 2 and 3, and error-bound pruning.
 
 ## Milestone 0 script

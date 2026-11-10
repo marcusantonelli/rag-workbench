@@ -6,6 +6,7 @@ use half::f16;
 
 use crate::encode::{normalize, pack_bits};
 use crate::error::{Error, Result};
+use crate::kernels;
 use crate::reader::{Reader, Segment};
 
 /// Restrict a search. `None` means no restriction on that field.
@@ -99,32 +100,52 @@ impl Reader {
         });
         let docs_ok: Option<std::collections::HashSet<u32>> = filter.doc_ids.as_ref().map(|d| d.iter().copied().collect());
 
-        // Stage 1: Hamming distance between sign bits of the sketch dimensions.
-        let mut cands: Vec<Cand> = Vec::new();
-        for (s, seg) in self.segments.iter().enumerate() {
-            let sketch = self.bytes(seg.sketch);
+        // Stage 1: Hamming distance between sign bits of the sketch dimensions, for every row.
+        // Distances are small integers, so the best `stage1` rows are found with a histogram
+        // instead of a sort; rows at the cut-off distance are taken in file order.
+        const SKIP: u16 = u16::MAX;
+        let mut dist: Vec<Vec<u16>> = Vec::with_capacity(self.segments.len());
+        let mut histogram = vec![0usize; self.header.sketch_dims as usize + 1];
+        for seg in &self.segments {
+            let mut d = vec![0u16; seg.rows];
+            kernels::hamming_rows(self.bytes(seg.sketch), sketch_bytes, &qbits[..sketch_bytes], &mut d);
             let ftype = self.bytes(seg.ftype);
             let doc = self.bytes(seg.doc);
-            for row in 0..seg.rows {
-                if self.deleted(seg, row) {
-                    continue;
-                }
-                if let Some(ok) = &type_ok {
-                    if !ok[ftype[row] as usize] {
+            let filtered = seg.tomb.is_some() || type_ok.is_some() || docs_ok.is_some();
+            for (row, x) in d.iter_mut().enumerate() {
+                if filtered {
+                    let out = self.deleted(seg, row)
+                        || type_ok.as_ref().is_some_and(|ok| !ok[ftype[row] as usize])
+                        || docs_ok.as_ref().is_some_and(|ok| !ok.contains(&u32::from_le_bytes(doc[row * 4..row * 4 + 4].try_into().unwrap())));
+                    if out {
+                        *x = SKIP;
                         continue;
                     }
                 }
-                if let Some(ok) = &docs_ok {
-                    if !ok.contains(&u32::from_le_bytes(doc[row * 4..row * 4 + 4].try_into().unwrap())) {
-                        continue;
+                histogram[*x as usize] += 1;
+            }
+            dist.push(d);
+        }
+        trace.scanned = histogram.iter().sum();
+        let (mut cutoff, mut below) = (0usize, 0usize);
+        while cutoff < histogram.len() && below + histogram[cutoff] < stage1 {
+            below += histogram[cutoff];
+            cutoff += 1;
+        }
+        let mut at_cutoff = stage1.saturating_sub(below);
+        let mut cands: Vec<Cand> = Vec::with_capacity(stage1.min(trace.scanned));
+        for (s, d) in dist.iter().enumerate() {
+            for (row, x) in d.iter().enumerate() {
+                let x = *x as usize;
+                if x < cutoff || (x == cutoff && at_cutoff > 0) {
+                    if x == cutoff {
+                        at_cutoff -= 1;
                     }
+                    cands.push(Cand { score: -(x as f32), seg: s as u32, row: row as u32 });
                 }
-                let code = &sketch[row * sketch_bytes..(row + 1) * sketch_bytes];
-                cands.push(Cand { score: -(hamming(code, &qbits[..sketch_bytes]) as f32), seg: s as u32, row: row as u32 });
             }
         }
-        trace.scanned = cands.len();
-        keep_best(&mut cands, stage1);
+        drop(dist);
         trace.stage1 = cands.len();
 
         // Stage 2: all sign bits against the rotated query (RaBitQ estimate of the dot product).
@@ -221,18 +242,6 @@ impl Reader {
         let all = Params { stage1: usize::MAX, stage2: usize::MAX, finish: usize::MAX };
         self.search(query, k, filter, &all)
     }
-}
-
-fn hamming(a: &[u8], b: &[u8]) -> u32 {
-    let mut n = 0;
-    let (mut ca, mut cb) = (a.chunks_exact(8), b.chunks_exact(8));
-    for (x, y) in (&mut ca).zip(&mut cb) {
-        n += (u64::from_le_bytes(x.try_into().unwrap()) ^ u64::from_le_bytes(y.try_into().unwrap())).count_ones();
-    }
-    for (x, y) in ca.remainder().iter().zip(cb.remainder()) {
-        n += (x ^ y).count_ones();
-    }
-    n
 }
 
 fn f32_at(b: &[u8], at: usize) -> f32 {
