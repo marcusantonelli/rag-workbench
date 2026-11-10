@@ -186,6 +186,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shammy-ffi"
+version = "0.1.0"
+dependencies = [
+ "shammy-core",
+]
+
+[[package]]
 name = "shammy-py"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,13 @@
+[package]
+name = "shammy-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C interface to the Shammy vector store (shammy.dll / libshammy.so)"
+
+[lib]
+name = "shammy"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+shammy-core = { path = "../shammy-core" }

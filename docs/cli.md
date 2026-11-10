@@ -141,7 +141,7 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 | `rag build WS PATH... [--prune] [--force] [--json]` | Read files and folders into the workspace. `--force` rebuilds everything; `--json` prints progress as JSON lines. |
 | `rag remove WS PATTERN...` | Remove documents by path or glob, e.g. `"*/Archive/*"`. |
 | `rag status WS` | Counts by type, failed files and embedding settings. |
-| `rag export WS OUT.ragpack [--name NAME] [--include-originals]` | Write a pack. Originals let the agent open source files but make the pack larger. |
+| `rag export WS OUT.ragpack [--name NAME] [--include-originals] [--slim]` | Write a pack. Originals let the agent open source files but make the pack larger. `--slim` (Shammy workspaces) leaves out the float16 vector copies: about a third of the vector size, but results aren't rescored exactly and the pack can't be merged. |
 | `rag unpack PACK DEST` | Extract a pack and verify it. |
 | `rag merge DEST SRC... [--on-conflict newer\|keep\|replace] [--keep-copies] [--dry-run]` | Copy compatible packs or workspaces into DEST (created if missing). No re-embedding. |
 | `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |

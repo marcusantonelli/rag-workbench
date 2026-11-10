@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Shammy</RootNamespace>
+    <AssemblyName>Shammy</AssemblyName>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>0.1.0</Version>
+    <Description>.NET wrapper for the Shammy vector store (reads .shammy files through shammy.dll / libshammy.so).</Description>
+  </PropertyGroup>
+</Project>

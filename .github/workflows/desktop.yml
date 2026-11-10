@@ -67,10 +67,20 @@ jobs:
           npm ci
           npx tauri build --bundles ${{ matrix.bundles }}
 
+      - name: Shammy library for the retrieval server
+        shell: bash
+        run: |
+          cargo build --release -p shammy-ffi --manifest-path shammy/Cargo.toml
+          mkdir -p shammy-native
+          cp shammy/include/shammy.h shammy-native/
+          cp shammy/target/release/shammy.dll shammy-native/ 2>/dev/null || cp shammy/target/release/libshammy.so shammy-native/
+          (cd shammy-native && 7z a ../shammy-native-${{ runner.os }}.zip . >/dev/null 2>&1 || zip -qr ../shammy-native-${{ runner.os }}.zip .)
+
       - uses: actions/upload-artifact@v4
         with:
           name: rag-workbench-${{ runner.os }}
           path: |
+            shammy-native-*.zip
             desktop/src-tauri/target/release/bundle/nsis/*.exe
             desktop/src-tauri/target/release/bundle/msi/*.msi
             desktop/src-tauri/target/release/bundle/deb/*.deb
@@ -83,6 +93,7 @@ jobs:
         with:
           draft: true
           files: |
+            shammy-native-*.zip
             desktop/src-tauri/target/release/bundle/nsis/*.exe
             desktop/src-tauri/target/release/bundle/msi/*.msi
             desktop/src-tauri/target/release/bundle/deb/*.deb

@@ -141,17 +141,24 @@ def cmd_status(args) -> int:
 
 
 def cmd_export(args) -> int:
-    from rag.core.db.pack import export_pack
+    from rag.core.db.pack import PackError, export_pack
     from rag.core.workspace import Workspace
 
     ws = Workspace.open(Path(args.workspace))
     t0 = time.monotonic()
-    manifest = export_pack(ws, Path(args.out), include_originals=args.include_originals, name=args.name)
+    try:
+        manifest = export_pack(ws, Path(args.out), include_originals=args.include_originals, name=args.name,
+                               slim=args.slim)
+    except PackError as exc:
+        print(f"rag: {exc}", file=sys.stderr)
+        return 1
     size = Path(args.out).stat().st_size / (1 << 20)
     print(f"Wrote {args.out} ({size:.1f} MB) in {time.monotonic() - t0:.1f}s\n"
           f"  pack_id {manifest['pack_id']}\n  {manifest['counts']['documents']} documents, "
           f"{manifest['counts']['chunks']} chunks, {manifest['counts']['tables']} tables\n"
-          f"  embedding {manifest['embedding']['model']} ({manifest['embedding']['dims']} dims)")
+          f"  embedding {manifest['embedding']['model']} ({manifest['embedding']['dims']} dims)"
+          + (f"\n  format {manifest['format']} (vectors in Shammy, {manifest['vector_tier']})"
+             if manifest.get("vector_store") == "shammy" else ""))
     return 0
 
 
@@ -501,6 +508,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("out")
     s.add_argument("--include-originals", action="store_true")
     s.add_argument("--name")
+    s.add_argument("--slim", action="store_true",
+                   help="Shammy workspaces: leave out the float16 vector copies (about a third of the vector "
+                        "size; results are no longer rescored exactly and the pack can't be merged)")
     s.set_defaults(fn=cmd_export)
 
     s = sub.add_parser("unpack", help="extract and verify a .ragpack")

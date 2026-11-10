@@ -103,8 +103,11 @@ shammy bench kb.shammy                                  # recall and ms per sear
 - **Milestone 3 (done):** Python module (`crates/shammy-py`, one abi3 wheel per platform),
   compaction, a writer lock, importers for SQLite and pgvector, and the Builder's vector-store
   switch (`rag init --vectors shammy`, `rag convert`, `rag compact`).
-- **Next, milestone 4:** the C interface and C# wrapper for the retrieval server; then the
-  keyword index.
+- **Milestone 4 (done):** the C interface (`crates/shammy-ffi`, `include/shammy.h`), the C#
+  wrapper (`dotnet/`, with how to read a `ragpack/2` pack in the retrieval server), and slim
+  files (`rag export --slim`, `shammy.compact(src, dst, slim=True)`). C, C# and Python return
+  the same hits bit for bit; a test checks it.
+- **Next, milestone 5:** the keyword index.
 
 ## Milestone 0 script
 

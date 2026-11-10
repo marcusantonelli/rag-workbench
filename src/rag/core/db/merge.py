@@ -185,6 +185,9 @@ def _merge_one(src_path: Path, root: Path, name: str, store: RagStore | None, ta
                      for k in EMBED_META_KEYS if src_embedding.get(k) != dest_embedding.get(k)]
             plan.compatible = False
             plan.reason = "embedded differently (" + "; ".join(diffs) + ")"
+        elif src.vector_backend == "shammy" and not src.vectors.info()["lossless"]:
+            plan.compatible = False
+            plan.reason = "it is a slim pack, which doesn't hold vectors that can be copied (merge the full pack or the workspace)"
         docs = src.documents()
         plan.documents = len(docs)
         if not plan.compatible:

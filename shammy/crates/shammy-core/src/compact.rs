@@ -18,11 +18,21 @@ pub struct Compacted {
 
 /// Write the live rows of `src` to `dst` (which must not exist yet). `src` is not changed.
 pub fn compact(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<Compacted> {
+    compact_with(src, dst, true)
+}
+
+/// As `compact`; with `keep_lossless` false the float16 copies are left out, giving a slim file
+/// about a third of the size whose searches end at the 8-bit codes.
+pub fn compact_with(src: impl AsRef<Path>, dst: impl AsRef<Path>, keep_lossless: bool) -> Result<Compacted> {
     let r = Reader::open(src.as_ref())?;
     if dst.as_ref().exists() {
         return Err(Error::Invalid(format!("{} already exists", dst.as_ref().display())));
     }
-    let mut w = Writer::create_like(dst.as_ref(), &r.header, &r.footer)?;
+    let mut header = r.header.clone();
+    if !keep_lossless {
+        header.flags &= !crate::format::FLAG_LOSSLESS;
+    }
+    let mut w = Writer::create_like(dst.as_ref(), &header, &r.footer)?;
     let dims = r.header.dims as usize;
     let sk = r.header.sketch_dims as usize / 8;
     let rest = dims / 8 - sk;
@@ -35,7 +45,7 @@ pub fn compact(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<Compacted
             }
             w.add_encoded(part(seg.ids, row, 8), part(seg.doc, row, 4), r.bytes(seg.ftype)[row], part(seg.sketch, row, sk),
                           part(seg.bits, row, rest), part(seg.corr, row, 8), part(seg.q8, row, dims), part(seg.q8corr, row, 8),
-                          seg.f16.map(|f| part(f, row, dims * 2)))?;
+                          seg.f16.filter(|_| keep_lossless).map(|f| part(f, row, dims * 2)))?;
             kept += 1;
         }
     }

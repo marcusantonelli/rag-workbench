@@ -172,10 +172,11 @@ fn verify<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyDict>> {
     Ok(d)
 }
 
-/// Copy the live rows of `src` into a new file `dst`.
+/// Copy the live rows of `src` into a new file `dst`; `slim` leaves out the float16 copies.
 #[pyfunction]
-fn compact<'py>(py: Python<'py>, src: &str, dst: &str) -> PyResult<Bound<'py, PyDict>> {
-    let c = py.allow_threads(|| core::compact(src, dst)).map_err(err)?;
+#[pyo3(signature = (src, dst, slim = false))]
+fn compact<'py>(py: Python<'py>, src: &str, dst: &str, slim: bool) -> PyResult<Bound<'py, PyDict>> {
+    let c = py.allow_threads(|| core::compact_with(src, dst, !slim)).map_err(err)?;
     let d = PyDict::new(py);
     d.set_item("rows_before", c.rows_before)?;
     d.set_item("rows_after", c.rows_after)?;

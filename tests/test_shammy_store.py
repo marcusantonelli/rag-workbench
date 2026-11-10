@@ -248,3 +248,30 @@ def test_import_from_sqlite(built_ws, tmp_path, capsys):
     hit = ix.search(vecs[17], k=1, file_types=["a"])[0]
     assert hit.id == 18 and (tmp_path / "plain.shammy.ids.csv").read_text().splitlines()[17] == "18,k17"
     assert main(["sqlite", str(db), str(tmp_path / "x.shammy"), "--table", "items; DROP TABLE items"]) == 1
+
+
+def test_slim_pack(shammy_ws, built_ws, tmp_path):
+    from rag.core.db.pack import PackError
+
+    full, slim = tmp_path / "full.ragpack", tmp_path / "slim.ragpack"
+    export_pack(shammy_ws, full)
+    manifest = export_pack(shammy_ws, slim, slim=True)
+    assert manifest["vector_tier"] == "slim"
+    import zipfile
+
+    sizes = [zipfile.ZipFile(p).getinfo("vectors.shammy").file_size for p in (full, slim)]
+    assert sizes[1] < sizes[0]   # at 4096 dims: 4.6 KB a chunk against 12.8 KB (this tiny file is mostly padding)
+    assert check_path(slim)["ok"]
+    ws, tmp = open_any(slim)
+    try:
+        hits = _search(ws, QUERIES[0])[0]
+        best = _ranked(shammy_ws, QUERIES[0])
+        assert len(hits) == len(best)
+        # the same best chunk (by text), found without the float16 copies
+        assert _texts(ws, hits[:1]) == _texts(shammy_ws, _search(shammy_ws, QUERIES[0])[0][:1])
+    finally:
+        tmp.cleanup()
+    plan = merge(tmp_path / "dest", [slim], dry_run=True)
+    assert not plan["sources"][0]["compatible"] and "slim" in plan["sources"][0]["reason"]
+    with pytest.raises(PackError, match="rag convert"):
+        export_pack(built_ws, tmp_path / "no.ragpack", slim=True)

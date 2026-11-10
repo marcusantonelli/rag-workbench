@@ -39,7 +39,8 @@ def _snapshot(src: Path, dest: Path, *, load_vec: bool) -> None:
         out.close()
 
 
-def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: str | None = None) -> dict[str, Any]:
+def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: str | None = None,
+                slim: bool = False) -> dict[str, Any]:
     out_path = Path(out_path)
     store = RagStore(ws.rag_db, readonly=True)
     try:
@@ -48,6 +49,8 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
         backend = store.vector_backend
     finally:
         store.close()
+    if slim and backend != "shammy":
+        raise PackError("a slim pack needs the workspace's vectors in Shammy (run `rag convert` first)")
     from rag.core.db.tables import TablesStore
 
     tstore = TablesStore(ws.tables_db, readonly=True)
@@ -70,7 +73,7 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
             from rag.core.db.vectors import SHAMMY_FILE, shammy_module
 
             # a compacted copy: no deleted rows, one read-only file
-            shammy_module().compact(str(ws.root / SHAMMY_FILE), str(tmp_dir / SHAMMY_FILE))
+            shammy_module().compact(str(ws.root / SHAMMY_FILE), str(tmp_dir / SHAMMY_FILE), slim)
             entries.insert(1, (tmp_dir / SHAMMY_FILE, SHAMMY_FILE))
         for folder, include in ((ws.assets_dir, True), (ws.library_dir, include_originals)):
             if include and folder.exists():
@@ -81,6 +84,8 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
         manifest = {
             "format": PACK_FORMAT_SHAMMY if backend == "shammy" else PACK_FORMAT,
             "vector_store": backend,
+            # "slim": 1-bit and 8-bit codes only (a third of the size; no exact rescoring, can't be merged)
+            "vector_tier": "slim" if slim else "full",
             "pack_id": str(uuid.uuid4()),
             "name": name or ws.name,
             "built_at": now_iso(),
