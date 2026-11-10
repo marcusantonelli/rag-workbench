@@ -44,8 +44,10 @@ jobs:
           Get-Command candle.exe -ErrorAction Stop
           Get-Command light.exe -ErrorAction Stop
 
-          Write-Host "Checking NSIS..."
-          Get-Command makensis.exe -ErrorAction Stop
+          Write-Host "Checking NSIS provisioning..."
+          Write-Host "Tauri will automatically download and configure NSIS 3.13."
+
+          Write-Host "Windows bundler prerequisites verified."
 
       - uses: actions/setup-python@v5
         with:
