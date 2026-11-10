@@ -82,7 +82,7 @@ impl Header {
             )));
         }
         let (d, s) = (h.dims, h.sketch_dims);
-        if d < 16 || !d.is_power_of_two() || (s != d / 4 && s != d / 2) {
+        if d < 64 || !d.is_power_of_two() || (s != d / 4 && s != d / 2) {
             return Err(Error::Format(format!("unsupported dimensions {d} with a {s}-dimension sketch")));
         }
         Ok(h)

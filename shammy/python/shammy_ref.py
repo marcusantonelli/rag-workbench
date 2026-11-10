@@ -178,7 +178,7 @@ def search(file: dict, query: np.ndarray, k: int = 20, stage1: int = 0, stage2: 
     """The engine's search, written the slow obvious way. Returns [(id, score)] best first."""
     dims, sd = file["dims"], file["sketch_dims"]
     unit = normalize(np.asarray(query, dtype=np.float32))
-    qr = rotate(unit, file["rotation_seed"]).astype(np.float64)
+    qr = rotate(unit, file["rotation_seed"])
     qbits = np.packbits(qr < 0, bitorder="little")
     stage1 = max(stage1 or max(file["live_rows"] // 100, 4096), k)
     stage2, finish = max(stage2, k), max(finish, k)
@@ -193,13 +193,25 @@ def search(file: dict, query: np.ndarray, k: int = 20, stage1: int = 0, stage2: 
     def rescored(fn, keep):
         return sorted(((fn(file["segments"][s], r), s, r) for _, s, r in cands), key=order)[:keep]
 
+    q32 = qr.astype(np.float32)
+
+    def lanes(terms: np.ndarray) -> float:
+        """Sum float32 terms in 16 lanes (dimension i in lane i % 16), then the lanes in float64."""
+        acc = np.zeros(16, dtype=np.float32)
+        for group in terms.astype(np.float32).reshape(-1, 16):
+            acc += group
+        total = 0.0
+        for x in acc:
+            total += float(x)
+        return total
+
     def one_bit(seg, r):
-        signs = 1.0 - 2.0 * np.unpackbits(np.concatenate((seg["sketch"][r], seg["bits"][r])), bitorder="little")
-        return float(np.float32((signs * qr).sum() * np.float64(seg["corr"][r, 1])))
+        minus = np.unpackbits(np.concatenate((seg["sketch"][r], seg["bits"][r])), bitorder="little").astype(bool)
+        return float(np.float32(lanes(np.where(minus, -q32, q32)) * np.float64(seg["corr"][r, 1])))
 
     cands = rescored(one_bit, stage2)
     lossless = bool(file["flags"] & 2)
-    cands = rescored(lambda seg, r: float(np.float32((seg["q8"][r].astype(np.float64) * qr).sum()
+    cands = rescored(lambda seg, r: float(np.float32(lanes(seg["q8"][r].astype(np.float32) * q32)
                                                        * np.float64(seg["q8corr"][r, 0]))), finish if lossless else k)
     if lossless:
         u64 = unit.astype(np.float64)

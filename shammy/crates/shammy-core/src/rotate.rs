@@ -36,9 +36,9 @@ impl Rotation {
     /// Signs are drawn block by block, round by round, dimension by dimension: one SplitMix64
     /// word per 64 dimensions, least significant bit first, a set bit meaning -1.
     pub fn new(dims: usize, seed: u64) -> Result<Self> {
-        if dims < 16 || !dims.is_power_of_two() {
+        if dims < 64 || !dims.is_power_of_two() {
             return Err(Error::Invalid(format!(
-                "{dims} dimensions: this format version needs a power of two, 16 or more"
+                "{dims} dimensions: this format version needs a power of two, 64 or more"
             )));
         }
         let mut rng = SplitMix64(seed);

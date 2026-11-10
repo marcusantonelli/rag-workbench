@@ -29,7 +29,7 @@ them, and a writer truncates them before appending.
 | 0 | 8 | magic | `53 48 41 4D 4D 59 00 01` ("SHAMMY\0\1") |
 | 8 | 2 | format_major | 1. A reader refuses any other major version |
 | 10 | 2 | format_minor | 0. A reader skips section types it doesn't know |
-| 12 | 4 | dims | A power of two, 16 or more |
+| 12 | 4 | dims | A power of two, 64 or more |
 | 16 | 4 | sketch_dims | dims/4 or dims/2 |
 | 20 | 4 | flags | bit 0: vectors are unit length (always set); bit 1: lossless tier present |
 | 24 | 8 | rotation_seed | Default `0x5348414D4D593031`. Files merge by copying only if this matches |
@@ -132,6 +132,8 @@ With the query normalised to `u` and rotated to `q`:
 | 3 | stage-2 survivors | `q8corr.factor x sum(code_i x q_i)` | finish (default 50); k if there is no lossless tier |
 | finish | stage-3 survivors, lossless files only | `sum(f16_i x u_i)` | k |
 
-Sums are accumulated in float64 and scores stored as float32. Ties are broken by segment then
+The stage 2 and 3 sums are kept in 16 float32 lanes (dimension *i* adds to lane `i % 16`; in
+stage 3 the product `code_i x q_i` is rounded to float32 before it is added), then the lanes are
+added in order in float64. The finish sum is accumulated in float64. Scores are stored as float32. Ties are broken by segment then
 row at every stage, and results are ordered by score, then id, so a search is deterministic.
 Every count is raised to at least k.

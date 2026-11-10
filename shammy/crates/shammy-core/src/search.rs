@@ -161,8 +161,9 @@ impl Reader {
             let seg = &self.segments[c.seg as usize];
             let row = c.row as usize;
             let code = &self.bytes(seg.q8)[row * dims..(row + 1) * dims];
-            let dot: f64 = code.iter().zip(&rotated).map(|(b, q)| (*b as i8) as f64 * *q as f64).sum();
-            c.score = (dot * f32_at(self.bytes(seg.q8corr), row * 8) as f64) as f32;
+            let mut acc = [0f32; kernels::LANES];
+            kernels::i8_dot(code, &rotated, &mut acc);
+            c.score = (kernels::reduce(&acc) * f32_at(self.bytes(seg.q8corr), row * 8) as f64) as f32;
         }
         let lossless = self.header.lossless();
         keep_best(&mut cands, if lossless { finish } else { k });
@@ -199,12 +200,11 @@ impl Reader {
         let rest_bytes = rotated.len() / 8 - sketch_bytes;
         let a = &self.bytes(seg.sketch)[row * sketch_bytes..(row + 1) * sketch_bytes];
         let b = &self.bytes(seg.bits)[row * rest_bytes..(row + 1) * rest_bytes];
-        let mut dot = 0f64;
-        for (i, q) in rotated.iter().enumerate() {
-            let byte = if i / 8 < sketch_bytes { a[i / 8] } else { b[i / 8 - sketch_bytes] };
-            dot += if byte >> (i % 8) & 1 == 1 { -(*q as f64) } else { *q as f64 };
-        }
-        (dot * f32_at(self.bytes(seg.corr), row * 8 + 4) as f64) as f32
+        let split = sketch_bytes * 8;
+        let mut acc = [0f32; kernels::LANES];
+        kernels::sign_dot(a, &rotated[..split], 0, &mut acc);
+        kernels::sign_dot(b, &rotated[split..], split, &mut acc);
+        (kernels::reduce(&acc) * f32_at(self.bytes(seg.corr), row * 8 + 4) as f64) as f32
     }
 
     /// The stored vector for a chunk id (from the lossless tier), or None.
