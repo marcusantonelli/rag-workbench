@@ -81,5 +81,66 @@ File.WriteAllText(Path.Combine(dir, "not.shammy"), "this is not a shammy file, j
 try { ShammyIndex.Open(Path.Combine(dir, "not.shammy")); Expect(false, "opening a non-Shammy file fails"); }
 catch (ShammyException e) { Expect(e.Code == -3, $"wrong format error code ({e.Code}: {e.Message})"); }
 
+// The whole retrieval path: the wrapper must return what the Python module returned for the same
+// knowledge bases, questions and options (rag.json is written by the test that runs this program).
+string ragFile = Path.Combine(dir, "rag.json");
+if (File.Exists(ragFile))
+{
+    using var rag = JsonDocument.Parse(File.ReadAllText(ragFile));
+    foreach (var kb in rag.RootElement.GetProperty("knowledge_bases").EnumerateArray())
+    {
+        string folder = kb.GetProperty("folder").GetString()!;
+        using var retriever = ShammyRetriever.Open(folder);
+        Expect(retriever.VectorStore == kb.GetProperty("vector_store").GetString(), $"vector store of {folder}");
+        Expect(retriever.Dimensions == kb.GetProperty("dims").GetInt32() && retriever.Chunks > 0, "retriever info");
+        foreach (var c in kb.GetProperty("cases").EnumerateArray())
+        {
+            float[] v = c.GetProperty("vector").EnumerateArray().Select(e => e.GetSingle()).ToArray();
+            string name = c.GetProperty("name").GetString()!;
+            string got = retriever.SearchJson(c.GetProperty("request").GetRawText(), v);
+            using var gotDoc = JsonDocument.Parse(got);
+            Expect(Same(gotDoc.RootElement, c.GetProperty("response")), $"retrieval case {name}");
+        }
+
+        // the typed call
+        var first = kb.GetProperty("cases")[0];
+        float[] qv = first.GetProperty("vector").EnumerateArray().Select(e => e.GetSingle()).ToArray();
+        string question = first.GetProperty("request").GetProperty("query").GetString()!;
+        var typed = retriever.Search(question, qv, new RetrievalOptions { K = 3 });
+        Expect(typed.Results.Count == 3 && typed.Results[0].Tag == "S1" && typed.Results[0].File.Length > 0
+               && typed.Markdown!.StartsWith("[S1] ") && typed.Reranked is null, "typed search");
+        if (kb.TryGetProperty("rerank_url", out var url))
+        {
+            var ranked = retriever.Search(question, qv, new RetrievalOptions { K = 3, Rerank = new RerankOptions { Url = url.GetString()! } });
+            Expect(ranked.Reranked == true && ranked.Results[0].RerankScore is not null, "typed search with reranking");
+            var down = retriever.Search(question, qv, new RetrievalOptions { K = 3, Rerank = new RerankOptions { Url = "http://127.0.0.1:9" } });
+            Expect(down.Reranked == false && !string.IsNullOrEmpty(down.RerankError)
+                   && down.Results.Select(r => r.ChunkId).SequenceEqual(typed.Results.Select(r => r.ChunkId)), "reranker down falls back");
+        }
+        try { retriever.Search("x", new float[7]); Expect(false, "a wrong-size vector is refused"); }
+        catch (ShammyException e) { Expect(e.Code == -1, "wrong-size vector error"); }
+    }
+    try { ShammyRetriever.Open(dir); Expect(false, "a folder without rag.db is refused"); }
+    catch (ShammyException e) { Expect(e.Code == -2 && e.Message.Contains("rag.db"), "not a knowledge base error"); }
+}
+
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
+
+// Same JSON value: numbers compared as numbers, object keys in any order, timings ignored.
+static bool Same(JsonElement a, JsonElement b)
+{
+    if (a.ValueKind != b.ValueKind) return false;
+    switch (a.ValueKind)
+    {
+        case JsonValueKind.Number: return a.GetDouble() == b.GetDouble();
+        case JsonValueKind.String: return a.GetString() == b.GetString();
+        case JsonValueKind.Array:
+            return a.GetArrayLength() == b.GetArrayLength() && a.EnumerateArray().Zip(b.EnumerateArray()).All(p => Same(p.First, p.Second));
+        case JsonValueKind.Object:
+            var left = a.EnumerateObject().Where(p => p.Name != "timings_ms").ToList();
+            if (left.Count != b.EnumerateObject().Count(p => p.Name != "timings_ms")) return false;
+            return left.All(p => b.TryGetProperty(p.Name, out var other) && Same(p.Value, other));
+        default: return true;
+    }
+}

@@ -190,8 +190,54 @@ fn default_threads() -> usize {
     core::default_threads()
 }
 
+/// The whole retrieval path over a workspace or unpacked pack folder (see the shammy-rag crate).
+#[pyclass]
+struct Retriever {
+    inner: Option<shammy_rag::Retriever>,
+}
+
+fn rag_err(e: shammy_rag::Error) -> PyErr {
+    match e {
+        shammy_rag::Error::Request(m) => PyValueError::new_err(m),
+        shammy_rag::Error::Store(m) => PyOSError::new_err(m),
+    }
+}
+
+#[pymethods]
+impl Retriever {
+    #[new]
+    fn new(py: Python<'_>, folder: &str) -> PyResult<Self> {
+        Ok(Self { inner: Some(py.allow_threads(|| shammy_rag::Retriever::open(folder)).map_err(rag_err)?) })
+    }
+
+    /// JSON description of the knowledge base (vector store, dims, model, counts).
+    fn info(&self) -> PyResult<String> {
+        let info = self.inner.as_ref().ok_or_else(closed)?.info().map_err(rag_err)?;
+        serde_json::to_string(&info).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Run one search: a JSON request and the query vector (float32 bytes); returns the JSON response.
+    fn search(&self, py: Python<'_>, request: &str, vector: &[u8]) -> PyResult<String> {
+        let r = self.inner.as_ref().ok_or_else(closed)?;
+        let v = floats(vector)?;
+        py.allow_threads(|| r.search_json(request, &v)).map_err(rag_err)
+    }
+
+    fn close(&mut self) {
+        self.inner = None;
+    }
+}
+
+/// The FTS5 expression the keyword search uses for a question.
+#[pyfunction]
+fn fts_query(query: &str) -> String {
+    shammy_rag::fts_query(query)
+}
+
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<Retriever>()?;
+    m.add_function(wrap_pyfunction!(fts_query, m)?)?;
     m.add_class::<Writer>()?;
     m.add_class::<Reader>()?;
     m.add_function(wrap_pyfunction!(verify, m)?)?;

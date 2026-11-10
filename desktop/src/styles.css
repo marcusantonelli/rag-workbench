@@ -557,3 +557,7 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 .merge-conflicts { margin-top: 10px; font-size: 13px; }
 .merge-conflicts summary { cursor: pointer; color: var(--muted); }
 .merge-conflicts ul { margin: 6px 0 0; padding-left: 18px; max-height: 200px; overflow: auto; }
+
+/* Search: reranker address beside its switch */
+.rerank-url { display: inline-flex; align-items: center; gap: 6px; }
+.rerank-url input { width: 190px; padding: 3px 8px; font-size: 12px; }

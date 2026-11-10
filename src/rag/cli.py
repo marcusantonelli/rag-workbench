@@ -325,10 +325,10 @@ def cmd_verify(args) -> int:
     return 0 if res["ok"] else 1
 
 
-def _searcher(path: Path):
+def _searcher(path: Path, rerank: bool | None = None, rerank_url: str | None = None):
     from rag.core.db.store import RagStore
     from rag.core.models.embed import make_embedder
-    from rag.core.retrieve.search import Searcher
+    from rag.core.retrieve.search import Searcher, rerank_settings
     from rag.core.workspace import open_any
 
     ws, tmp = open_any(path)
@@ -338,18 +338,24 @@ def _searcher(path: Path):
     if meta.get("embed_model") and meta["embed_model"] != cfg["embedding"]["model"]:
         print(f"warning: pack embedded with {meta['embed_model']}, config says {cfg['embedding']['model']}",
               file=sys.stderr)
-    searcher = Searcher(store, make_embedder(cfg["embedding"]), cfg["search"])
+    searcher = Searcher(store, make_embedder(cfg["embedding"]), cfg["search"],
+                        reranker=rerank_settings(cfg.data, rerank, rerank_url))
     return searcher, ws, tmp
 
 
 def cmd_search(args) -> int:
-    searcher, ws, tmp = _searcher(Path(args.workspace))
-    res = searcher.search(args.query, k=args.k, file_type=args.type)
+    searcher, ws, tmp = _searcher(Path(args.workspace), args.rerank, args.rerank_url)
+    try:
+        res = searcher.search(args.query, k=args.k, file_type=args.type)
+    finally:
+        searcher.close()
+    if res.rerank and not res.rerank.get("applied"):
+        print(f"warning: not reranked: {res.rerank.get('error')}", file=sys.stderr)
     if args.json:
         print(json.dumps(res.to_dict(), indent=2, default=str))
     else:
         print(res.to_markdown())
-        print(f"\n(timings ms: {res.timings_ms})")
+        print(f"\n(timings ms: {res.timings_ms}" + ("; reranked" if res.rerank and res.rerank.get("applied") else "") + ")")
     return 0
 
 
@@ -539,6 +545,9 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("-k", type=int)
     s.add_argument("--type", help="only this file type, e.g. pdf")
     s.add_argument("--json", action="store_true")
+    s.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=None,
+                   help="reorder the best candidates with the reranker model (default: the workspace's [rerank] setting)")
+    s.add_argument("--rerank-url", help="the reranker's address, e.g. http://127.0.0.1:8081 (implies nothing; use with --rerank)")
     s.set_defaults(fn=cmd_search)
 
     s = sub.add_parser("tables", help="list tables")

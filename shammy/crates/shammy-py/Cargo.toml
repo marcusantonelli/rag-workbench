@@ -11,4 +11,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 shammy-core = { path = "../shammy-core" }
+shammy-rag = { path = "../shammy-rag" }
+serde_json = "1"
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }

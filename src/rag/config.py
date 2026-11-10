@@ -109,6 +109,17 @@ DEFAULTS: dict[str, Any] = {
         "neighbors": 1,
         "max_result_tokens": 6000,
     },
+    "rerank": {
+        # Optional second pass: a small reranker model reorders the best fused candidates before
+        # the cut. Needs a /v1/rerank endpoint (llama-server --reranking with a reranker GGUF such
+        # as Qwen3-Reranker-0.6B). Off by default; `rag search --rerank` turns it on for one search.
+        # The RAG_RERANK_URL environment variable overrides url.
+        "enabled": False,
+        "url": "http://127.0.0.1:8081",
+        "model": "",
+        "candidates": 20,
+        "timeout_ms": 15000,
+    },
     "sql": {
         "row_limit": 200,
         "time_limit_ms": 2000,

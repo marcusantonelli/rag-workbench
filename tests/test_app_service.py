@@ -550,8 +550,12 @@ def test_shammy_knowledge_bases_and_convert(svc, corpus, tmp_path):
                                                                          str(corpus / "Seal Leak.md")]}))["state"] == "done"
     before = svc.call("kb.summary", {"kb": a["id"]})
     assert before["counts"]["vectors"] == before["counts"]["chunks"] > 0 and before["counts"]["tables"] == 1
-    hits = svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})["results"]
-    assert hits
+    found = svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})
+    hits = found["results"]
+    assert hits and found["engine"] == "native" and "rerank" not in found
+    unreachable = svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate", "rerank": True,
+                                         "rerank_url": "http://127.0.0.1:9"})
+    assert unreachable["rerank"]["applied"] is False and unreachable["results"][0]["text"] == hits[0]["text"]
 
     job = wait_job(svc, svc.call("kb.convert", {"kb": a["id"], "to": "sqlite-vec"}))
     assert job["state"] == "done", job["error"]

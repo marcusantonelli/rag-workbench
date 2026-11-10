@@ -146,7 +146,7 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 | `rag merge DEST SRC... [--on-conflict newer\|keep\|replace] [--keep-copies] [--dry-run]` | Copy compatible packs or workspaces into DEST (created if missing). No re-embedding. |
 | `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |
 | `rag compact WS` | Rewrite `vectors.shammy` without deleted rows. Builds do this on their own when a quarter of the rows are deleted. |
-| `rag search WS\|PACK "question" [-k N] [--type pdf] [--json]` | The passages the agent would get, with sources. |
+| `rag search WS\|PACK "question" [-k N] [--type pdf] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8081`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |
 | `rag sql WS\|PACK "SELECT ..." [--json]` | Read-only SQL over the tables, as the agent runs it. |

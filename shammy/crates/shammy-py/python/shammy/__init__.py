@@ -26,9 +26,9 @@ from typing import Iterable, NamedTuple, Sequence
 import numpy as np
 
 from . import _native
-from ._native import __version__, compact, default_threads, verify
+from ._native import __version__, compact, default_threads, fts_query, verify
 
-__all__ = ["Index", "Hit", "Locked", "storage_dims", "verify", "compact", "default_threads", "__version__"]
+__all__ = ["Index", "Hit", "Locked", "Retriever", "fts_query", "storage_dims", "verify", "compact", "default_threads", "__version__"]
 
 
 class Hit(NamedTuple):
@@ -268,3 +268,43 @@ class Index:
         """(ids, doc ids) of every live row, in file order."""
         a, b = self._read().live()
         return np.frombuffer(a, dtype="<u8"), np.frombuffer(b, dtype="<u4")
+
+
+class Retriever:
+    """The whole retrieval path over a RAG Workbench workspace or unpacked pack folder: vector and
+    keyword search, rank fusion, optional reranking, neighbour expansion and citations. The same
+    code runs behind the C interface, so every caller gets the same results.
+
+        r = shammy.Retriever("path/to/workspace")
+        out = r.search("how is the lid seal tested?", query_vector, k=6,
+                       rerank={"enabled": True, "url": "http://127.0.0.1:8081"})
+        for hit in out["results"]: ...
+
+    The caller embeds the question (with the model and instruction ``r.info()`` names).
+    """
+
+    def __init__(self, folder: str | os.PathLike):
+        self._native = _native.Retriever(str(folder))
+
+    def info(self) -> dict:
+        import json
+
+        return json.loads(self._native.info())
+
+    def search(self, query: str, vector, **options) -> dict:
+        """Options: k, file_type, expand, vec_k, fts_k, rrf_k, neighbors, max_result_tokens,
+        threads, markdown, rerank={enabled, url, model, candidates, timeout_ms}."""
+        import json
+
+        request = {"query": query, **{k: v for k, v in options.items() if v is not None}}
+        v = np.ascontiguousarray(np.asarray(vector, dtype="<f4").reshape(-1))
+        return json.loads(self._native.search(json.dumps(request), v.tobytes()))
+
+    def close(self) -> None:
+        self._native.close()
+
+    def __enter__(self) -> "Retriever":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()

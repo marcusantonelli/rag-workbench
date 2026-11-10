@@ -36,37 +36,46 @@ ShammyHit[] pdfOnly = index.Search(queryEmbedding, 40, new ShammySearchOptions {
   `Threads` is set.
 - Failures throw `ShammyException` with the native code (-1 argument, -2 I/O, -3 file format).
 
-## Reading a `ragpack/2` pack in the retrieval server
+## The retrieval server: one call per search
 
-A `ragpack/2` pack is a `ragpack/1` pack whose vectors are in `vectors.shammy` instead of the
-`chunk_vec` table (which is present but empty). `manifest.json` has `"format": "ragpack/2"`,
-`"vector_store": "shammy"` and `"vector_tier": "full"` or `"slim"`. Everything else (chunks,
-`chunks_fts`, `tables.db`, assets) is unchanged, so only the vector query changes:
+`ShammyRetriever` runs the whole search path: vector search, keyword search, rank fusion,
+duplicate removal, optional reranking, neighbour expansion and citations. It is the same code the
+Workbench runs, so the agent gets exactly what the Workbench's Search tab shows. It reads
+`ragpack/1` packs (vectors in sqlite-vec) and `ragpack/2` packs (vectors in `vectors.shammy`)
+alike, so the server doesn't need its own SQLite, sqlite-vec or fusion code for search.
 
 ```csharp
-// when a pack is loaded
-if (manifest.Format == "ragpack/2")
-{
-    var report = ShammyIndex.Verify(vectorsPath);              // optional: checks every checksum
-    if (!report.Ok) throw new InvalidDataException(report.FirstProblem);
-    pack.Vectors = ShammyIndex.Open(vectorsPath);
-    if (pack.Vectors.Dimensions != embedder.Dimensions || pack.Vectors.Model != manifest.Embedding.Model)
-        throw new InvalidDataException("the pack was built with a different embedding model");
-}
+using Shammy;
 
-// in the search path, where ragpack/1 runs
-//   SELECT chunk_id FROM chunk_vec WHERE embedding MATCH ? AND k = 40 [AND file_type = ?]
-long[] vectorIds = pack.Vectors is null
-    ? QueryChunkVec(queryEmbedding, 40, fileType)
-    : pack.Vectors.Search(queryEmbedding, 40, new ShammySearchOptions { FileTypes = fileType is null ? null : [fileType] })
-          .Select(h => (long)h.Id).ToArray();
-// then, as before: fuse with the FTS5 ids, load the rows from chunks by chunk_id
+// when a pack is loaded (the folder it was unpacked to, the one holding rag.db)
+var kb = ShammyRetriever.Open(packFolder);
+// kb.Model, kb.Dimensions and kb.QueryInstruction say how queries must be embedded
+
+// per request from the agent
+float[] vector = await embedder.EmbedAsync(kb.QueryInstruction + question);   // your existing embedding call
+RetrievalResult found = kb.Search(question, vector, new RetrievalOptions
+{
+    K = 6,
+    FileType = fileType,                                            // null for all
+    Rerank = rerankOn ? new RerankOptions { Url = "http://127.0.0.1:8081" } : null,
+});
+return found.Markdown;      // the compact text for the agent; found.Results / found.Json for structure
 ```
 
-The ids Shammy returns are `chunks.chunk_id` values, best first, the same list the `chunk_vec`
-query gave.
+- `found.Reranked` is `true` when the reranker's order was used, `false` when reranking was asked
+  for but failed (results are then in the usual order and `found.RerankError` says why), and
+  `null` when it wasn't asked for. A reranker that is down never fails the search.
+- The reranker is any `/v1/rerank` endpoint over plain http, for example
+  `llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8081`.
+- `kb.SearchJson(requestJson, vector)` takes and returns raw JSON (fields in `shammy.h`) if the
+  server passes the agent's options straight through.
+- Table tools (`describe_table`, `query_table`) still read `tables.db` in the server as before;
+  `found.Tables` lists the tables whose description ranked.
+- `ShammyIndex` (above) remains for using a `.shammy` file on its own.
 
 ## Test
 
-`python -m pytest tests/test_shammy_native.py` (from the repository root) builds a file with the
-Python module and checks that the C interface and this wrapper return exactly the same hits.
+`python -m pytest tests/test_shammy_native.py` (from the repository root) builds a vector file and two
+knowledge bases with the Python module and checks that the C interface and this wrapper return
+exactly what Python returns, for vector search and for whole retrievals (with and without
+reranking).

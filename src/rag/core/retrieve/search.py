@@ -1,8 +1,13 @@
-"""Test retrieval over a pack: FTS5 + the vector store, fused with Reciprocal Rank Fusion.
+"""Retrieval over a workspace or pack: FTS5 + the vector store, fused with Reciprocal Rank Fusion,
+optionally reranked, then expanded and cited.
 
-This is the reference behaviour for the future C# retrieval server: same
-query parsing, same FTS query construction, same RRF, same result shape.
-There is no reranker in v1; ``rerank`` is the hook where v2 plugs one in.
+The search itself runs in the shared engine (``shammy.Retriever``, Rust), the same code the
+retrieval server calls through C#, so the Workbench shows exactly what the agent gets. This
+module embeds the question, calls the engine and wraps the answer.
+
+The original Python implementation is kept below as the reference (``engine="reference"``): a
+test holds the two to the same output, and it is what runs when the shammy module isn't
+installed. Reranking is only in the shared engine.
 """
 
 from __future__ import annotations
@@ -10,6 +15,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
+import os
 from typing import Any, Callable
 
 import numpy as np
@@ -21,6 +27,27 @@ _STOP = set("""a an and are as at be by can do does for from has have how i if i
 should that the their there these this to was we what when where which who why will with you your""".split())
 
 RerankFn = Callable[[str, list[dict[str, Any]]], list[float]]
+
+
+def rerank_settings(config: dict[str, Any] | None, enabled: bool | None = None, url: str | None = None) -> dict[str, Any] | None:
+    """The reranker request for a search, from a workspace's ``[rerank]`` settings. ``enabled`` and
+    ``url`` override what the config says; RAG_RERANK_URL overrides the config's url. None when off."""
+    r = dict((config or {}).get("rerank") or {})
+    on = bool(r.get("enabled")) if enabled is None else bool(enabled)
+    if not on:
+        return None
+    r["enabled"] = True
+    r["url"] = url or os.environ.get("RAG_RERANK_URL") or r.get("url") or ""
+    return r
+
+
+def native_engine():
+    """The shared search engine module, or None when it isn't installed."""
+    try:
+        import shammy
+    except ImportError:
+        return None
+    return shammy if hasattr(shammy, "Retriever") else None
 
 
 def fts_query(query: str) -> str:
@@ -51,12 +78,21 @@ class SearchResult:
     timings_ms: dict[str, float] = field(default_factory=dict)
     candidates: list[int] = field(default_factory=list)   # fused order before cutoff (for eval)
     ranks: dict[int, dict[str, Any]] = field(default_factory=dict)   # chunk_id -> vector/keyword rank, fused score
+    rerank: dict[str, Any] | None = None   # {"applied": bool, "error": str?} when reranking was asked for
+    markdown: str | None = None            # the agent's compact form, as the shared engine wrote it
+    engine: str = "reference"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"query": self.query, "results": self.results, "tables": self.tables, "timings_ms": self.timings_ms}
+        out = {"query": self.query, "results": self.results, "tables": self.tables, "timings_ms": self.timings_ms}
+        if self.rerank is not None:
+            out["rerank"] = self.rerank
+        return out
 
     def to_markdown(self) -> str:
         """Compact form for an agent: a source line per result, then the passage."""
+        return self.markdown if self.markdown is not None else self.reference_markdown()
+
+    def reference_markdown(self) -> str:
         out = []
         for r in self.results:
             s = r["source"]
@@ -84,11 +120,37 @@ class SearchResult:
 
 
 class Searcher:
-    def __init__(self, store: RagStore, embedder, cfg: dict[str, Any], *, rerank: RerankFn | None = None):
+    def __init__(self, store: RagStore, embedder, cfg: dict[str, Any], *, rerank: RerankFn | None = None,
+                 reranker: dict[str, Any] | None = None, engine: str = "auto"):
+        """``reranker`` is a rerank request (see ``rerank_settings``). ``engine`` is "auto" (the
+        shared engine when installed), "native" (require it) or "reference" (the Python version;
+        ``rerank`` is its callable hook)."""
         self.store = store
         self.embedder = embedder
         self.cfg = cfg
         self.rerank = rerank
+        self.reranker = reranker
+        self.engine = engine
+        self._retriever = None
+
+    def close(self) -> None:
+        if self._retriever is not None:
+            self._retriever.close()
+            self._retriever = None
+
+    def _native(self):
+        if self.engine == "reference" or self.rerank is not None:
+            return None
+        if self._retriever is None:
+            module = native_engine()
+            if module is None:
+                if self.engine == "native":
+                    raise RuntimeError("the shared search engine (the shammy module) isn't installed")
+                return None
+            if not self.store.readonly and self.store._vectors is not None:
+                self.store.vectors.flush()   # the engine reads what is on disk
+            self._retriever = module.Retriever(self.store.path.parent)
+        return self._retriever
 
     def _vector(self, qvec: np.ndarray, k: int, file_type: str | None) -> list[int]:
         return self.store.vectors.search(qvec, k, file_type)
@@ -150,6 +212,25 @@ class Searcher:
         qvec = self.embedder.embed_query(query)
         timings["embed"] = round((time.perf_counter() - t0) * 1000, 1)
 
+        retriever = self._native()
+        if retriever is not None:
+            out = retriever.search(
+                query, qvec, k=k, file_type=file_type or None, expand=expand, vec_k=int(s["vec_k"]),
+                fts_k=int(s["fts_k"]), rrf_k=float(s["rrf_k"]), neighbors=int(s.get("neighbors", 0)),
+                max_result_tokens=int(s.get("max_result_tokens", 6000)), markdown=True, rerank=self.reranker)
+            return SearchResult(
+                query=query, results=out["results"], tables=out["tables"], timings_ms={**timings, **out["timings_ms"]},
+                candidates=out["candidates"], ranks={int(c): r for c, r in out["ranks"].items()},
+                rerank=out.get("rerank"), markdown=out.get("markdown"), engine="native")
+        if self.reranker:
+            return self._reference_search(query, qvec, k, file_type, expand, timings, note={
+                "applied": False, "error": "reranking needs the shared search engine (the shammy module), which isn't installed"})
+        return self._reference_search(query, qvec, k, file_type, expand, timings)
+
+    def _reference_search(self, query: str, qvec, k: int, file_type: str | None, expand: bool,
+                          timings: dict[str, float], note: dict[str, Any] | None = None) -> SearchResult:
+        s = self.cfg
+
         t1 = time.perf_counter()
         vec_ids = self._vector(qvec, int(s["vec_k"]), file_type)
         kw_ids = self._keyword(query, int(s["fts_k"]), file_type)
@@ -181,7 +262,7 @@ class Searcher:
 
         vec_rank = {cid: r for r, cid in enumerate(vec_ids, start=1)}
         kw_rank = {cid: r for r, cid in enumerate(kw_ids, start=1)}
-        result = SearchResult(query=query, candidates=ordered, timings_ms=timings, ranks={
+        result = SearchResult(query=query, candidates=ordered, timings_ms=timings, rerank=note, ranks={
             cid: {"vector": vec_rank.get(cid), "keyword": kw_rank.get(cid), "fused": round(scores[cid], 5),
                   "rank": i}
             for i, cid in enumerate(ordered, start=1)})

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/shammy-core", "crates/shammy-cli", "crates/shammy-ffi", "crates/shammy-py"]
-default-members = ["crates/shammy-core", "crates/shammy-cli", "crates/shammy-ffi"]
+members = ["crates/shammy-core", "crates/shammy-cli", "crates/shammy-rag", "crates/shammy-ffi", "crates/shammy-py"]
+default-members = ["crates/shammy-core", "crates/shammy-cli", "crates/shammy-rag", "crates/shammy-ffi"]
 
 [workspace.package]
 version = "0.1.0"

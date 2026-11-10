@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ctypes
 import json
+import threading
+from http.server import ThreadingHTTPServer
 import os
 import shutil
 import subprocess
@@ -112,8 +114,78 @@ def test_c_interface_matches_python(fixture):
     assert lib.shammy_last_error()
 
 
+RAG_QUERIES = ["lid seal furnace profile", "mes-cli holds --reason SealLeak", "calibration due dates for the leak tester",
+               "what is the helium leak rate limit"]
+
+
+@pytest.fixture(scope="module")
+def rag_fixture(fixture, built_ws, tmp_path_factory, corpus):
+    """Two knowledge bases (one per vector store) with the Python module's answers, in rag.json."""
+    from test_shared_search import _FakeReranker
+
+    from rag.builder.engine import Builder
+    from rag.core.models.embed import make_embedder
+    from rag.core.workspace import Workspace
+    from conftest import TEST_EMBEDDING
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeReranker)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_port}"
+    sh = Workspace.init(tmp_path_factory.mktemp("ragnative") / "ws", {**TEST_EMBEDDING, "vectors": {"backend": "shammy"}})
+    assert Builder(sh).build([corpus]).failed == 0
+    emb = make_embedder(sh.config["embedding"])
+    kbs = []
+    for ws in (built_ws, sh):
+        with shammy.Retriever(ws.root) as r:
+            info, cases = r.info(), []
+            for q in RAG_QUERIES:
+                v = [float(x) for x in emb.embed_query(q)]
+                for name, opts in (("default", {}), ("md", {"k": 3, "file_type": "md", "markdown": True}),
+                                   ("flat", {"k": 10, "expand": False}),
+                                   ("rerank", {"k": 4, "markdown": True, "rerank": {"enabled": True, "url": url}})):
+                    request = {"query": q, **opts}
+                    cases.append({"name": f"{info['vector_store']}/{name}/{q[:20]}", "request": request, "vector": v,
+                                  "response": json.loads(r._native.search(json.dumps(request), np.asarray(v, "<f4").tobytes()))})
+        kbs.append({"folder": str(ws.root), "vector_store": info["vector_store"], "dims": info["dims"], "cases": cases,
+                    "rerank_url": url})
+    (fixture / "rag.json").write_text(json.dumps({"knowledge_bases": kbs}))
+    yield fixture
+    server.shutdown()
+
+
+def test_c_retrieval_matches_python(rag_fixture):
+    lib = ctypes.CDLL(str(LIB))
+    lib.shammy_last_error.restype = ctypes.c_char_p
+    lib.shammy_rag_search.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+                                      ctypes.POINTER(ctypes.c_void_p)]
+    lib.shammy_rag_close.argtypes = [ctypes.c_void_p]
+    lib.shammy_string_free.argtypes = [ctypes.c_void_p]
+    checked = 0
+    for kb in json.loads((rag_fixture / "rag.json").read_text())["knowledge_bases"]:
+        handle = ctypes.c_void_p()
+        assert lib.shammy_rag_open(kb["folder"].encode(), ctypes.byref(handle)) == 0, lib.shammy_last_error()
+        for case in kb["cases"]:
+            v = np.asarray(case["vector"], dtype="<f4")
+            out = ctypes.c_void_p()
+            code = lib.shammy_rag_search(handle, json.dumps(case["request"]).encode(),
+                                         v.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), len(v), ctypes.byref(out))
+            assert code == 0, lib.shammy_last_error()
+            got = json.loads(ctypes.string_at(out.value).decode())
+            lib.shammy_string_free(out)
+            want = dict(case["response"])
+            got.pop("timings_ms"), want.pop("timings_ms")
+            assert got == want, case["name"]
+            checked += 1
+        out = ctypes.c_void_p()
+        assert lib.shammy_rag_search(handle, b"{}", v.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), len(v), ctypes.byref(out)) == -1
+        assert b"query" in lib.shammy_last_error() and not out.value
+        lib.shammy_rag_close(handle)
+    assert checked == 32
+
+
 @pytest.mark.skipif(shutil.which("dotnet") is None, reason="needs the .NET SDK")
-def test_csharp_wrapper_matches_python(fixture):
+def test_csharp_wrapper_matches_python(rag_fixture):
+    fixture = rag_fixture
     env = {**os.environ, "DOTNET_CLI_TELEMETRY_OPTOUT": "1", "DOTNET_NOLOGO": "1",
            "LD_LIBRARY_PATH": f"{LIB.parent}{os.pathsep}{os.environ.get('LD_LIBRARY_PATH', '')}",
            "DYLD_LIBRARY_PATH": str(LIB.parent), "PATH": f"{LIB.parent}{os.pathsep}{os.environ['PATH']}"}

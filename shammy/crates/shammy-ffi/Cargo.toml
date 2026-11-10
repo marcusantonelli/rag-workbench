@@ -11,3 +11,5 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 shammy-core = { path = "../shammy-core" }
+shammy-rag = { path = "../shammy-rag" }
+serde_json = "1"

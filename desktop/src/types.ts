@@ -185,6 +185,10 @@ export interface SearchResponse {
   timings_ms: Record<string, number>;
   candidates: (Chunk & { ranks: Ranks | null })[];
   markdown: string;
+  /** Present when reranking was asked for: whether it was applied, and why not if it wasn't. */
+  rerank?: { applied: boolean; error?: string; model?: string };
+  /** "native" = the shared engine the retrieval server also runs; "reference" = the Python fallback. */
+  engine?: string;
 }
 
 export interface TableCatalogRow {

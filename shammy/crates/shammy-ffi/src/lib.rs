@@ -320,3 +320,118 @@ pub unsafe extern "C" fn shammy_verify(path: *const c_char, out: *mut ShammyRepo
         }
     })
 }
+
+// ---------------------------------------------------------------------------------------------
+// The retrieval path over a workspace or unpacked pack (shammy-rag): one call per search.
+
+pub struct ShammyRetriever {
+    inner: shammy_rag::Retriever,
+}
+
+fn from_rag(e: shammy_rag::Error) -> i32 {
+    match e {
+        shammy_rag::Error::Request(m) => fail(SHAMMY_E_ARGUMENT, m),
+        shammy_rag::Error::Store(m) => fail(SHAMMY_E_IO, m),
+    }
+}
+
+unsafe fn give_string(s: String, out: *mut *mut c_char) -> i32 {
+    match CString::new(s) {
+        Ok(c) => {
+            *out = c.into_raw();
+            SHAMMY_OK
+        }
+        Err(_) => fail(SHAMMY_E_INTERNAL, "the result contains a NUL character"),
+    }
+}
+
+/// Open the folder of a workspace or unpacked pack (the one holding rag.db) for searching.
+///
+/// # Safety
+/// `folder` must be a NUL-terminated string and `out` a valid pointer.
+#[no_mangle]
+pub unsafe extern "C" fn shammy_rag_open(folder: *const c_char, out: *mut *mut ShammyRetriever) -> i32 {
+    guard(|| {
+        if out.is_null() {
+            return fail(SHAMMY_E_ARGUMENT, "out is null");
+        }
+        *out = std::ptr::null_mut();
+        let folder = match text(folder, "folder") {
+            Ok(p) => p,
+            Err(code) => return code,
+        };
+        match shammy_rag::Retriever::open(folder) {
+            Ok(inner) => {
+                *out = Box::into_raw(Box::new(ShammyRetriever { inner }));
+                SHAMMY_OK
+            }
+            Err(e) => from_rag(e),
+        }
+    })
+}
+
+/// # Safety
+/// `retriever` must come from `shammy_rag_open`, not be closed twice, and have no call in progress.
+#[no_mangle]
+pub unsafe extern "C" fn shammy_rag_close(retriever: *mut ShammyRetriever) {
+    if !retriever.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| drop(Box::from_raw(retriever))));
+    }
+}
+
+/// JSON describing the knowledge base. Free the string with `shammy_string_free`.
+///
+/// # Safety
+/// `retriever` must be an open handle and `out_json` a valid pointer.
+#[no_mangle]
+pub unsafe extern "C" fn shammy_rag_info(retriever: *const ShammyRetriever, out_json: *mut *mut c_char) -> i32 {
+    guard(|| {
+        let (Some(r), false) = (retriever.as_ref(), out_json.is_null()) else {
+            return fail(SHAMMY_E_ARGUMENT, "retriever or out_json is null");
+        };
+        *out_json = std::ptr::null_mut();
+        match r.inner.info() {
+            Ok(info) => give_string(serde_json::to_string(&info).unwrap_or_default(), out_json),
+            Err(e) => from_rag(e),
+        }
+    })
+}
+
+/// Run one search. `request_json` is a JSON object (only "query" is required; see shammy.h);
+/// `vector` is the embedded query. The JSON response is returned in `out_json`; free it with
+/// `shammy_string_free`.
+///
+/// # Safety
+/// Every pointer must be valid; `vector` must hold `vector_len` floats.
+#[no_mangle]
+pub unsafe extern "C" fn shammy_rag_search(retriever: *const ShammyRetriever, request_json: *const c_char,
+                                           vector: *const f32, vector_len: usize, out_json: *mut *mut c_char) -> i32 {
+    guard(|| {
+        let (Some(r), false) = (retriever.as_ref(), out_json.is_null()) else {
+            return fail(SHAMMY_E_ARGUMENT, "retriever or out_json is null");
+        };
+        *out_json = std::ptr::null_mut();
+        if vector.is_null() {
+            return fail(SHAMMY_E_ARGUMENT, "vector is null");
+        }
+        let request = match text(request_json, "request_json") {
+            Ok(t) => t,
+            Err(code) => return code,
+        };
+        match r.inner.search_json(request, std::slice::from_raw_parts(vector, vector_len)) {
+            Ok(json) => give_string(json, out_json),
+            Err(e) => from_rag(e),
+        }
+    })
+}
+
+/// Free a string returned by this library. Null is ignored.
+///
+/// # Safety
+/// `s` must come from this library and not be freed twice.
+#[no_mangle]
+pub unsafe extern "C" fn shammy_string_free(s: *mut c_char) {
+    if !s.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| drop(CString::from_raw(s))));
+    }
+}

@@ -1,0 +1,14 @@
+[package]
+name = "shammy-rag"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The retrieval path over a RAG Workbench workspace or pack: vector + keyword search, fusion, expansion, optional reranking"
+
+[dependencies]
+shammy-core = { path = "../shammy-core" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlite-vec = "0.1.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false }

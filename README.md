@@ -160,14 +160,37 @@ chunked on their own rules. Every chunk's embedded text starts with
 Set `embedding.tokenizer_path` to Qwen3's `tokenizer.json` for exact token counts
 (otherwise a conservative estimate is used).
 
-## Retrieval (test path, no reranker)
+## Retrieval
 
 `rag search` embeds the query with the instruction prefix, takes the top 40 from
 the vector index and the top 40 from FTS5 (identifiers as exact phrases), fuses
-them with Reciprocal Rank Fusion (k = 60), drops duplicate text, expands prose
-hits with their neighbours from the same section, and returns cited results plus
-any table cards that ranked. `rag search --json` is the shape the agent will get;
-plain output is the compact Markdown form. `Searcher(rerank=...)` is the v2 hook.
+them with Reciprocal Rank Fusion (k = 60), drops duplicate text, optionally
+reranks the best 20, expands prose hits with their neighbours from the same
+section, and returns cited results plus any table cards that ranked.
+`rag search --json` is the shape the agent gets; plain output is the compact
+Markdown form.
+
+**One implementation.** Everything after the embedding runs in the shared engine
+(`shammy/crates/shammy-rag`, Rust). The Workbench calls it through the `shammy`
+Python module and the retrieval server through C# (`shammy/dotnet`), so what you
+see here is what the agent gets, on sqlite-vec and Shammy knowledge bases alike.
+`src/rag/core/retrieve/search.py` keeps the original Python version as the
+reference; a test holds the two to the same output, and it runs when the
+`shammy` module isn't installed (without reranking).
+
+**Reranker (optional, off by default).** A small reranker model reads the
+question together with each of the best 20 candidates and reorders them before
+the cut. It needs a `/v1/rerank` endpoint, for example:
+
+```bash
+llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8081
+```
+
+Turn it on for one search with `rag search WS "question" --rerank`
+(`--rerank-url` or `RAG_RERANK_URL` for another address), for a workspace with
+`[rerank] enabled = true` in `config.toml`, or with the switch in the app's
+Search tab. If the reranker can't be reached the search still answers, in the
+usual order, and says it wasn't reranked.
 
 `rag sql` runs agent-style SQL read-only: an authorizer allows only reads, one
 statement per call, rows capped at 200, a 2-second time limit.

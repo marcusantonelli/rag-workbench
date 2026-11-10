@@ -581,16 +581,18 @@ class Service:
         return {"chunk": out, "context": around}
 
     def kb_search(self, kb: str, query: str, k: int | None = None, file_type: str | None = None,
-                  expand: bool = True, allow_mismatch: bool = False, candidates: int = 30) -> dict[str, Any]:
-        from rag.core.retrieve.search import Searcher
+                  expand: bool = True, allow_mismatch: bool = False, candidates: int = 30,
+                  rerank: bool | None = None, rerank_url: str | None = None) -> dict[str, Any]:
+        from rag.core.retrieve.search import Searcher, rerank_settings
 
         if not query.strip():
             raise ServiceError("bad_params", "Type a question to search for.")
         kbo = self._kb(kb)
         embedder = self._embedder(kbo, allow_mismatch=allow_mismatch)
-        cfg = kbo.workspace().config["search"]
+        config = kbo.workspace().config
+        cfg = config["search"]
         with kbo.store() as s:
-            searcher = Searcher(s, embedder, cfg)
+            searcher = Searcher(s, embedder, cfg, reranker=rerank_settings(config.data, rerank, rerank_url or None))
             try:
                 res = searcher.search(query, k=k, file_type=file_type or None, expand=expand)
             except Exception as exc:
@@ -608,6 +610,8 @@ class Service:
             rows = searcher._load(top)
             out["candidates"] = [{**self._chunk_out(rows[c]), "ranks": res.ranks.get(c)} for c in top if c in rows]
             out["markdown"] = res.to_markdown()
+            out["engine"] = res.engine
+            searcher.close()
         return out
 
     def kb_tables(self, kb: str) -> list[dict[str, Any]]:

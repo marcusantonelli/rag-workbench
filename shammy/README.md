@@ -107,6 +107,11 @@ shammy bench kb.shammy                                  # recall and ms per sear
   wrapper (`dotnet/`, with how to read a `ragpack/2` pack in the retrieval server), and slim
   files (`rag export --slim`, `shammy.compact(src, dst, slim=True)`). C, C# and Python return
   the same hits bit for bit; a test checks it.
+- **Shared search (done):** `crates/shammy-rag` runs the whole retrieval path over a workspace or
+  unpacked pack (vector + FTS5 keyword search, fusion, optional reranking through a `/v1/rerank`
+  endpoint, neighbour expansion, citations) for both vector stores. It is exposed as
+  `shammy.Retriever` (Python), `shammy_rag_*` (C) and `ShammyRetriever` (C#); tests hold all
+  three, and the Python reference, to the same output.
 - **Next, milestone 5:** the keyword index.
 
 ## Milestone 0 script

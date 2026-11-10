@@ -92,6 +92,38 @@ int32_t shammy_vector(const ShammyReader *reader, uint64_t id, float *out, size_
 /* Check every checksum. Returns SHAMMY_OK when the check ran; out->ok says whether the file is whole. */
 int32_t shammy_verify(const char *path, ShammyReport *out);
 
+/* ---------------------------------------------------------------------------------------------
+ * The whole retrieval path over a RAG Workbench workspace or unpacked pack: vector search (Shammy
+ * or sqlite-vec, whichever the knowledge base uses), FTS5 keyword search, rank fusion, duplicate
+ * removal, optional reranking, neighbour expansion and citations. The Workbench and the retrieval
+ * server both call this, so they return the same thing.
+ *
+ * The caller embeds the question and passes the vector. The request is a JSON object:
+ *
+ *   {"query": "how is the lid seal tested?",      required
+ *    "k": 6,                                       results returned
+ *    "file_type": "pdf",                           only this file type
+ *    "expand": true, "neighbors": 1,               join prose hits with their neighbours
+ *    "vec_k": 40, "fts_k": 40, "rrf_k": 60,        candidates per side and the fusion constant
+ *    "max_result_tokens": 6000, "threads": 0,
+ *    "markdown": true,                             also return the compact text form for an agent
+ *    "rerank": {"enabled": true, "url": "http://127.0.0.1:8081", "model": "", "candidates": 20,
+ *               "timeout_ms": 15000}}              rerank through a /v1/rerank endpoint
+ *
+ * The response is a JSON object: "results" (tag, chunk_id, kind, score, text, source{...},
+ * rerank_score when reranked), "tables" (table cards that ranked), "candidates", "ranks",
+ * "timings_ms", "rerank" ({"applied": true|false, "error": ...}) and "markdown" when asked for.
+ * If the reranker can't be reached the search still succeeds in fused order and says so there.
+ */
+typedef struct ShammyRetriever ShammyRetriever;
+
+int32_t shammy_rag_open(const char *folder, ShammyRetriever **out);  /* the folder holding rag.db */
+void    shammy_rag_close(ShammyRetriever *retriever);
+int32_t shammy_rag_info(const ShammyRetriever *retriever, char **out_json);
+int32_t shammy_rag_search(const ShammyRetriever *retriever, const char *request_json,
+                          const float *vector, size_t vector_len, char **out_json);
+void    shammy_string_free(char *s);  /* for every char* this library returns through an out pointer */
+
 #ifdef __cplusplus
 }
 #endif

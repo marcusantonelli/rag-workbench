@@ -25,6 +25,22 @@ function hitLocation(h: SearchHit): string {
   });
 }
 
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function remember(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* a convenience only */
+  }
+}
+
 export function SearchView({ kb }: { kb: KbSummary }) {
   const { fail, setTab } = useApp();
   const [query, setQuery] = useState(lastQuery[kb.id] ?? "");
@@ -36,6 +52,8 @@ export function SearchView({ kb }: { kb: KbSummary }) {
   const [expand, setExpand] = useState(true);
   const [agentView, setAgentView] = useState(false);
   const [showCandidates, setShowCandidates] = useState(false);
+  const [rerank, setRerank] = useState(() => stored("rag.rerank") === "1");
+  const [rerankUrl, setRerankUrl] = useState(() => stored("rag.rerankUrl") || "http://127.0.0.1:8081");
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => input.current?.focus(), [kb.id]);
@@ -49,6 +67,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
     try {
       const r = await call<SearchResponse>("kb.search", {
         kb: kb.id, query, file_type: fileType || null, expand, allow_mismatch: allowMismatch,
+        rerank, rerank_url: rerank ? rerankUrl.trim() : null,
       });
       setRes(r);
       setSelected(0);
@@ -98,12 +117,42 @@ export function SearchView({ kb }: { kb: KbSummary }) {
         <Switch checked={expand} onChange={setExpand} label="Add neighbouring chunks (as the agent gets them)" />
         <Switch checked={agentView} onChange={setAgentView} label="As the agent sees it" />
         <Switch checked={showCandidates} onChange={setShowCandidates} label="Show the 30 candidates before the cut" />
+        <Switch
+          checked={rerank}
+          onChange={(on) => {
+            setRerank(on);
+            remember("rag.rerank", on ? "1" : "0");
+          }}
+          label="Rerank the best 20 with a reranker model"
+        />
+        {rerank && (
+          <label className="rerank-url">
+            <span className="muted small">Reranker address</span>
+            <input
+              value={rerankUrl}
+              onChange={(e) => {
+                setRerankUrl(e.target.value);
+                remember("rag.rerankUrl", e.target.value);
+              }}
+              placeholder="http://127.0.0.1:8081"
+              aria-label="Reranker address"
+              spellCheck={false}
+            />
+          </label>
+        )}
         {res && (
           <span className="timings">
             Embedding {res.timings_ms.embed} ms, search {res.timings_ms.search} ms
+            {res.timings_ms.rerank != null && `, rerank ${res.timings_ms.rerank} ms`}
           </span>
         )}
       </div>
+      {res?.rerank && !res.rerank.applied && (
+        <Notice tone="warn" title="Not reranked: these results are in the usual order">
+          {res.rerank.error} Start a reranker with <code>llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8081</code>,
+          or turn reranking off.
+        </Notice>
+      )}
 
       {error && (
         <Notice
