@@ -45,9 +45,14 @@ shammy bench kb.shammy                                  # recall and ms per sear
 - **Milestone 1 (done):** format 1.0, append-only writer with commits and tombstones, reader,
   scalar single-threaded search, verify, crash and corruption tests, bit-exact parity with the
   reference.
-- **Milestone 2, in steps:** `shammy bench`, fast bit counting for stage 1 and fast kernels for
-  stages 2 and 3 (done); then a
-  multi-threaded scan and error-bound pruning.
+- **Milestone 2 (done):** `shammy bench`; AVX2 and AVX-512 kernels for all three coded stages;
+  every stage split across threads (`Params.threads`, `--threads`; default two fewer than the
+  machine's cores, at least 1, no upper limit). Results are identical for any kernel and any
+  thread count, and tests check both. On 50,000 x 4096 a search takes 1 to 2 ms on one thread;
+  `bench` prints the time spent in each stage.
+  Not built: stopping early from the error bounds. Measured, it could only save the 8-bit
+  stage (about 0.2 ms), and tuning how many candidates stage 1 keeps per query needs real
+  vectors at scale, which the synthetic test file can't stand in for.
 
 ## Milestone 0 script
 

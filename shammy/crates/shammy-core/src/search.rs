@@ -1,6 +1,6 @@
 //! The query path: sketch scan over every live row, then two reranks on larger codes, then an
-//! exact finish on the lossless tier. This is the plain (scalar, single-threaded) version; the
-//! SIMD kernels of milestone 2 must return exactly what this returns.
+//! exact finish on the lossless tier. Every score depends only on its own row and the query, and
+//! ties are broken by position, so the result is the same for any kernel and any thread count.
 
 use half::f16;
 
@@ -25,7 +25,33 @@ pub struct Params {
     pub stage2: usize,
     /// After the 8-bit rerank, rescored exactly when the file is lossless. Default: 50, at least k.
     pub finish: usize,
+    /// Worker threads for one search. Default: `default_threads()`.
+    pub threads: usize,
 }
+
+/// Two fewer than the machine's cores (at least 1), leaving room for whatever else runs there.
+pub fn default_threads() -> usize {
+    std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).saturating_sub(2).max(1)
+}
+
+/// Run `f(offset, part)` over consecutive parts of `items`, on up to `threads` threads when each
+/// would get at least `min_each` items. Results come back in order of position.
+fn in_parts<T: Send, R: Send>(items: &mut [T], threads: usize, min_each: usize, f: impl Fn(usize, &mut [T]) -> R + Sync) -> Vec<R> {
+    let n = threads.min(items.len() / min_each.max(1)).max(1);
+    if n == 1 {
+        return vec![f(0, items)];
+    }
+    let each = items.len().div_ceil(n);
+    std::thread::scope(|s| {
+        let f = &f;
+        let handles: Vec<_> = items.chunks_mut(each).enumerate().map(|(i, part)| s.spawn(move || f(i * each, part))).collect();
+        handles.into_iter().map(|h| h.join().expect("a search thread panicked")).collect()
+    })
+}
+
+/// Rows per thread below which a scan stays on fewer threads (starting a thread costs more).
+const SCAN_ROWS_PER_THREAD: usize = 32_768;
+const RERANK_ROWS_PER_THREAD: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Hit {
@@ -42,6 +68,9 @@ pub struct Trace {
     pub stage2: usize,
     pub finish: usize,
     pub exact_finish: bool,
+    pub threads: usize,
+    /// Time spent in the scan, the 1-bit rerank, the 8-bit rerank and the exact finish.
+    pub nanos: [u64; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -89,6 +118,13 @@ impl Reader {
         let stage1 = if params.stage1 == 0 { (live / 100).max(4096) } else { params.stage1 }.max(k);
         let stage2 = if params.stage2 == 0 { 256 } else { params.stage2 }.max(k);
         let finish = if params.finish == 0 { 50 } else { params.finish }.max(k);
+        let threads = if params.threads == 0 { default_threads() } else { params.threads };
+        trace.threads = threads;
+        let mut clock = std::time::Instant::now();
+        let mut lap = |slot: usize, trace: &mut Trace| {
+            trace.nanos[slot] = clock.elapsed().as_nanos() as u64;
+            clock = std::time::Instant::now();
+        };
 
         // Filter: allowed file-type codes and document ids.
         let type_ok: Option<[bool; 256]> = filter.file_types.as_ref().map(|names| {
@@ -108,21 +144,33 @@ impl Reader {
         let mut histogram = vec![0usize; self.header.sketch_dims as usize + 1];
         for seg in &self.segments {
             let mut d = vec![0u16; seg.rows];
-            kernels::hamming_rows(self.bytes(seg.sketch), sketch_bytes, &qbits[..sketch_bytes], &mut d);
+            let sketch = self.bytes(seg.sketch);
             let ftype = self.bytes(seg.ftype);
             let doc = self.bytes(seg.doc);
             let filtered = seg.tomb.is_some() || type_ok.is_some() || docs_ok.is_some();
-            for (row, x) in d.iter_mut().enumerate() {
-                if filtered {
-                    let out = self.deleted(seg, row)
-                        || type_ok.as_ref().is_some_and(|ok| !ok[ftype[row] as usize])
-                        || docs_ok.as_ref().is_some_and(|ok| !ok.contains(&u32::from_le_bytes(doc[row * 4..row * 4 + 4].try_into().unwrap())));
-                    if out {
-                        *x = SKIP;
-                        continue;
+            let parts = in_parts(&mut d, threads, SCAN_ROWS_PER_THREAD, |start, part| {
+                let mut hist = vec![0usize; histogram.len()];
+                kernels::hamming_rows(&sketch[start * sketch_bytes..(start + part.len()) * sketch_bytes], sketch_bytes,
+                                      &qbits[..sketch_bytes], part);
+                for (i, x) in part.iter_mut().enumerate() {
+                    if filtered {
+                        let row = start + i;
+                        let out = self.deleted(seg, row)
+                            || type_ok.as_ref().is_some_and(|ok| !ok[ftype[row] as usize])
+                            || docs_ok.as_ref().is_some_and(|ok| !ok.contains(&u32::from_le_bytes(doc[row * 4..row * 4 + 4].try_into().unwrap())));
+                        if out {
+                            *x = SKIP;
+                            continue;
+                        }
                     }
+                    hist[*x as usize] += 1;
                 }
-                histogram[*x as usize] += 1;
+                hist
+            });
+            for hist in parts {
+                for (total, n) in histogram.iter_mut().zip(hist) {
+                    *total += n;
+                }
             }
             dist.push(d);
         }
@@ -147,40 +195,50 @@ impl Reader {
         }
         drop(dist);
         trace.stage1 = cands.len();
+        lap(0, &mut trace);
 
         // Stage 2: all sign bits against the rotated query (RaBitQ estimate of the dot product).
-        for c in cands.iter_mut() {
-            let seg = &self.segments[c.seg as usize];
-            c.score = self.one_bit_estimate(seg, c.row as usize, &rotated, sketch_bytes);
-        }
+        in_parts(&mut cands, threads, RERANK_ROWS_PER_THREAD, |_, part| {
+            for c in part.iter_mut() {
+                let seg = &self.segments[c.seg as usize];
+                c.score = self.one_bit_estimate(seg, c.row as usize, &rotated, sketch_bytes);
+            }
+        });
         keep_best(&mut cands, stage2);
         trace.stage2 = cands.len();
+        lap(1, &mut trace);
 
         // Stage 3: 8-bit codes.
-        for c in cands.iter_mut() {
-            let seg = &self.segments[c.seg as usize];
-            let row = c.row as usize;
-            let code = &self.bytes(seg.q8)[row * dims..(row + 1) * dims];
-            let mut acc = [0f32; kernels::LANES];
-            kernels::i8_dot(code, &rotated, &mut acc);
-            c.score = (kernels::reduce(&acc) * f32_at(self.bytes(seg.q8corr), row * 8) as f64) as f32;
-        }
+        in_parts(&mut cands, threads, RERANK_ROWS_PER_THREAD, |_, part| {
+            for c in part.iter_mut() {
+                let seg = &self.segments[c.seg as usize];
+                let row = c.row as usize;
+                let code = &self.bytes(seg.q8)[row * dims..(row + 1) * dims];
+                let mut acc = [0f32; kernels::LANES];
+                kernels::i8_dot(code, &rotated, &mut acc);
+                c.score = (kernels::reduce(&acc) * f32_at(self.bytes(seg.q8corr), row * 8) as f64) as f32;
+            }
+        });
         let lossless = self.header.lossless();
         keep_best(&mut cands, if lossless { finish } else { k });
         trace.finish = cands.len();
+        lap(2, &mut trace);
 
         // Finish: the stored float16 vector against the query, exactly.
         if lossless {
             trace.exact_finish = true;
-            for c in cands.iter_mut() {
-                let seg = &self.segments[c.seg as usize];
-                let row = c.row as usize;
-                let v = &self.bytes(seg.f16.unwrap())[row * dims * 2..(row + 1) * dims * 2];
-                let dot: f64 = v.chunks_exact(2).zip(&unit)
-                    .map(|(h, q)| f16::from_bits(u16::from_le_bytes([h[0], h[1]])).to_f32() as f64 * *q as f64).sum();
-                c.score = dot as f32;
-            }
+            in_parts(&mut cands, threads, RERANK_ROWS_PER_THREAD / 8, |_, part| {
+                for c in part.iter_mut() {
+                    let seg = &self.segments[c.seg as usize];
+                    let row = c.row as usize;
+                    let v = &self.bytes(seg.f16.unwrap())[row * dims * 2..(row + 1) * dims * 2];
+                    let dot: f64 = v.chunks_exact(2).zip(&unit)
+                        .map(|(h, q)| f16::from_bits(u16::from_le_bytes([h[0], h[1]])).to_f32() as f64 * *q as f64).sum();
+                    c.score = dot as f32;
+                }
+            });
             keep_best(&mut cands, k);
+            lap(3, &mut trace);
         }
 
         let mut hits: Vec<Hit> = cands.iter().map(|c| {
@@ -239,7 +297,7 @@ impl Reader {
         if !self.header.lossless() {
             return Err(Error::Invalid("this file has no lossless tier to search exactly".into()));
         }
-        let all = Params { stage1: usize::MAX, stage2: usize::MAX, finish: usize::MAX };
+        let all = Params { stage1: usize::MAX, stage2: usize::MAX, finish: usize::MAX, threads: 0 };
         self.search(query, k, filter, &all)
     }
 }

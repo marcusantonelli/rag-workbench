@@ -19,6 +19,6 @@ pub mod writer;
 
 pub use error::{Error, Result};
 pub use reader::{Info, Reader};
-pub use search::{Filter, Hit, Params, Trace};
+pub use search::{default_threads, Filter, Hit, Params, Trace};
 pub use verify::{verify, Report};
 pub use writer::{Schema, Writer};

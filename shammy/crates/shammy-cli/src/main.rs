@@ -12,9 +12,9 @@ shammy: inspect and test .shammy vector files
   shammy build FILE --dims D --vectors RAW.f32 [--ids RAW.u64] [--docs RAW.u32]
                [--type NAME] [--slim] [--sketch quarter|half] [--model NAME] [--append]
   shammy delete FILE DOC_ID...
-  shammy search FILE --query RAW.f32 [--row N] [-k 20] [--stage1 N] [--stage2 N]
+  shammy search FILE --query RAW.f32 [--row N] [-k 20] [--threads N] [--stage1 N] [--stage2 N]
                [--finish N] [--exact] [--type NAME] [--doc ID]
-  shammy bench FILE [--queries 100] [-k 20] [--stage2 N] [--finish N] [--stage1 N,N,...]
+  shammy bench FILE [--queries 100] [-k 20] [--threads N] [--stage2 N] [--finish N] [--stage1 N,N,...]
 
 bench uses stored vectors as queries (the file needs its lossless tier) and reports, for several
 stage-1 candidate counts, recall against exact search and the time per search.
@@ -170,6 +170,7 @@ fn run() -> Result<ExitCode, String> {
                 stage1: args.number("--stage1")?.unwrap_or(0),
                 stage2: args.number("--stage2")?.unwrap_or(0),
                 finish: args.number("--finish")?.unwrap_or(0),
+                threads: args.number("--threads")?.unwrap_or(0),
             };
             let exact = args.flag("--exact");
             let filter = Filter {
@@ -190,6 +191,7 @@ fn run() -> Result<ExitCode, String> {
             let stage2: usize = args.number("--stage2")?.unwrap_or(0);
             let finish: usize = args.number("--finish")?.unwrap_or(0);
             let custom = args.value("--stage1")?;
+            let threads: usize = args.number("--threads")?.unwrap_or(0);
             let r = Reader::open(args.0.first().ok_or("bench needs a file")?).map_err(e)?;
             let info = r.info();
             if !info.lossless {
@@ -209,6 +211,8 @@ fn run() -> Result<ExitCode, String> {
             println!("exact search: {:.1} ms per query", t.elapsed().as_secs_f64() * 1e3 / queries.len() as f64);
             println!("kernels: stage 1 {}, stages 2 and 3 {}\n",
                      shammy_core::kernels::hamming_kernel_name(info.sketch_dims as usize / 8), shammy_core::kernels::dot_kernel_name());
+            println!("threads: {} (this machine has {} cores)\n", if threads == 0 { shammy_core::default_threads() } else { threads },
+                     std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1));
             let grid: Vec<usize> = match custom {
                 Some(c) => c.split(',').map(|x| x.trim().parse().map_err(|_| format!("--stage1: '{x}' is not a number"))).collect::<Result<_, _>>()?,
                 None => {
@@ -217,15 +221,20 @@ fn run() -> Result<ExitCode, String> {
                     g
                 }
             };
-            println!("{:>8} {:>8} {:>10} {:>10} {:>10} {:>10}", "stage 1", "of rows", "recall", "worst", "p50 ms", "p99 ms");
+            println!("{:>8} {:>8} {:>10} {:>10} {:>10} {:>10}   {}", "stage 1", "of rows", "recall", "worst", "p50 ms", "p99 ms",
+                     "mean ms in scan / 1-bit / 8-bit / finish");
             for s1 in grid {
-                let params = Params { stage1: s1, stage2, finish };
+                let params = Params { stage1: s1, stage2, finish, threads };
+                let mut spent = [0u64; 4];
                 let (mut hit, mut worst) = (0usize, 1f64);
                 let mut times = Vec::with_capacity(queries.len());
                 for (q, want) in queries.iter().zip(&truth) {
                     let t = std::time::Instant::now();
-                    let got = r.search(q, k, &none, &params).map_err(e)?;
+                    let (got, trace) = r.search_traced(q, k, &none, &params).map_err(e)?;
                     times.push(t.elapsed().as_secs_f64() * 1e3);
+                    for (a, b) in spent.iter_mut().zip(trace.nanos) {
+                        *a += b;
+                    }
                     // a result as good as the k-th exact one counts: duplicate vectors tie
                     let floor = want.last().map(|h| h.score).unwrap_or(0.0) - 1e-6;
                     let found = got.iter().filter(|h| h.score >= floor).count().min(want.len());
@@ -234,8 +243,10 @@ fn run() -> Result<ExitCode, String> {
                 }
                 times.sort_by(|a, b| a.total_cmp(b));
                 let total: usize = truth.iter().map(|w| w.len()).sum();
-                println!("{:>8} {:>7.2}% {:>10.4} {:>10.2} {:>10.2} {:>10.2}", s1, s1 as f64 / live as f64 * 100.0,
-                         hit as f64 / total as f64, worst, times[times.len() / 2], times[(times.len() * 99 / 100).min(times.len() - 1)]);
+                let ms = |x: u64| x as f64 / 1e6 / queries.len() as f64;
+                println!("{:>8} {:>7.2}% {:>10.4} {:>10.2} {:>10.2} {:>10.2}   {:.2} / {:.2} / {:.2} / {:.2}", s1, s1 as f64 / live as f64 * 100.0,
+                         hit as f64 / total as f64, worst, times[times.len() / 2], times[(times.len() * 99 / 100).min(times.len() - 1)],
+                         ms(spent[0]), ms(spent[1]), ms(spent[2]), ms(spent[3]));
             }
             println!("\nrecall: share of the exact top {k} returned; worst: the lowest single query. stage 2 = {}, finish = {}.",
                      if stage2 == 0 { 256 } else { stage2 }, if finish == 0 { 50.max(k) } else { finish });

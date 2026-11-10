@@ -78,7 +78,7 @@ fn build_reopen_and_search() {
 
     // The funnel keeps recall with a small fraction of the rows surviving stage 1.
     let queries = queries(&data, 40);
-    let tight = Params { stage1: 300, stage2: 100, finish: 50 };
+    let tight = Params { stage1: 300, stage2: 100, finish: 50, threads: 0 };
     let got = recall(&r, &queries, 10, &tight);
     assert!(got >= 0.97, "recall@10 with 10% of rows kept after stage 1 was {got}");
     let (_, trace) = r.search_traced(&queries[0], 10, &Filter::default(), &tight).unwrap();
@@ -88,6 +88,28 @@ fn build_reopen_and_search() {
     let a = r.search(&queries[1], 20, &Filter::default(), &Params::default()).unwrap();
     assert_eq!(a, r.search(&queries[1], 20, &Filter::default(), &Params::default()).unwrap());
     assert!(verify(&path).unwrap().ok);
+}
+
+#[test]
+fn any_thread_count_gives_the_same_results() {
+    // enough rows that the scan and both reranks really split across threads
+    let path = tmp("threads");
+    let data = vectors(70_000, 64, 11);
+    build(&path, &data, true);
+    let r = Reader::open(&path).unwrap();
+    let pdf = Filter { file_types: Some(vec!["pdf".into()]), doc_ids: None };
+    for q in queries(&data, 5) {
+        for filter in [Filter::default(), pdf.clone()] {
+            let one = Params { stage1: 20_000, stage2: 5_000, finish: 1_000, threads: 1 };
+            let (want, _) = r.search_traced(&q, 10, &filter, &one).unwrap();
+            assert_eq!(want.len(), 10);
+            for threads in [2, 3, 8, 0] {
+                let (got, trace) = r.search_traced(&q, 10, &filter, &Params { threads, ..one }).unwrap();
+                assert_eq!(got, want, "threads = {threads}");
+                assert!(trace.threads >= 1);
+            }
+        }
+    }
 }
 
 #[test]
@@ -227,6 +249,6 @@ fn debug_recall() {
     let r = Reader::open(&path).unwrap();
     let queries = queries(&data, 40);
     for (a, b, c) in [(3000, 3000, 3000), (3000, 3000, 50), (3000, 100, 50), (300, 300, 300), (300, 100, 50), (600, 100, 50), (1000, 200, 50)] {
-        println!("{a} {b} {c}: {:.3}", recall(&r, &queries, 10, &Params { stage1: a, stage2: b, finish: c }));
+        println!("{a} {b} {c}: {:.3}", recall(&r, &queries, 10, &Params { stage1: a, stage2: b, finish: c, threads: 0 }));
     }
 }
