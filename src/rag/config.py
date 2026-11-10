@@ -57,6 +57,12 @@ DEFAULTS: dict[str, Any] = {
         "models_dir": "",        # qwen3-onnx cache dir
         "threads": 0,
     },
+    "vectors": {
+        # Where a NEW workspace keeps its vectors: "sqlite-vec" (inside rag.db; what the retrieval
+        # server reads today) or "shammy" (vectors.shammy; smaller and faster, needs dims to be a
+        # power of two). An existing workspace is switched with `rag convert`, not by editing this.
+        "backend": "sqlite-vec",
+    },
     "chunking": {
         "target_tokens": 400,
         "max_tokens": 500,

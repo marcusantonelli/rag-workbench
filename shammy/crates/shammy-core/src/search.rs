@@ -281,6 +281,46 @@ impl Reader {
         None
     }
 
+    /// The stored vectors for many chunk ids in one pass over the file (None where an id is
+    /// absent, deleted, or the file has no lossless tier).
+    pub fn vectors(&self, ids: &[u64]) -> Vec<Option<Vec<f32>>> {
+        let dims = self.header.dims as usize;
+        let mut out: Vec<Option<Vec<f32>>> = vec![None; ids.len()];
+        let mut wanted: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        for (i, id) in ids.iter().enumerate() {
+            wanted.entry(*id).or_default().push(i);
+        }
+        for seg in &self.segments {
+            let Some(f) = seg.f16 else { continue };
+            let stored = self.bytes(seg.ids);
+            for row in 0..seg.rows {
+                let id = u64::from_le_bytes(stored[row * 8..row * 8 + 8].try_into().unwrap());
+                if let Some(slots) = wanted.get(&id) {
+                    if self.deleted(seg, row) {
+                        continue;
+                    }
+                    let v = &self.bytes(f)[row * dims * 2..(row + 1) * dims * 2];
+                    let vec: Vec<f32> = v.chunks_exact(2).map(|h| f16::from_bits(u16::from_le_bytes([h[0], h[1]])).to_f32()).collect();
+                    for s in slots {
+                        out[*s] = Some(vec.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Document ids of every live row, in file order (pairs with `live_ids`).
+    pub fn live_docs(&self) -> Vec<u32> {
+        let mut out = Vec::with_capacity(self.footer.live_row_count as usize);
+        for seg in &self.segments {
+            let docs = self.bytes(seg.doc);
+            out.extend((0..seg.rows).filter(|r| !self.deleted(seg, *r))
+                .map(|r| u32::from_le_bytes(docs[r * 4..r * 4 + 4].try_into().unwrap())));
+        }
+        out
+    }
+
     /// Ids of every live row, in file order.
     pub fn live_ids(&self) -> Vec<u64> {
         let mut out = Vec::with_capacity(self.footer.live_row_count as usize);

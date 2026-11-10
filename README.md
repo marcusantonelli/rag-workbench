@@ -172,6 +172,26 @@ plain output is the compact Markdown form. `Searcher(rerank=...)` is the v2 hook
 `rag sql` runs agent-style SQL read-only: an authorizer allows only reads, one
 statement per call, rows capped at 200, a 2-second time limit.
 
+## Vector store: sqlite-vec or Shammy
+
+A workspace keeps its vectors in one of two places:
+
+| | sqlite-vec (default) | Shammy |
+|---|---|---|
+| Where | `chunk_vec` table in `rag.db` | `vectors.shammy` next to `rag.db` |
+| Size per chunk at 4096 dims | 16.4 KB | 12.8 KB |
+| Search | exact, scans every float32 vector | 1-bit and 8-bit codes, then an exact rescore of the best 50 |
+| Vector sizes | any | a power of two (1024, 2048, 4096, ...) |
+| Read by the retrieval server | yes | not yet (needs the C# wrapper) |
+
+`rag init WS --vectors shammy` starts a workspace on Shammy; `rag convert WS` moves an existing
+one over and `rag convert WS --to sqlite-vec` moves it back, without embedding anything again.
+Build, search, merge, verify, export and unpack work the same on both, and `rag merge` copies
+between them. Shammy needs its Python module, built from `shammy/` (see `shammy/README.md`);
+without it sqlite-vec workspaces work as before.
+
+The engine, its file format and the importers for other databases are in `shammy/`.
+
 ## Desktop app
 
 RAG Workbench (`desktop/`) runs this engine as `rag-engine`, a JSON-lines service over

@@ -299,29 +299,37 @@ def _copy_document(doc, root: Path, src: RagStore, src_tables: TablesStore, stor
         return text
 
     chunk_rows = src.conn.execute("SELECT * FROM chunks WHERE doc_id = ? ORDER BY ordinal", (d["doc_id"],)).fetchall()
-    with store.conn:
-        for c in chunk_rows:
-            vec = src.conn.execute("SELECT embedding FROM chunk_vec WHERE chunk_id = ?", (c["chunk_id"],)).fetchone()
-            embed_text = rename_in(c["embed_text"])
-            cur = store.conn.execute(
-                "INSERT INTO chunks(doc_id, ordinal, kind, text, embed_text, text_hash, heading_path, symbol, "
-                "page_start, page_end, line_start, line_end, sheet, cell_range, table_name, ocr_conf, asset_path, "
-                "n_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (new_doc, c["ordinal"], c["kind"], rename_in(c["text"]), embed_text, c["text_hash"],
-                 c["heading_path"], c["symbol"], c["page_start"], c["page_end"], c["line_start"], c["line_end"],
-                 c["sheet"], c["cell_range"], renames.get(c["table_name"], c["table_name"]), c["ocr_conf"],
-                 c["asset_path"], c["n_tokens"]))
-            cid = int(cur.lastrowid)
-            store.conn.execute("INSERT INTO chunks_fts(rowid, embed_text) VALUES (?, ?)", (cid, embed_text))
-            if vec is not None:
-                store.conn.execute("INSERT INTO chunk_vec(chunk_id, embedding, file_type, doc_id) VALUES (?,?,?,?)",
-                                   (cid, vec[0], d["file_type"], new_doc))
-            if c["kind"] == "table_card" and c["table_name"]:
-                with tables.conn:
-                    tables.conn.execute("UPDATE _catalog SET card_chunk_id = ? WHERE table_name = ?",
-                                        (cid, renames.get(c["table_name"], c["table_name"])))
-            if c["asset_path"]:
-                _copy_file(root / c["asset_path"], ws.root / c["asset_path"])
+    src_vecs = src.vectors.get([c["chunk_id"] for c in chunk_rows])
+    try:
+        with store.conn:
+            vec_ids, vecs = [], []
+            for c in chunk_rows:
+                vec = src_vecs.get(c["chunk_id"])
+                embed_text = rename_in(c["embed_text"])
+                cur = store.conn.execute(
+                    "INSERT INTO chunks(doc_id, ordinal, kind, text, embed_text, text_hash, heading_path, symbol, "
+                    "page_start, page_end, line_start, line_end, sheet, cell_range, table_name, ocr_conf, asset_path, "
+                    "n_tokens) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (new_doc, c["ordinal"], c["kind"], rename_in(c["text"]), embed_text, c["text_hash"],
+                     c["heading_path"], c["symbol"], c["page_start"], c["page_end"], c["line_start"], c["line_end"],
+                     c["sheet"], c["cell_range"], renames.get(c["table_name"], c["table_name"]), c["ocr_conf"],
+                     c["asset_path"], c["n_tokens"]))
+                cid = int(cur.lastrowid)
+                store.conn.execute("INSERT INTO chunks_fts(rowid, embed_text) VALUES (?, ?)", (cid, embed_text))
+                if vec is not None:
+                    vec_ids.append(cid)
+                    vecs.append(vec)
+                if c["kind"] == "table_card" and c["table_name"]:
+                    with tables.conn:
+                        tables.conn.execute("UPDATE _catalog SET card_chunk_id = ? WHERE table_name = ?",
+                                            (cid, renames.get(c["table_name"], c["table_name"])))
+                if c["asset_path"]:
+                    _copy_file(root / c["asset_path"], ws.root / c["asset_path"])
+            if vec_ids:
+                store.vectors.add(vec_ids, vecs, d["file_type"], new_doc)
+    except BaseException:
+        store.vectors.failed(new_doc)
+        raise
     if d["library_path"]:
         _copy_file(root / d["library_path"], ws.root / d["library_path"])
     return list(renames.items())

@@ -1,7 +1,7 @@
 """.ragpack export, verification and unpacking.
 
 A .ragpack is a zip holding consistent snapshots of rag.db and tables.db
-(made with VACUUM INTO), figure crops, the workspace config, optionally the
+(made with VACUUM INTO), vectors.shammy when the workspace keeps its vectors there, figure crops, the workspace config, optionally the
 original files, and manifest.json with a SHA-256 for every file.
 """
 
@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from rag import PACK_FORMAT, SCHEMA_VERSION, __version__
+from rag import PACK_FORMAT, PACK_FORMAT_SHAMMY, PACK_FORMATS, SCHEMA_VERSION, __version__
 from rag.core.db.store import RagStore, now_iso
 from rag.core.util import sha256_file
 
@@ -45,6 +45,7 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
     try:
         meta = store.meta()
         counts = store.counts()
+        backend = store.vector_backend
     finally:
         store.close()
     from rag.core.db.tables import TablesStore
@@ -65,6 +66,12 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
             (tmp_dir / "tables.db", "tables.db"),
             (ws.config_path, "config.toml"),
         ]
+        if backend == "shammy":
+            from rag.core.db.vectors import SHAMMY_FILE, shammy_module
+
+            # a compacted copy: no deleted rows, one read-only file
+            shammy_module().compact(str(ws.root / SHAMMY_FILE), str(tmp_dir / SHAMMY_FILE))
+            entries.insert(1, (tmp_dir / SHAMMY_FILE, SHAMMY_FILE))
         for folder, include in ((ws.assets_dir, True), (ws.library_dir, include_originals)):
             if include and folder.exists():
                 for f in sorted(folder.rglob("*")):
@@ -72,7 +79,8 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
                         entries.append((f, str(PurePosixPath(folder.name, *f.relative_to(folder).parts))))
 
         manifest = {
-            "format": PACK_FORMAT,
+            "format": PACK_FORMAT_SHAMMY if backend == "shammy" else PACK_FORMAT,
+            "vector_store": backend,
             "pack_id": str(uuid.uuid4()),
             "name": name or ws.name,
             "built_at": now_iso(),
@@ -115,7 +123,7 @@ def read_manifest(pack_path: Path) -> dict[str, Any]:
 def unpack_pack(pack_path: Path, dest: Path) -> dict[str, Any]:
     """Extract and verify every file against the manifest."""
     manifest = read_manifest(pack_path)
-    if manifest.get("format") != PACK_FORMAT:
+    if manifest.get("format") not in PACK_FORMATS:
         raise PackError(f"unsupported pack format: {manifest.get('format')}")
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)

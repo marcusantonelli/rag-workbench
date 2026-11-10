@@ -22,6 +22,52 @@ cargo build --release                # target/release/shammy
 cd .. && python -m pytest tests/test_shammy_parity.py   # engine vs NumPy reference
 ```
 
+## Python
+
+```bash
+pip install maturin        # once; needs the Rust toolchain
+shammy/build_wheel.sh      # builds the wheel and installs it into the current Python
+```
+
+```python
+import numpy as np, shammy
+
+with shammy.Index.create("kb.shammy", dims=1024, model="my-embedder") as ix:
+    ix.add(ids=[1, 2, 3], vectors=np.random.rand(3, 1024), doc_ids=[10, 10, 11], file_types="pdf")
+    ix.commit()                      # durable, and visible to searches
+
+ix = shammy.Index.open("kb.shammy")  # read-only; any number of processes
+for hit in ix.search(query_vector, k=10, file_types=["pdf"]):
+    print(hit.id, hit.doc_id, hit.score)
+```
+
+- `Index.open(path, write=True)` appends; `delete_docs([...])` removes a document's rows;
+  `shammy.compact(src, dst)` rewrites a file without deleted rows; `shammy.verify(path)` checks
+  every checksum.
+- One process writes at a time (`<file>.lock`); readers see the last commit.
+- Vectors shorter than the stored size are padded with zeros, which leaves cosine similarity
+  unchanged, so a 768- or 1536-dimension model is stored at 1024 or 2048.
+- `search(..., exact=True)` scores every row in full; `threads=` sets the thread count.
+
+## Import from SQLite or PostgreSQL
+
+```bash
+shammy-convert sqlite kb.db out.shammy --table chunk_vec --id chunk_id --doc doc_id --type file_type
+shammy-convert pgvector "postgresql://user@host/db" out.shammy --table items --id id --vector embedding
+```
+
+- `sqlite` reads sqlite-vec `vec0` tables (the `sqlite-vec` package must be installed) and ordinary
+  tables whose vector column holds float32 blobs or JSON text.
+- `pgvector` streams a `vector` column through psycopg (`pip install "psycopg[binary]"`).
+- `--where` picks rows, `--doc` and `--type` name columns to filter by later, `--slim` leaves out
+  the float16 copies.
+- Ids must be whole numbers. Otherwise rows are numbered from 1 and the original ids go to
+  `out.shammy.ids.csv`.
+- From Python: `shammy.convert.from_sqlite`, `from_pgvector`, or `from_rows` for any source that
+  yields `(id, vector, doc_id, file_type)`.
+
+For a RAG Workbench workspace use `rag convert WS` instead: it switches the workspace in place.
+
 ## Try it
 
 Vectors go in as raw little-endian float32 (for example `array.astype("<f4").tofile("v.f32")`):
@@ -53,6 +99,12 @@ shammy bench kb.shammy                                  # recall and ms per sear
   Not built: stopping early from the error bounds. Measured, it could only save the 8-bit
   stage (about 0.2 ms), and tuning how many candidates stage 1 keeps per query needs real
   vectors at scale, which the synthetic test file can't stand in for.
+
+- **Milestone 3 (done):** Python module (`crates/shammy-py`, one abi3 wheel per platform),
+  compaction, a writer lock, importers for SQLite and pgvector, and the Builder's vector-store
+  switch (`rag init --vectors shammy`, `rag convert`, `rag compact`).
+- **Next, milestone 4:** the C interface and C# wrapper for the retrieval server; then the
+  keyword index.
 
 ## Milestone 0 script
 

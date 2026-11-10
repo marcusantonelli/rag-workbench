@@ -9,6 +9,11 @@ hidden = (
     + ["tree_sitter", "tree_sitter_c_sharp", "sqlite_vec", "pypdfium2", "pypdfium2_raw", "pdfplumber",
        "docx", "openpyxl", "bs4", "lxml", "charset_normalizer", "tokenizers"]
 )
+try:   # the Shammy vector engine (built from shammy/); sqlite-vec workspaces work without it
+    import shammy  # noqa: F401
+    hidden += collect_submodules("shammy")
+except ImportError:
+    pass
 datas = (
     collect_data_files("rag")
     + collect_data_files("rapidocr_onnxruntime")

@@ -7,6 +7,7 @@
 //! optionally, the float16 original. A search scans the sketch of every live row and reranks
 //! a shrinking candidate set on the larger codes. The byte layout is in `spec/FORMAT.md`.
 
+pub mod compact;
 pub mod encode;
 pub mod error;
 pub mod format;
@@ -19,6 +20,7 @@ pub mod writer;
 
 pub use error::{Error, Result};
 pub use reader::{Info, Reader};
+pub use compact::{compact, Compacted};
 pub use search::{default_threads, Filter, Hit, Params, Trace};
 pub use verify::{verify, Report};
 pub use writer::{Schema, Writer};

@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from rag.app.cli_install import bundled_rag
 
-SUBCOMMANDS = ("init", "list", "verify", "build", "remove", "status", "export", "unpack", "merge", "search", "tables", "describe", "sql",
+SUBCOMMANDS = ("init", "list", "verify", "build", "remove", "status", "export", "unpack", "merge", "convert", "compact", "search", "tables", "describe", "sql",
                "eval", "check-embedder")
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 

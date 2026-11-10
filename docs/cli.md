@@ -135,7 +135,7 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 
 | Command | What it does |
 |---|---|
-| `rag init WS [--name NAME] [--dims N] [--embedder NAME]` | Create a workspace. `--dims 2048` or `1024` stores smaller vectors; it can't be changed later without a full rebuild. |
+| `rag init WS [--name NAME] [--dims N] [--embedder NAME] [--vectors shammy]` | Create a workspace. `--dims 2048` or `1024` stores smaller vectors; it can't be changed later without a full rebuild. `--vectors shammy` keeps the vectors in `vectors.shammy` instead of inside `rag.db`. |
 | `rag list [FOLDER] [--json]` | Workspaces and packs in a folder; the app's workspaces folder by default. |
 | `rag verify WS\|PACK [--json]` | Check it's whole: marker, settings, database integrity, counts that must agree, tables, figures; packs also every checksum. Exits 1 if something is wrong. |
 | `rag build WS PATH... [--prune] [--force] [--json]` | Read files and folders into the workspace. `--force` rebuilds everything; `--json` prints progress as JSON lines. |
@@ -144,6 +144,8 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 | `rag export WS OUT.ragpack [--name NAME] [--include-originals]` | Write a pack. Originals let the agent open source files but make the pack larger. |
 | `rag unpack PACK DEST` | Extract a pack and verify it. |
 | `rag merge DEST SRC... [--on-conflict newer\|keep\|replace] [--keep-copies] [--dry-run]` | Copy compatible packs or workspaces into DEST (created if missing). No re-embedding. |
+| `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |
+| `rag compact WS` | Rewrite `vectors.shammy` without deleted rows. Builds do this on their own when a quarter of the rows are deleted. |
 | `rag search WS\|PACK "question" [-k N] [--type pdf] [--json]` | The passages the agent would get, with sources. |
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |

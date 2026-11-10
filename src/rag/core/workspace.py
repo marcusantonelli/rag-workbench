@@ -159,7 +159,8 @@ class Workspace:
         ws = cls(root=root, config=Config.load(cfg_path))
         for d in (ws.cache_dir, ws.assets_dir, ws.library_dir):
             d.mkdir(exist_ok=True)
-        RagStore.create(ws.rag_db, int(ws.config["embedding"]["dims"])).close()
+        RagStore.create(ws.rag_db, int(ws.config["embedding"]["dims"]),
+                        vectors=ws.config["vectors"]["backend"]).close()
         TablesStore.create(ws.tables_db).close()
         write_marker(root, name=name)
         return ws
@@ -200,7 +201,17 @@ def open_any(path: Path) -> tuple[Workspace, tempfile.TemporaryDirectory | None]
 
 def reset_workspace_data(ws: Workspace) -> None:
     """Delete databases, cache and assets (keeps config and library)."""
-    for p in (ws.rag_db, ws.tables_db):
+    backend = ws.config["vectors"]["backend"]
+    if ws.rag_db.exists():
+        try:
+            old = RagStore(ws.rag_db, readonly=True)
+            try:
+                backend = old.vector_backend
+            finally:
+                old.close()
+        except Exception:  # noqa: BLE001 - a damaged database is being thrown away anyway
+            pass
+    for p in (ws.rag_db, ws.tables_db, ws.root / "vectors.shammy"):
         for suffix in ("", "-wal", "-shm"):
             q = Path(str(p) + suffix)
             if q.exists():
@@ -208,7 +219,7 @@ def reset_workspace_data(ws: Workspace) -> None:
     for d in (ws.cache_dir, ws.assets_dir):
         shutil.rmtree(d, ignore_errors=True)
         d.mkdir(exist_ok=True)
-    RagStore.create(ws.rag_db, int(ws.config["embedding"]["dims"])).close()
+    RagStore.create(ws.rag_db, int(ws.config["embedding"]["dims"]), vectors=backend).close()
     TablesStore.create(ws.tables_db).close()
 
 

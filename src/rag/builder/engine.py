@@ -163,6 +163,8 @@ class Builder:
             store.set_meta("app_version", __version__)
             store.set_meta("config_fingerprint", self.cfg.fingerprint())
             store.conn.commit()
+            if hasattr(store.vectors, "compact"):
+                store.vectors.compact()   # only when many rows are deleted or the file is in many pieces
         finally:
             store.close()
             tables.close()

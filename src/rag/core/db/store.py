@@ -57,20 +57,57 @@ class RagStore:
         self.path = Path(path)
         self.readonly = readonly
         self.conn = connect(self.path, readonly=readonly, load_vec=True)
+        self._vectors = None
 
     # -- lifecycle ---------------------------------------------------------
     @classmethod
-    def create(cls, path: Path, dims: int) -> "RagStore":
+    def create(cls, path: Path, dims: int, *, vectors: str = "sqlite-vec") -> "RagStore":
+        """Create the database (or open the one already there, which keeps its vector store)."""
+        from rag.core.db.vectors import BACKENDS, SHAMMY_FILE, ShammyVectors, check_dims
+
+        if vectors not in BACKENDS:
+            raise ValueError(f"unknown vector store {vectors!r}; choose from {', '.join(BACKENDS)}")
+        if vectors == "shammy" and not Path(path).exists():
+            check_dims(int(dims))
         store = cls(path)
         store.conn.executescript(read_schema("schema_rag.sql").replace("{dims}", str(int(dims))))
         if store.get_meta("schema_version") is None:
             store.set_meta("schema_version", str(SCHEMA_VERSION))
             store.set_meta("created_at", now_iso())
+            store.set_meta("vector_backend", vectors)
+            if vectors == "shammy":
+                (store.path.with_name(SHAMMY_FILE)).unlink(missing_ok=True)
+                ShammyVectors.create(store.path.with_name(SHAMMY_FILE), int(dims))
         store.conn.commit()
         return store
 
+    @property
+    def vector_backend(self) -> str:
+        return self.get_meta("vector_backend") or "sqlite-vec"
+
+    @property
+    def vectors(self):
+        """The workspace's vector store (see rag.core.db.vectors)."""
+        if self._vectors is None:
+            from rag.core.db.vectors import SHAMMY_FILE, ShammyVectors, SqliteVectors, reconcile
+
+            if self.vector_backend == "shammy":
+                self._vectors = ShammyVectors(self.path.with_name(SHAMMY_FILE), readonly=self.readonly)
+                if not self.readonly:
+                    self.repaired = reconcile(self)
+            else:
+                self._vectors = SqliteVectors(self.conn)
+        return self._vectors
+
     def close(self) -> None:
-        self.conn.close()
+        try:
+            if self._vectors is not None:
+                if not self.readonly:
+                    self._vectors.flush()
+                self._vectors.close()
+                self._vectors = None
+        finally:
+            self.conn.close()
 
     # -- meta ----------------------------------------------------------------
     def get_meta(self, key: str) -> str | None:
@@ -116,7 +153,7 @@ class RagStore:
         ids = [r[0] for r in self.conn.execute("SELECT chunk_id FROM chunks WHERE doc_id = ?", (doc_id,))]
         if ids:
             self.conn.executemany("DELETE FROM chunks_fts WHERE rowid = ?", [(i,) for i in ids])
-            self.conn.executemany("DELETE FROM chunk_vec WHERE chunk_id = ?", [(i,) for i in ids])
+            self.vectors.delete_doc(doc_id, ids)
         self.conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
         self.conn.execute("DELETE FROM documents WHERE doc_id = ?", (doc_id,))
 
@@ -159,8 +196,19 @@ class RagStore:
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors differ in length")
         ids: list[int] = []
+        store = self.vectors
+        try:
+            self._write_chunks(doc_id, rec, chunks, vectors, ids)
+        except BaseException:
+            store.failed(doc_id)
+            raise
+        if hasattr(store, "after_write"):
+            store.after_write()
+        return ids
+
+    def _write_chunks(self, doc_id: int, rec: DocRecord, chunks: list[Chunk], vectors: np.ndarray, ids: list[int]) -> None:
         with self.conn:
-            for ordinal, (ch, vec) in enumerate(zip(chunks, vectors)):
+            for ordinal, (ch, _vec) in enumerate(zip(chunks, vectors)):
                 cur = self.conn.execute(
                     "INSERT INTO chunks(doc_id, ordinal, kind, text, embed_text, text_hash, heading_path, "
                     "symbol, page_start, page_end, line_start, line_end, sheet, cell_range, table_name, "
@@ -176,10 +224,7 @@ class RagStore:
                 self.conn.execute(
                     "INSERT INTO chunks_fts(rowid, embed_text) VALUES (?, ?)", (chunk_id, ch.embed_text)
                 )
-                self.conn.execute(
-                    "INSERT INTO chunk_vec(chunk_id, embedding, file_type, doc_id) VALUES (?,?,?,?)",
-                    (chunk_id, vec_bytes(vec), rec.file_type, doc_id),
-                )
+            self.vectors.add(ids, vectors, rec.file_type, doc_id)
             self.conn.execute(
                 "UPDATE documents SET status = ?, n_chunks = ?, title = ?, n_pages = ?, extractor = ?, "
                 "warnings = ? WHERE doc_id = ?",
@@ -188,7 +233,6 @@ class RagStore:
                     json.dumps(rec.warnings or []), doc_id,
                 ),
             )
-        return ids
 
     def mark_failed(self, doc_id: int, message: str) -> None:
         with self.conn:
@@ -200,16 +244,23 @@ class RagStore:
     # -- vectors ---------------------------------------------------------------
     def vectors_for_hashes(self, hashes: Iterable[str]) -> dict[str, np.ndarray]:
         """Existing vectors for identical text, so it is embedded only once."""
-        out: dict[str, np.ndarray] = {}
+        if self.vector_backend == "sqlite-vec":
+            out: dict[str, np.ndarray] = {}
+            for h in set(hashes):
+                row = self.conn.execute(
+                    "SELECT v.embedding FROM chunks c JOIN chunk_vec v ON v.chunk_id = c.chunk_id "
+                    "WHERE c.text_hash = ? LIMIT 1",
+                    (h,),
+                ).fetchone()
+                if row is not None:
+                    out[h] = np.frombuffer(row[0], dtype=np.float32).copy()
+            return out
+        by_chunk: dict[int, str] = {}
         for h in set(hashes):
-            row = self.conn.execute(
-                "SELECT v.embedding FROM chunks c JOIN chunk_vec v ON v.chunk_id = c.chunk_id "
-                "WHERE c.text_hash = ? LIMIT 1",
-                (h,),
-            ).fetchone()
+            row = self.conn.execute("SELECT chunk_id FROM chunks WHERE text_hash = ? LIMIT 1", (h,)).fetchone()
             if row is not None:
-                out[h] = np.frombuffer(row[0], dtype=np.float32).copy()
-        return out
+                by_chunk[int(row[0])] = h
+        return {by_chunk[cid]: vec for cid, vec in self.vectors.get(by_chunk).items()}
 
     # -- errors and stats --------------------------------------------------------
     def log_error(self, path: str, stage: str, message: str) -> None:
@@ -227,7 +278,8 @@ class RagStore:
             "documents": q("SELECT COUNT(*) FROM documents").fetchone()[0],
             "failed": q("SELECT COUNT(*) FROM documents WHERE status = 'failed'").fetchone()[0],
             "chunks": q("SELECT COUNT(*) FROM chunks").fetchone()[0],
-            "vectors": q("SELECT COUNT(*) FROM chunk_vec").fetchone()[0],
+            "vectors": self.vectors.count(),
+            "vector_store": self.vector_backend,
             "documents_by_type": by_type,
             "chunks_by_kind": by_kind,
         }

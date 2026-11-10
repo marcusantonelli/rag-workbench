@@ -6,7 +6,7 @@ import { terminal, useTerminal } from "../terminalStore";
 import { Button } from "./ui";
 import { pickPaths } from "../platform";
 
-const SUBCOMMANDS = ["build", "check-embedder", "describe", "eval", "export", "init", "list", "merge", "remove", "search", "sql",
+const SUBCOMMANDS = ["build", "check-embedder", "compact", "convert", "describe", "eval", "export", "init", "list", "merge", "remove", "search", "sql",
   "status", "tables", "unpack", "verify", "help", "--version"];
 
 function quote(p: string): string {

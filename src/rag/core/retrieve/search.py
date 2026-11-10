@@ -1,4 +1,4 @@
-"""Test retrieval over a pack: FTS5 + sqlite-vec, fused with Reciprocal Rank Fusion.
+"""Test retrieval over a pack: FTS5 + the vector store, fused with Reciprocal Rank Fusion.
 
 This is the reference behaviour for the future C# retrieval server: same
 query parsing, same FTS query construction, same RRF, same result shape.
@@ -15,7 +15,7 @@ from typing import Any, Callable
 import numpy as np
 
 from rag.core.chunk.identifiers import query_identifiers, split_identifier
-from rag.core.db.store import RagStore, vec_bytes
+from rag.core.db.store import RagStore
 
 _STOP = set("""a an and are as at be by can do does for from has have how i if in is it of on or our
 should that the their there these this to was we what when where which who why will with you your""".split())
@@ -91,12 +91,7 @@ class Searcher:
         self.rerank = rerank
 
     def _vector(self, qvec: np.ndarray, k: int, file_type: str | None) -> list[int]:
-        sql = "SELECT chunk_id, distance FROM chunk_vec WHERE embedding MATCH ? AND k = ?"
-        args: list[Any] = [vec_bytes(qvec), k]
-        if file_type:
-            sql += " AND file_type = ?"
-            args.append(file_type)
-        return [r[0] for r in self.store.conn.execute(sql, args).fetchall()]
+        return self.store.vectors.search(qvec, k, file_type)
 
     def _keyword(self, query: str, k: int, file_type: str | None) -> list[int]:
         expr = fts_query(query)
@@ -165,6 +160,7 @@ class Searcher:
                 scores[cid] = scores.get(cid, 0.0) + 1.0 / (rrf_k + rank)
         fused = sorted(scores, key=lambda c: scores[c], reverse=True)
         rows = self._load(fused)
+        fused = [c for c in fused if c in rows]
         # Collapse identical text (boilerplate repeated across files).
         seen_hash: set[str] = set()
         ordered: list[int] = []

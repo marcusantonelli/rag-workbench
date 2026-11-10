@@ -101,8 +101,11 @@ impl Writer {
         file.read_to_end(&mut data)?;
         let header = Header::parse(&data)?;
         let (footer, end) = format::find_last_commit(&data)?;
+        let len = data.len() as u64;
         drop(data);
-        file.set_len(end)?;
+        if end != len {
+            file.set_len(end)?; // drop an interrupted write
+        }
         let rot = Rotation::new(header.dims as usize, header.rotation_seed)?;
         Ok(Self::assemble(path, file, header, footer, rot, end))
     }
@@ -117,6 +120,45 @@ impl Writer {
 
     pub fn header(&self) -> &Header {
         &self.header
+    }
+
+    /// A new, empty file with the same layout (dimensions, rotation, model, file types) as `like`.
+    pub(crate) fn create_like(path: impl AsRef<Path>, like: &Header, footer: &Footer) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let rot = Rotation::new(like.dims as usize, like.rotation_seed)?;
+        let header = Header { file_uuid: new_uuid(&path), ..like.clone() };
+        let mut file = OpenOptions::new().read(true).write(true).create_new(true).open(&path)
+            .map_err(|e| Error::Invalid(format!("can't create {}: {e}", path.display())))?;
+        file.write_all(&header.to_bytes())?;
+        let footer = Footer { model: footer.model.clone(), instruction_hash: footer.instruction_hash,
+                              file_types: footer.file_types.clone(), ..Default::default() };
+        let mut w = Self::assemble(path, file, header, footer, rot, format::HEADER_LEN as u64);
+        w.dirty = true;
+        Ok(w)
+    }
+
+    /// Add a row that is already encoded (copied from another file with the same layout).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add_encoded(&mut self, id: &[u8], doc: &[u8], ftype: u8, sketch: &[u8], bits: &[u8], corr: &[u8],
+                              q8: &[u8], q8corr: &[u8], f16: Option<&[u8]>) -> Result<()> {
+        let p = &mut self.pending;
+        p.ids.extend_from_slice(id);
+        p.docs.extend_from_slice(doc);
+        p.ftypes.push(ftype);
+        p.sketch.extend_from_slice(sketch);
+        p.bits.extend_from_slice(bits);
+        p.corr.extend_from_slice(corr);
+        p.q8.extend_from_slice(q8);
+        p.q8corr.extend_from_slice(q8corr);
+        if let Some(f) = f16 {
+            p.f16.extend_from_slice(f);
+        }
+        p.rows += 1;
+        self.dirty = true;
+        if p.rows >= self.segment_rows {
+            self.flush_segment()?;
+        }
+        Ok(())
     }
 
     pub fn path(&self) -> &Path {

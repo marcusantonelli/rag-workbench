@@ -36,10 +36,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Freeze the engine
+        shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install . "pyinstaller>=6.10"
+          python -m pip install . "pyinstaller>=6.10" "maturin>=1.7,<2"
+          # the Shammy vector engine, as a Python module the engine bundles
+          (cd shammy/crates/shammy-py && maturin build --release --out ../../target/wheels)
+          python -m pip install shammy/target/wheels/shammy-*.whl
           # OCR needs OpenCV but not its GUI: the headless build is ~100 MB smaller.
           python -m pip uninstall -y opencv-python
           python -m pip install opencv-python-headless
@@ -50,8 +56,6 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: desktop/package-lock.json
-
-      - uses: dtolnay/rust-toolchain@stable
 
       - uses: swatinem/rust-cache@v2
         with:

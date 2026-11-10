@@ -1,6 +1,6 @@
 """`rag` command line: build packs, export them, and test retrieval.
 
-    rag init WS [--name NAME]           create a workspace (marker, config.toml, empty databases)
+    rag init WS [--name NAME] [--vectors shammy]   create a workspace (marker, config.toml, empty databases)
     rag list [FOLDER]                   workspaces and packs in a folder (default: the app's workspaces)
     rag verify WS|PACK                  check a workspace or pack is whole
     rag build WS PATH... [--json]       ingest files/folders (incremental by content hash)
@@ -9,6 +9,8 @@
     rag export WS OUT.ragpack           write a verified pack
     rag unpack PACK DEST                extract and verify a pack (e.g. to keep building it)
     rag merge WS SRC...                 copy compatible packs/workspaces into WS (no re-embedding)
+    rag convert WS [--to shammy]        move the vectors between sqlite-vec and Shammy (no re-embedding)
+    rag compact WS                      rewrite vectors.shammy without deleted rows
     rag search WS|PACK "question"       hybrid search (keyword + vector, RRF)
     rag tables WS|PACK                  list tables in tables.db
     rag describe WS|PACK TABLE          schema, column ranges, sample rows
@@ -64,6 +66,7 @@ def _overrides(args) -> dict[str, Any]:
 
 
 def cmd_init(args) -> int:
+    from rag.core.db.vectors import VectorStoreError
     from rag.core.workspace import Workspace
 
     overrides = _overrides(args)
@@ -74,9 +77,16 @@ def cmd_init(args) -> int:
     if args.embedder == "qwen3-onnx":
         overrides["embedding"].update({"model": "n24q02m/Qwen3-Embedding-0.6B-ONNX", "native_dims": 1024,
                                        "dims": args.dims or 1024})
-    ws = Workspace.init(Path(args.workspace), overrides, name=args.name)
+    if args.vectors:
+        overrides.setdefault("vectors", {})["backend"] = args.vectors
+    try:
+        ws = Workspace.init(Path(args.workspace), overrides, name=args.name)
+    except VectorStoreError as exc:
+        print(f"rag: {exc}", file=sys.stderr)
+        return 1
     print(f"Workspace \"{ws.name}\" ready at {ws.root}\n  embedding: {ws.config['embedding']['backend']} "
           f"{ws.config['embedding']['model']} ({ws.config['embedding']['dims']} dims)\n"
+          f"  vectors: {ws.config['vectors']['backend']}\n"
           f"  edit {ws.config_path} before the first build if needed.")
     return 0
 
@@ -253,6 +263,53 @@ def cmd_list(args) -> int:
     return 0
 
 
+def cmd_convert(args) -> int:
+    from rag.core.db.convert import convert_workspace
+    from rag.core.db.vectors import VectorStoreError
+    from rag.core.workspace import NotAWorkspace, Workspace
+
+    def show(done: int, total: int) -> None:
+        if done == total or done % 2000 < 50:
+            print(f"\r  {done:,} of {total:,} vectors", end="", file=sys.stderr, flush=True)
+
+    try:
+        res = convert_workspace(Workspace.open(Path(args.workspace)), args.to, progress=None if args.json else show)
+    except (VectorStoreError, NotAWorkspace) as exc:
+        print(f"rag: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(res))
+    elif not res["changed"]:
+        print(f"Already using {res['to']} ({_n(res['vectors'], 'vector')}); nothing to do.")
+    else:
+        print(f"\rMoved {_n(res['vectors'], 'vector')} from {res['from']} to {res['to']}.          ")
+        if res["missing"]:
+            print(f"  {_n(res['missing'], 'chunk')} had no vector to move (run `rag verify`).")
+        print("  " + ", ".join(f"{name} is now {_human(size)}" for name, size in res["bytes"].items() if size))
+        if res["to"] == "shammy":
+            print("  Packs exported from this workspace are format ragpack/2, which the retrieval server "
+                  "can't read until it has Shammy support.")
+    return 0
+
+
+def cmd_compact(args) -> int:
+    from rag.core.db.convert import compact_workspace
+    from rag.core.db.vectors import VectorStoreError
+    from rag.core.workspace import NotAWorkspace, Workspace
+
+    try:
+        res = compact_workspace(Workspace.open(Path(args.workspace)))
+    except (VectorStoreError, NotAWorkspace) as exc:
+        print(f"rag: {exc}", file=sys.stderr)
+        return 1
+    if res is None:
+        print("This workspace keeps its vectors in rag.db (sqlite-vec); there is nothing to compact.")
+    else:
+        print(f"vectors.shammy: {res['rows_before'] - res['rows_after']:,} deleted rows dropped, "
+              f"{_human(res['bytes_before'])} to {_human(res['bytes_after'])}.")
+    return 0
+
+
 def cmd_verify(args) -> int:
     from rag.core.check import check_path, format_report
 
@@ -395,7 +452,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--embedder", choices=["llama-server", "llama-cpp", "qwen3-onnx", "hash-test"])
     s.add_argument("--dims", type=int, help="stored dims (MRL truncation), e.g. 2048")
     s.add_argument("--name", help="display name (default: the folder name)")
+    s.add_argument("--vectors", choices=["sqlite-vec", "shammy"],
+                   help="where vectors are kept (default sqlite-vec; shammy is smaller and faster)")
     s.set_defaults(fn=cmd_init)
+
+    s = sub.add_parser("convert", help="move a workspace's vectors between sqlite-vec and Shammy (nothing is embedded again)")
+    s.add_argument("workspace")
+    s.add_argument("--to", choices=["shammy", "sqlite-vec"], default="shammy")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_convert)
+
+    s = sub.add_parser("compact", help="rewrite vectors.shammy without deleted rows")
+    s.add_argument("workspace")
+    s.set_defaults(fn=cmd_compact)
 
     s = sub.add_parser("list", help="list workspaces and packs in a folder (default: the app's workspaces folder)")
     s.add_argument("folder", nargs="?", help="folder to look in")
