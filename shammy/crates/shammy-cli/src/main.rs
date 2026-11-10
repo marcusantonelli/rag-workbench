@@ -14,6 +14,10 @@ shammy: inspect and test .shammy vector files
   shammy delete FILE DOC_ID...
   shammy search FILE --query RAW.f32 [--row N] [-k 20] [--stage1 N] [--stage2 N]
                [--finish N] [--exact] [--type NAME] [--doc ID]
+  shammy bench FILE [--queries 100] [-k 20] [--stage2 N] [--finish N] [--stage1 N,N,...]
+
+bench uses stored vectors as queries (the file needs its lossless tier) and reports, for several
+stage-1 candidate counts, recall against exact search and the time per search.
 
 RAW files are little-endian arrays with no header: float32 rows of D values for vectors,
 uint64 for ids (default: 0, 1, 2, ...), uint32 for document ids (default: 0).
@@ -179,6 +183,60 @@ fn run() -> Result<ExitCode, String> {
             for h in hits {
                 println!("{}\t{}\t{:.6}", h.id, h.doc_id, h.score);
             }
+        }
+        "bench" => {
+            let n: usize = args.number("--queries")?.unwrap_or(100);
+            let k: usize = args.number("-k")?.unwrap_or(20);
+            let stage2: usize = args.number("--stage2")?.unwrap_or(0);
+            let finish: usize = args.number("--finish")?.unwrap_or(0);
+            let custom = args.value("--stage1")?;
+            let r = Reader::open(args.0.first().ok_or("bench needs a file")?).map_err(e)?;
+            let info = r.info();
+            if !info.lossless {
+                return Err("bench needs the lossless tier (it is the ground truth)".into());
+            }
+            let ids = r.live_ids();
+            if ids.len() <= k {
+                return Err("too few rows to benchmark".into());
+            }
+            let live = ids.len();
+            let step = (live / n.min(live)).max(1);
+            let queries: Vec<Vec<f32>> = ids.iter().step_by(step).take(n).filter_map(|id| r.vector(*id)).collect();
+            let none = Filter::default();
+            let t = std::time::Instant::now();
+            let truth: Vec<Vec<shammy_core::Hit>> = queries.iter().map(|q| r.search_exact(q, k, &none)).collect::<Result<_, _>>().map_err(e)?;
+            println!("{} live rows x {} dims, {} queries (stored vectors), k = {k}", live, info.dims, queries.len());
+            println!("exact search: {:.1} ms per query\n", t.elapsed().as_secs_f64() * 1e3 / queries.len() as f64);
+            let grid: Vec<usize> = match custom {
+                Some(c) => c.split(',').map(|x| x.trim().parse().map_err(|_| format!("--stage1: '{x}' is not a number"))).collect::<Result<_, _>>()?,
+                None => {
+                    let mut g: Vec<usize> = [0.001, 0.002, 0.004, 0.01, 0.02, 0.05].iter().map(|f| ((live as f64 * f) as usize).max(k)).collect();
+                    g.dedup();
+                    g
+                }
+            };
+            println!("{:>8} {:>8} {:>10} {:>10} {:>10} {:>10}", "stage 1", "of rows", "recall", "worst", "p50 ms", "p99 ms");
+            for s1 in grid {
+                let params = Params { stage1: s1, stage2, finish };
+                let (mut hit, mut worst) = (0usize, 1f64);
+                let mut times = Vec::with_capacity(queries.len());
+                for (q, want) in queries.iter().zip(&truth) {
+                    let t = std::time::Instant::now();
+                    let got = r.search(q, k, &none, &params).map_err(e)?;
+                    times.push(t.elapsed().as_secs_f64() * 1e3);
+                    // a result as good as the k-th exact one counts: duplicate vectors tie
+                    let floor = want.last().map(|h| h.score).unwrap_or(0.0) - 1e-6;
+                    let found = got.iter().filter(|h| h.score >= floor).count().min(want.len());
+                    hit += found;
+                    worst = worst.min(found as f64 / want.len() as f64);
+                }
+                times.sort_by(|a, b| a.total_cmp(b));
+                let total: usize = truth.iter().map(|w| w.len()).sum();
+                println!("{:>8} {:>7.2}% {:>10.4} {:>10.2} {:>10.2} {:>10.2}", s1, s1 as f64 / live as f64 * 100.0,
+                         hit as f64 / total as f64, worst, times[times.len() / 2], times[(times.len() * 99 / 100).min(times.len() - 1)]);
+            }
+            println!("\nrecall: share of the exact top {k} returned; worst: the lowest single query. stage 2 = {}, finish = {}.",
+                     if stage2 == 0 { 256 } else { stage2 }, if finish == 0 { 50.max(k) } else { finish });
         }
         other => return Err(format!("unknown command '{other}'\n\n{USAGE}")),
     }

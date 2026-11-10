@@ -202,6 +202,17 @@ impl Reader {
         None
     }
 
+    /// Ids of every live row, in file order.
+    pub fn live_ids(&self) -> Vec<u64> {
+        let mut out = Vec::with_capacity(self.footer.live_row_count as usize);
+        for seg in &self.segments {
+            let ids = self.bytes(seg.ids);
+            out.extend((0..seg.rows).filter(|r| !self.deleted(seg, *r))
+                .map(|r| u64::from_le_bytes(ids[r * 8..r * 8 + 8].try_into().unwrap())));
+        }
+        out
+    }
+
     /// Exact search over the lossless tier: the ground truth that `search` is measured against.
     pub fn search_exact(&self, query: &[f32], k: usize, filter: &Filter) -> Result<Vec<Hit>> {
         if !self.header.lossless() {

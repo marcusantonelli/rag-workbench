@@ -8,7 +8,7 @@ no index structure, a scan of 1-bit sketches followed by reranking on larger cod
 | | |
 |---|---|
 | `crates/shammy-core` | The engine: format, encoder, writer, reader, search, verify |
-| `crates/shammy-cli` | `shammy`: info, verify, build, delete, search (developer tool) |
+| `crates/shammy-cli` | `shammy`: info, verify, build, delete, search, bench (developer tool) |
 | `python/shammy_ref.py` | The specification as NumPy code; the engine is tested against it |
 | `spec/FORMAT.md` | The byte-level format |
 | `prototype/m0_funnel.py` | Milestone 0: measures the design on a real workspace or pack |
@@ -32,6 +32,7 @@ shammy info kb.shammy
 shammy verify kb.shammy
 shammy search kb.shammy --query q.f32 -k 10
 shammy search kb.shammy --query q.f32 -k 10 --exact     # ground truth from the lossless tier
+shammy bench kb.shammy                                  # recall and ms per search, by stage-1 count
 ```
 
 ## Status
@@ -44,7 +45,8 @@ shammy search kb.shammy --query q.f32 -k 10 --exact     # ground truth from the 
 - **Milestone 1 (done):** format 1.0, append-only writer with commits and tombstones, reader,
   scalar single-threaded search, verify, crash and corruption tests, bit-exact parity with the
   reference.
-- **Next, milestone 2:** SIMD kernels, parallel scan, error-bound pruning, `shammy bench`.
+- **Milestone 2, in steps:** `shammy bench` (done); then fast bit counting for stage 1, a
+  multi-threaded scan, fast kernels for stages 2 and 3, and error-bound pruning.
 
 ## Milestone 0 script
 
