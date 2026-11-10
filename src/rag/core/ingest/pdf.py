@@ -4,7 +4,8 @@ Backends:
   * docling  - layout model, TableFormer tables, reading order, figures (best quality;
                needs `pip install rag-builder[docling]` and its models downloaded once).
   * native   - pdfplumber for digital pages (text lines, font-size headings, ruled
-               tables, embedded images) and RapidOCR for scanned pages. No PyTorch.
+               tables, embedded images, flowcharts drawn as vector shapes) and RapidOCR
+               for scanned pages. No PyTorch.
   * auto     - docling when installed and working, otherwise native.
 
 OCR is decided per page, not per file: a page with too little extractable text,
@@ -76,6 +77,7 @@ class _PageItems:
     tables: list[tuple[float, list[list[str]], tuple[float, float, float, float]]] = field(
         default_factory=list)   # (top, rows, bbox)
     figures: list[tuple[float, tuple[float, float, float, float]]] = field(default_factory=list)
+    diagrams: list = field(default_factory=list)       # diagram.Diagram, rebuilt from vector shapes
     ocr: bool = False
     ocr_blocks: list[Block] = field(default_factory=list)
     ocr_conf: float | None = None
@@ -377,6 +379,7 @@ def _merge_continued_tables(blocks: list[Block]) -> list[Block]:
             else:
                 between = []
         if (b.kind == "table" and prev is not None and prev.kind == "table" and b.page and prev.page
+                and not b.meta.get("from_image") and not prev.meta.get("from_image")
                 and b.page == (prev.page_end or prev.page) + 1
                 and len(b.meta.get("headers") or []) == len(prev.meta.get("headers") or [])
                 and not b.meta.get("caption")):
@@ -394,28 +397,55 @@ def _merge_continued_tables(blocks: list[Block]) -> list[Block]:
     return out
 
 
+def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    """The share of a's area that lies inside b."""
+    w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    h = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    area = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    return w * h / area if area else 0.0
+
+
 def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
     cfg = ctx.config["pdf"]
+    try:
+        words = page.extract_words(extra_attrs=["size", "fontname", "non_stroking_color"], keep_blank_chars=False)
+    except Exception:  # noqa: BLE001 - odd colour spaces: fall back to font only
+        words = page.extract_words(extra_attrs=["size", "fontname"], keep_blank_chars=False)
+
+    # Flowcharts drawn as shapes first: their labels leave the text flow, and the boxes they
+    # are drawn with are not tables.
+    regions: list[tuple[float, float, float, float]] = []
+    if cfg.get("diagrams", True):
+        from rag.core.ingest.diagram import find_diagrams
+
+        try:
+            items.diagrams = find_diagrams(page, words)
+        except Exception:  # noqa: BLE001 - a drawing we can't read is left to the text reader
+            items.diagrams = []
+        if items.diagrams:
+            used = set().union(*(d.word_ids for d in items.diagrams))
+            words = [w for i, w in enumerate(words) if i not in used]
+            regions = [d.bbox for d in items.diagrams]
+
     table_bboxes: list[tuple[float, float, float, float]] = []
     try:
         for table in page.find_tables():
+            bbox = tuple(float(v) for v in table.bbox)
+            if any(_overlap(bbox, r) > 0.5 for r in regions):
+                continue
             rows = [[(c or "").strip() for c in row] for row in table.extract()]
             rows = [r for r in rows if any(r)]
             if len(rows) >= 2 and max(len(r) for r in rows) >= 2:
                 table_bboxes.append(table.bbox)
-                items.tables.append((table.bbox[1], rows, tuple(float(v) for v in table.bbox)))
+                items.tables.append((table.bbox[1], rows, bbox))
     except Exception:  # noqa: BLE001
         pass
     page_area = items.width * items.height or 1
     for img in page.images:
         bbox = (float(img["x0"]), float(img["top"]), float(img["x1"]), float(img["bottom"]))
         area = max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
-        if area / page_area >= cfg["figure_min_area"]:
+        if area / page_area >= cfg["figure_min_area"] and not any(_overlap(bbox, r) > 0.5 for r in regions):
             items.figures.append((bbox[1], bbox))
-    try:
-        words = page.extract_words(extra_attrs=["size", "fontname", "non_stroking_color"], keep_blank_chars=False)
-    except Exception:  # noqa: BLE001 - odd colour spaces: fall back to font only
-        words = page.extract_words(extra_attrs=["size", "fontname"], keep_blank_chars=False)
     words = [w for w in words if not any(_inside(w, b) for b in table_bboxes)]
     height = items.height or 1000.0
     for k, group in enumerate(_reading_groups(words)):
@@ -435,6 +465,15 @@ def _reading_key(p: _PageItems, bbox: tuple[float, float, float, float]) -> floa
     for k, (gx0, gt, gx1, gb) in enumerate(p.groups):
         if gx0 - 2 <= cx <= gx1 + 2 and gt - 2 <= top <= gb + 2:
             return k * height + top
+    # wider than the text around it (a full-width picture beside narrower lines): the group it
+    # overlaps most at that height
+    best: tuple[float, int] | None = None
+    for k, (gx0, gt, gx1, gb) in enumerate(p.groups):
+        across = min(x1, gx1) - max(x0, gx0)
+        if across > 0 and gt - 2 <= top <= gb + 2 and (best is None or across > best[0]):
+            best = (across, k)
+    if best is not None:
+        return best[1] * height + top
     for k, (_, gt, _, _) in enumerate(p.groups):
         if gt > top:
             return k * height + top
@@ -442,14 +481,29 @@ def _reading_key(p: _PageItems, bbox: tuple[float, float, float, float]) -> floa
 
 
 def _ocr_page(pdoc, index: int, items: _PageItems, ctx: ExtractContext) -> None:
-    from rag.core.ingest.ocr import lines_to_paragraphs, ocr_lines
+    from rag.core.ingest.ocr import ocr_page
 
     ctx.progress("ocr", {"page": index + 1})
     image = _render_page(pdoc, index, float(ctx.config["pdf"]["ocr_scale"]))
-    lines = ocr_lines(image)
-    paras = lines_to_paragraphs(lines)
-    items.ocr_conf = (sum(ln.conf for ln in lines) / len(lines)) if lines else 0.0
-    for p in paras:
+    read = ocr_page(image, tables=bool(ctx.config["figures"].get("table_ocr", True)))
+    items.ocr_conf = read.conf
+    n_tables = 0
+    for part in read.parts:
+        if part.table is not None:   # a table on a scanned page: rows and columns, with its picture
+            n_tables += 1
+            t = part.table
+            path = ctx.asset_dir / f"p{items.number}-scan-table-{n_tables}.png"
+            x0, y0, x1, y1 = part.box
+            pad = 6
+            image.crop((max(0, int(x0) - pad), max(0, int(y0) - pad), min(image.width, int(x1) + pad),
+                        min(image.height, int(y1) + pad))).save(path, format="PNG", optimize=True)
+            label = (t.title or f"Table on scanned page {items.number}") + " (read with OCR)"
+            items.ocr_blocks.append(Block(
+                kind="table", text=f"**{label}**\n\n" + markdown_table(t.headers, t.rows), page=items.number,
+                meta={"headers": t.headers, "rows": t.rows, "caption": label, "from_image": True,
+                      "asset_path": ctx.asset_rel(path), "ocr_conf": round(t.conf, 3), "y": y0}))
+            continue
+        p = part.paragraph
         items.ocr_blocks.append(
             Block(
                 kind="heading" if p.is_heading else "paragraph",
@@ -533,6 +587,8 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             events.append((_reading_key(p, bbox), "table", rows))
         for top, bbox in p.figures:
             events.append((_reading_key(p, bbox), "figure", bbox))
+        for d in p.diagrams:
+            events.append((_reading_key(p, d.bbox), "diagram", d))
         events.sort(key=lambda e: e[0])
 
         para: list[_Line] = []
@@ -608,6 +664,20 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                 figure_index += 1
                 caption = _caption_after(events, idx, consumed)
                 blocks.append(make_figure_block(crop, ctx, page=p.number, index=figure_index, caption=caption))
+            elif kind == "diagram":
+                from rag.core.ingest.figures import make_diagram_block
+
+                last_heading[0] = None
+                flush()
+                if page_image is None:
+                    page_image = _render_page(pdoc, p.number - 1, 3.0)
+                x0, t, x1, b = obj.bbox  # type: ignore[union-attr]
+                s, pad = 3.0, 8.0
+                crop = page_image.crop((max(0, int((x0 - pad) * s)), max(0, int((t - pad) * s)),
+                                        min(page_image.width, int((x1 + pad) * s)), min(page_image.height, int((b + pad) * s))))
+                figure_index += 1
+                caption = _caption_near(blocks, events, idx, consumed)
+                blocks.append(make_diagram_block(crop, obj, ctx, page=p.number, index=figure_index, caption=caption))
         flush()
 
     blocks = _merge_continued_tables(blocks)

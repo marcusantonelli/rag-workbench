@@ -168,7 +168,8 @@ class Chunker:
         rows = meta.get("rows") or []
         caption = meta.get("caption")
         base = dict(kind="table", embed_text="", heading_path=heading_path, page_start=block.page,
-                    page_end=block.page_end or block.page, line_start=block.line_start, line_end=block.line_end)
+                    page_end=block.page_end or block.page, line_start=block.line_start, line_end=block.line_end,
+                    asset_path=meta.get("asset_path"), ocr_conf=meta.get("ocr_conf"))
         if table_name:
             preview = markdown_table(headers, rows[:5])
             text = ((f"**{caption}**\n\n" if caption else "") + preview +
@@ -245,12 +246,24 @@ class Chunker:
         return out
 
     # -- figures -------------------------------------------------------------------------
-    def _figure_chunk(self, block: Block, heading_path: str | None) -> Chunk:
-        return Chunk(
-            kind="figure", text=block.text, embed_text="", heading_path=heading_path,
-            page_start=block.page, page_end=block.page, asset_path=block.meta.get("asset_path"),
-            ocr_conf=block.meta.get("ocr_conf"),
-        )
+    def _figure_chunks(self, block: Block, heading_path: str | None) -> list[Chunk]:
+        """One chunk per figure; a long one (a big flowchart) is cut between lines, each piece
+        repeating the figure's title line."""
+        base = dict(kind="figure", embed_text="", heading_path=heading_path, page_start=block.page,
+                    page_end=block.page, asset_path=block.meta.get("asset_path"), ocr_conf=block.meta.get("ocr_conf"))
+        if self.count(block.text) <= self.s.max_tokens:
+            return [Chunk(text=block.text, **base)]
+        head, _, body = block.text.partition("\n")
+        out: list[Chunk] = []
+        cur: list[str] = []
+        for line in body.split("\n"):
+            if cur and self.count(head + " (continued)\n" + "\n".join(cur + [line])) > self.s.max_tokens:
+                out.append(Chunk(text=(head if not out else head + " (continued)") + "\n" + "\n".join(cur), **base))
+                cur = []
+            cur.append(line)
+        if cur:
+            out.append(Chunk(text=(head if not out else head + " (continued)") + "\n" + "\n".join(cur), **base))
+        return out
 
     # -- driver -----------------------------------------------------------------------------
     def chunk(self, doc: ExtractedDoc, display_path: str) -> list[Chunk]:
@@ -280,7 +293,7 @@ class Chunker:
             if block.kind == "table":
                 chunks.extend(self._table_chunks(block, path()))
             elif block.kind == "figure":
-                chunks.append(self._figure_chunk(block, path()))
+                chunks.extend(self._figure_chunks(block, path()))
             elif block.kind in ("code", "sql"):
                 chunks.extend(self._code_chunks(block, path()))
             else:

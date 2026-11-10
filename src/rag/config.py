@@ -83,9 +83,15 @@ DEFAULTS: dict[str, Any] = {
         "ocr_scale": 2.5,            # render scale for OCR (72 dpi * scale)
         "figure_min_area": 0.05,     # fraction of page area
         "figure_ocr": True,
+        # Flowcharts drawn as vector shapes (Visio, PowerPoint, draw.io exports) are rebuilt as
+        # numbered steps with their connections instead of being read as jumbled text.
+        "diagrams": True,
         "furniture_min_pages": 3,
     },
     "figures": {
+        # A picture of a table or spreadsheet becomes a real table (rows and columns rebuilt from
+        # where the OCR found each cell); off = its text is kept as one paragraph.
+        "table_ocr": True,
         # OpenAI-compatible vision endpoint on the inference server; empty = off.
         "describe_url": "",
         "describe_model": "",

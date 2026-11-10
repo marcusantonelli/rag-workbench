@@ -35,7 +35,10 @@ def describe_image(img: Image.Image, ctx: ExtractContext) -> str | None:
             "role": "user",
             "content": [
                 {"type": "text", "text": "Describe this figure from a technical document in 2-4 "
-                                         "sentences. Include any labels, values or part names you can read."},
+                                         "sentences. Include any labels, values or part names you can read. "
+                                         "If it is a table or spreadsheet, transcribe it as a Markdown table "
+                                         "instead. If it is a flowchart, list its steps in order with where "
+                                         "each one leads, including branch labels such as Yes and No."},
                 {"type": "image_url", "image_url": {
                     "url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}},
             ],
@@ -61,15 +64,19 @@ def make_figure_block(
     index: int,
     caption: str | None,
 ) -> Block:
-    """Save a figure crop and build its block (caption + OCR text + description)."""
+    """Save a figure crop and build its block (caption + OCR text + description). A picture of a
+    table or spreadsheet comes back as a table block instead, with the picture attached."""
     name = f"p{page}-{index}.png" if page else f"img-{index}.png"
     path: Path = ctx.asset_dir / name
     img.convert("RGB").save(path, format="PNG", optimize=True)
     ocr, conf = "", None
     if ctx.config["pdf"].get("figure_ocr", True):
-        from rag.core.ingest.ocr import ocr_text
+        from rag.core.ingest.ocr import ocr_figure
 
-        ocr, conf = ocr_text(img)
+        found = ocr_figure(img, tables=bool(ctx.config["figures"].get("table_ocr", True)))
+        ocr, conf = found.text, found.conf
+        if found.table is not None:
+            return _table_block(found.table, ctx, path, img, page=page, caption=caption)
     description = describe_image(img, ctx)
     parts = [f"**Figure**{f' (page {page})' if page else ''}" + (f": {caption}" if caption else "")]
     if ocr:
@@ -86,4 +93,46 @@ def make_figure_block(
             "ocr_conf": conf,
             "described": bool(description),
         },
+    )
+
+
+def _table_block(table, ctx: ExtractContext, path: Path, img: Image.Image, *, page: int | None,
+                 caption: str | None) -> Block:
+    """A picture of a table, as a table block: Markdown text, headers and rows for tables.db,
+    and the picture attached so the values can be checked against it."""
+    from rag.core.util import markdown_table
+
+    name = caption or table.title or (f"Table in a picture on page {page}" if page else "Table in a picture")
+    if caption and table.title and table.title not in caption:
+        name = f"{caption}: {table.title}"
+    label = f"{name} (read from the picture with OCR)"
+    return Block(
+        kind="table",
+        text=f"**{label}**\n\n" + markdown_table(table.headers, table.rows),
+        page=page,
+        meta={"headers": table.headers, "rows": table.rows, "caption": label, "from_image": True,
+              "asset_path": ctx.asset_rel(path), "fingerprint": image_fingerprint(img),
+              "ocr_conf": round(table.conf, 3)},
+    )
+
+
+def make_diagram_block(img: Image.Image, diagram, ctx: ExtractContext, *, page: int | None, index: int,
+                       caption: str | None) -> Block:
+    """A flowchart rebuilt from the PDF's shapes: numbered steps with where each leads, plus a
+    picture of it. The optional vision description is added when one is configured."""
+    name = f"p{page}-{index}.png" if page else f"img-{index}.png"
+    path: Path = ctx.asset_dir / name
+    img.convert("RGB").save(path, format="PNG", optimize=True)
+    kind = "Flowchart" if diagram.flowchart else "Diagram"
+    title = f"**{kind}**{f' (page {page})' if page else ''}" + (f": {caption}" if caption else "")
+    text = diagram.to_text(title)
+    description = describe_image(img, ctx)
+    if description:
+        text += "\n\nDescription: " + description
+    return Block(
+        kind="figure",
+        text=text,
+        page=page,
+        meta={"asset_path": ctx.asset_rel(path), "fingerprint": image_fingerprint(img), "ocr_conf": None,
+              "described": bool(description), "diagram": {"steps": len(diagram.nodes), "connections": len(diagram.edges)}},
     )
