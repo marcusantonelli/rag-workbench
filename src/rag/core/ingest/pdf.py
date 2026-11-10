@@ -78,6 +78,8 @@ class _PageItems:
         default_factory=list)   # (top, rows, bbox)
     figures: list[tuple[float, tuple[float, float, float, float]]] = field(default_factory=list)
     diagrams: list = field(default_factory=list)       # diagram.Diagram, rebuilt from vector shapes
+    layouts: dict = field(default_factory=dict)        # index in tables -> layout_table.LayoutTable
+    nested_in: dict = field(default_factory=dict)      # index in tables -> index of the table around it
     ocr: bool = False
     ocr_blocks: list[Block] = field(default_factory=list)
     ocr_conf: float | None = None
@@ -104,6 +106,7 @@ def _group_lines(words: list[dict]) -> list[list[dict]]:
     return groups
 
 
+_SECTION_NO_RE = re.compile(r"^\d+(\.\d+)*\.?$")
 _NUMBERED_HEADING_RE = re.compile(r"^(\d+(\.\d+)*\.?|[A-Z]\.|[IVX]+\.)\s+\S")
 
 
@@ -259,10 +262,13 @@ def _words_to_lines(words: list[dict]) -> list[_Line]:
         sizes = [float(w.get("size") or 0) for w in g]
         fonts = [str(w.get("fontname") or "") for w in g]
         size = statistics.median(sizes) if sizes and statistics.median(sizes) > 0 else 10.0
+        # Wide gaps mark columns only when a line has several (a row of an unruled table). One
+        # wide gap is a section number set off from its heading, or a justified last line.
+        wide = [float(w["x0"]) - float(prev["x1"]) > 1.8 * size for prev, w in zip(g, g[1:])]
+        columns = sum(wide) >= 2 and not (_SECTION_NO_RE.match(g[0]["text"]) and sum(wide[1:]) < 2)
         parts = [g[0]["text"]]
-        for prev, w in zip(g, g[1:]):
-            gap = float(w["x0"]) - float(prev["x1"])
-            parts.append((" | " if gap > 1.8 * size else " ") + w["text"])
+        for is_wide, w in zip(wide, g[1:]):
+            parts.append((" | " if is_wide and columns else " ") + w["text"])
         styles = [f"{w.get('fontname', '')}|{w.get('non_stroking_color', '')}" for w in g]
         lines.append(
             _Line(
@@ -317,8 +323,18 @@ def extract_pdf_native(path: Path, ctx: ExtractContext) -> ExtractedDoc:
         pdoc.close()
         raise
 
+    # a flowchart that leaves the page through a connector symbol carries on in the next one
+    drawn = [(p.number, d) for p in pages for d in p.diagrams]
+    for (pa, a), (pb, b) in zip(drawn, drawn[1:]):
+        if pb - pa == 1 and any(n.kind == "offpage" for n in a.nodes) and any(n.kind == "offpage" for n in b.nodes):
+            a.next_page, b.prev_page = pb, pa
     blocks = _assemble(pages, pdoc, ctx, warnings)
     pdoc.close()
+    for b in blocks[:12]:               # a title block's "Title:" field names the document
+        m = re.match(r"^Title:\s*(\S.{3,})$", b.text.split("\n")[0]) if b.kind == "paragraph" else None
+        if m:
+            title = m.group(1).strip(" ,")
+            break
     if not title or title.strip().lower() in {"untitled", "(anonymous)", "anonymous", "untitled document"} \
             or title.lower().startswith("microsoft word - "):
         title = next((b.text for b in blocks if b.kind == "heading" and b.level == 1), None)
@@ -345,14 +361,16 @@ def _needs_ocr(page, compact: str, cfg) -> bool:
         return True
     if len(compact) >= cfg["min_text_chars"]:
         return False
-    if len(compact) < 20:
-        return True
     area = float(page.width) * float(page.height) or 1.0
     cover = 0.0
     for img in page.images:
         w = max(0.0, float(img["x1"]) - float(img["x0"]))
         h = max(0.0, float(img["bottom"]) - float(img["top"]))
         cover = max(cover, w * h / area)
+    if len(compact) < 20:
+        # almost no text: a scan, unless it is a ruled page holding a modest picture (one page
+        # of a long table whose cell is a photograph) - that picture is read as a figure
+        return not (page.images and cover < 0.5 and len(page.rects) >= 4)
     return cover >= 0.5
 
 
@@ -405,6 +423,28 @@ def _overlap(a: tuple[float, float, float, float], b: tuple[float, float, float,
     return w * h / area if area else 0.0
 
 
+def _header_above(words: list[dict], bbox, edges: list[float], rows: list[list[str]]):
+    """Column names that sit just above a table's ruled area: (labels, word indexes) or None."""
+    if len(edges) < 3 or len(rows) < 2:
+        return None
+    ncols = len(edges) - 1
+    band = [(k, w) for k, w in enumerate(words)
+            if bbox[1] - 22 <= (float(w["top"]) + float(w["bottom"])) / 2 < bbox[1] + 0.5
+            and bbox[0] - 2 <= (float(w["x0"]) + float(w["x1"])) / 2 <= bbox[2] + 2]
+    if not band:
+        return None
+    if max(float(w["top"]) for _, w in band) - min(float(w["top"]) for _, w in band) > 4:
+        return None                                   # more than one line: not a header row
+    labels = [""] * ncols
+    for _, w in sorted(band, key=lambda kw: float(kw[1]["x0"])):
+        col = min(ncols - 1, sum(1 for e in edges[1:-1] if (float(w["x0"]) + float(w["x1"])) / 2 >= e))
+        labels[col] = f"{labels[col]} {w['text']}".strip()
+    filled = sum(1 for t in labels if t)
+    if filled < max(2, ncols - 1) or any(len(t.split()) > 4 for t in labels):
+        return None
+    return labels, {k for k, _ in band}
+
+
 def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
     cfg = ctx.config["pdf"]
     try:
@@ -427,20 +467,54 @@ def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
             words = [w for i, w in enumerate(words) if i not in used]
             regions = [d.bbox for d in items.diagrams]
 
+    from rag.core.ingest import layout_table as lay
+
+    page_area = items.width * items.height or 1
     table_bboxes: list[tuple[float, float, float, float]] = []
     try:
-        for table in page.find_tables():
-            bbox = tuple(float(v) for v in table.bbox)
-            if any(_overlap(bbox, r) > 0.5 for r in regions):
-                continue
-            rows = [[(c or "").strip() for c in row] for row in table.extract()]
-            rows = [r for r in rows if any(r)]
-            if len(rows) >= 2 and max(len(r) for r in rows) >= 2:
-                table_bboxes.append(table.bbox)
-                items.tables.append((table.bbox[1], rows, bbox))
+        found = [t for t in page.find_tables()
+                 if not any(_overlap(tuple(float(v) for v in t.bbox), r) > 0.5 for r in regions)]
     except Exception:  # noqa: BLE001
-        pass
-    page_area = items.width * items.height or 1
+        found = []
+    boxes = [tuple(float(v) for v in t.bbox) for t in found]
+    parent = {i: next((j for j in range(len(found)) if j != i and _overlap(boxes[i], boxes[j]) > 0.9
+                       and (boxes[j][2] - boxes[j][0]) * (boxes[j][3] - boxes[j][1])
+                       > (boxes[i][2] - boxes[i][0]) * (boxes[i][3] - boxes[i][1])), None) for i in range(len(found))}
+    extracted = {}
+    for i, t in enumerate(found):
+        try:
+            extracted[i] = lay.clean_rows(t.extract())
+        except Exception:  # noqa: BLE001
+            extracted[i] = []
+    index_of: dict[int, int] = {}
+    for i, t in enumerate(found):
+        if parent[i] is not None:
+            continue
+        rows = extracted[i]
+        nested = [(boxes[j], extracted[j]) for j in range(len(found)) if parent[j] == i and lay.real_nested(extracted[j])]
+        try:
+            lt = lay.build(items.number, t, words, list(page.images), nested, page_area)
+        except Exception:  # noqa: BLE001 - fall back to the plain grid
+            lt = None
+        usable = len(rows) >= 2 and max(len(r) for r in rows) >= 2
+        if not usable and not (lt is not None and lt.items):
+            continue
+        # column names printed just above the ruled part (a header row with only a line under it)
+        above = _header_above(words, boxes[i], lt.edges if lt else [], rows) if usable else None
+        if above is not None:
+            labels, taken = above
+            rows = [labels] + rows
+            words = [w for k, w in enumerate(words) if k not in taken]
+        table_bboxes.append(boxes[i])
+        index_of[i] = len(items.tables)
+        items.tables.append((boxes[i][1], rows if usable else [], boxes[i]))
+        if lt is not None:
+            items.layouts[index_of[i]] = lt
+    for j in range(len(found)):     # tables inside another: kept, but skipped when the outer one is read as layout
+        i = parent[j]
+        if i is not None and i in index_of and lay.real_nested(extracted[j]):
+            items.nested_in[len(items.tables)] = index_of[i]
+            items.tables.append((boxes[j][1], extracted[j], boxes[j]))
     for img in page.images:
         bbox = (float(img["x0"]), float(img["top"]), float(img["x1"]), float(img["bottom"]))
         area = max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
@@ -515,22 +589,74 @@ def _ocr_page(pdoc, index: int, items: _PageItems, ctx: ExtractContext) -> None:
         )
 
 
-def _furniture(pages: list[_PageItems], min_pages: int) -> set[str]:
-    """Lines repeated at the top or bottom of many pages (headers, footers)."""
-    digital = [p for p in pages if not p.ocr and p.lines]
-    if len(digital) < min_pages:
-        return set()
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"\d+", "#", re.sub(r"[^\w#:/ ]", " ", text.strip().lower()))).strip()
 
-    def norm(t: str) -> str:
-        return re.sub(r"\d+", "#", t.strip().lower())
 
-    counts: Counter[str] = Counter()
-    for p in digital:
+class _Furniture:
+    """Running headers and footers: text repeated (allowing small differences, such as a page
+    number or a title that is cut on some pages) at the top or bottom of many pages."""
+
+    def __init__(self, texts_by_page: list[list[str]], min_pages: int):
+        self.reps: list[str] = []
+        counts: list[int] = []
+        for texts in texts_by_page:
+            seen: set[int] = set()
+            for t in texts:
+                n = _norm(t)
+                if len(n) < 3:
+                    continue
+                k = self._find(n)
+                if k is None:
+                    self.reps.append(n)
+                    counts.append(0)
+                    k = len(self.reps) - 1
+                if k not in seen:
+                    seen.add(k)
+                    counts[k] += 1
+        need = max(min_pages, (len(texts_by_page) + 1) // 2)
+        self.reps = [r for r, c in zip(self.reps, counts) if c >= need] if len(texts_by_page) >= min_pages else []
+
+    def _find(self, n: str) -> int | None:
+        from difflib import SequenceMatcher
+
+        for k, r in enumerate(self.reps):
+            if r == n:
+                return k
+            m = SequenceMatcher(None, r, n, autojunk=False)
+            if m.quick_ratio() >= 0.85 and m.ratio() >= 0.85:
+                return k
+        return None
+
+    def __contains__(self, text: str) -> bool:
+        n = _norm(text)
+        if len(n) < 3:
+            return False
+        # a line that is one part of a repeated box (the notice inside a footer table) counts too
+        return self._find(n) is not None or (len(n) >= 25 and any(n in r for r in self.reps))
+
+
+def _band(p: _PageItems, top: float, bottom: float) -> bool:
+    """Entirely within the top 14% or the bottom 20% of the page."""
+    h = p.height or 1000.0
+    return bottom <= 0.14 * h or top >= 0.80 * h
+
+
+def _furniture(pages: list[_PageItems], min_pages: int) -> _Furniture:
+    """Built from the first and last lines of each page, and from small tables in the top and
+    bottom bands (a document-control footer drawn as a ruled box)."""
+    texts: list[list[str]] = []
+    for p in pages:
+        if p.ocr:
+            continue
         ordered = sorted(p.lines, key=lambda ln: ln.top)
-        edge = {norm(ln.text) for ln in ordered[:2] + ordered[-2:]}
-        counts.update(edge)
-    threshold = max(min_pages, len(digital) // 2)
-    return {t for t, c in counts.items() if c >= threshold}
+        # a row of column names repeated at the top of each page is a table header, not a page header
+        edge = [ln.text for ln in ordered[:3] + ordered[-3:] if ln.text.count(" | ") < 2]
+        for i, (top, rows, bbox) in enumerate(p.tables):
+            if _band(p, bbox[1], bbox[3]) and i not in p.nested_in:
+                edge.append(" ".join(c for r in rows for c in r if c))
+        texts.append(edge)
+    return _Furniture(texts, min_pages)
 
 
 def _heading_levels(pages: list[_PageItems]) -> tuple[float, dict[float, int]]:
@@ -551,10 +677,17 @@ def _is_heading(ln: _Line, body: float, levels: dict[float, int]) -> int:
         return 0   # a row of aligned columns, not a heading
     if not text or len(text) > 120 or len(text.split()) > 15 or text.endswith((".", ",", ";")):
         return 0
+    if _SECTION_NO_RE.match(text):
+        return 0   # a section number on its own line (its text is elsewhere or missing)
     level = levels.get(round(ln.size, 1), 0)
     if level:
         return level
     if ln.bold and ln.size >= body * 0.98 and len(text.split()) <= 10 and not _BULLET_RE.match(text):
+        number = text.split()[0].rstrip(".")
+        if _SECTION_NO_RE.match(number) and len(text.split()) >= 2:
+            # "6.0 Tools" is a top section, "6.1 ..." sits under it (a document title is level 1)
+            depth = len([part for part in number.split(".") if part not in ("", "0")]) or 1
+            return min(depth + 1, 5)
         return min(len(levels) + 1, 4) if levels else 2
     return 0
 
@@ -568,6 +701,31 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
     blocks: list[Block] = []
     figure_index = 0
 
+    from rag.core.ingest import layout_table as lay
+    from rag.core.ingest.figures import make_figure_block as _figure
+
+    # Which tables are page layout (a procedure set out as a grid)? A table that looks like one,
+    # and any table that carries one on across a page break with the same columns.
+    chain: list = []
+    for p in pages:
+        if p.ocr:
+            chain.append(None)
+            continue
+        mains = sorted(((i, lt) for i, lt in p.layouts.items()
+                        if lt.candidate or not _band(p, lt.bbox[1], lt.bbox[3])), key=lambda t: t[1].bbox[1])
+        for n, (i, lt) in enumerate(mains):
+            prev = chain[-1] if chain else None
+            lt.continues = (n == 0 and prev is not None and prev.page == p.number - 1
+                            and lay.same_columns(prev.edges, lt.edges))
+            lt.is_layout = lt.candidate or (lt.continues and prev.is_layout)
+            chain.append(lt)
+        if not mains:
+            chain.append(None)
+    for k in range(len(chain) - 1, 0, -1):          # and backwards: the start of a chain that turns out to be layout
+        if chain[k] is not None and chain[k].is_layout and chain[k].continues and chain[k - 1] is not None:
+            chain[k - 1].is_layout = True
+    flow: dict = {"edges": None}
+
     for p in pages:
         if p.ocr:
             for b in p.ocr_blocks:
@@ -576,16 +734,30 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             continue
 
         events: list[tuple[float, str, object]] = []
+        layout_boxes = [lt.bbox for i, lt in p.layouts.items() if lt.is_layout]
         for ln in p.lines:
-            normed = re.sub(r"\d+", "#", ln.text.strip().lower())
-            if normed in furniture or _PAGE_NUM_RE.match(ln.text.strip()):
+            edge_line = _band(p, ln.top, ln.bottom)
+            if (edge_line and ln.text in furniture) or _PAGE_NUM_RE.match(ln.text.strip()):
                 continue
             if p.height and ln.top > 0.92 * p.height and _PAGE_REF_RE.search(ln.text) and len(ln.text.split()) <= 15:
                 continue   # a footer with a page number, even on a short document
             events.append((ln.key, "line", ln))
-        for top, rows, bbox in p.tables:
+        for i, (top, rows, bbox) in enumerate(p.tables):
+            lt = p.layouts.get(i)
+            if lt is not None and lt.is_layout:
+                events.append((_reading_key(p, bbox), "layout", lt))
+                continue
+            if i in p.nested_in and getattr(p.layouts.get(p.nested_in[i]), "is_layout", False):
+                continue                      # read as part of the layout table around it
+            if not rows:
+                continue
+            text = " ".join(c for r in rows for c in r if c)
+            if _band(p, bbox[1], bbox[3]) and (text in furniture or _PAGE_REF_RE.search(text)):
+                continue                      # a document-control box repeated on every page
             events.append((_reading_key(p, bbox), "table", rows))
         for top, bbox in p.figures:
+            if any(_overlap(bbox, lb) > 0.5 for lb in layout_boxes):
+                continue                      # placed by the layout table, with its step
             events.append((_reading_key(p, bbox), "figure", bbox))
         for d in p.diagrams:
             events.append((_reading_key(p, d.bbox), "diagram", d))
@@ -646,11 +818,85 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                 flush()
                 rows: list[list[str]] = obj  # type: ignore[assignment]
                 caption = _caption_near(blocks, events, idx, consumed)
-                headers, data = rows[0], rows[1:]
-                md = markdown_table(headers, data)
-                text = (f"**{caption}**\n\n" if caption else "") + md
-                blocks.append(Block(kind="table", text=text, page=p.number,
-                                    meta={"headers": headers, "rows": data, "caption": caption}))
+                blocks.extend(_table_blocks(rows, p.number, caption))
+            elif kind == "layout":
+                last_heading[0] = None
+                flush()
+                lt = obj
+                if flow["edges"] is None or not lay.same_columns(flow["edges"], lt.edges):
+                    base = next((b.level for b in reversed(blocks) if b.kind == "heading"), 1)
+                    flow = {"edges": lt.edges, "headers": lt.headers, "level": base, "step": "", "sub": "",
+                            "keyed": lt.keyed, "main": None}
+                elif lt.headers and not flow["headers"]:
+                    flow["headers"] = lt.headers
+                texts = [i for i in lt.items if i.kind == "text"]
+                if flow["main"] is None:      # the column that carries the body text
+                    load: dict[int, int] = {}
+                    for i in texts:
+                        if i.col >= (2 if flow["keyed"] else 0):
+                            load[i.col] = load.get(i.col, 0) + len(i.text.split())
+                    flow["main"] = max(load, key=load.get) if load else -1
+                hdr = flow["headers"] or []
+                # short text printed on or right beside a picture is its labelling
+                labels_of: dict[int, list[str]] = {}
+                for im in lt.items:
+                    if im.kind != "image":
+                        continue
+                    x0, t, x1, b = im.bbox
+                    for tx in texts:
+                        cx, cy = (tx.bbox[0] + tx.bbox[2]) / 2, (tx.bbox[1] + tx.bbox[3]) / 2
+                        if not tx.used and tx.col == im.col and len(tx.text.split()) <= 6 and not tx.bullet \
+                                and x0 - 6 <= cx <= x1 + 6 and t - 6 <= cy <= b + 30:
+                            tx.used = True
+                            labels_of.setdefault(id(im), []).append(tx.text)
+                first_text: dict[int, object] = {}
+                for tx in texts:
+                    first_text.setdefault(tx.col, tx)
+                if not lt.continues:
+                    flow["tail"] = {}
+                for it in lt.items:
+                    if it.used:
+                        continue
+                    if it.kind == "text" and not re.search(r"[A-Za-z0-9]", it.text):
+                        continue              # a stray bullet or full stop
+                    if it.kind == "text" and flow["keyed"] and it.col == 0 and lay.KEY.match(it.text.strip()):
+                        title = next((t for t in texts if t.col == 1 and not t.used and abs(t.y - it.y) <= 14), None)
+                        label = it.text.strip()
+                        if title is not None:
+                            title.used = True
+                            label = f"{label} {title.text}"
+                        flow["step"] = label if len(label) <= 160 else label[:157] + "..."
+                        flow["sub"] = ""
+                        blocks.append(Block(kind="heading", text=flow["step"], level=min(flow["level"] + 1, 6), page=p.number))
+                    elif it.kind == "text" and flow["keyed"] and it.col == 1 and len(it.text.split()) <= 20:
+                        flow["sub"] = it.text
+                        blocks.append(Block(kind="heading", text=it.text, level=min(flow["level"] + 2, 6), page=p.number))
+                    elif it.kind == "text" and not it.bullet and it.text[:1].islower() and it is first_text.get(it.col) \
+                            and flow.get("tail", {}).get(it.col) is not None \
+                            and not flow["tail"][it.col].text.rstrip().endswith((".", "!", "?", ":")):
+                        flow["tail"][it.col].text += " " + it.text      # a sentence carried over the page break
+                        flow["tail"][it.col].page_end = p.number
+                    elif it.kind == "text":
+                        name = hdr[it.col].strip().capitalize() if it.col < len(hdr) and it.col != flow["main"] \
+                            and not (flow["keyed"] and it.col <= 1) else ""
+                        text = ("- " if it.bullet else "") + (f"{name}: " if name else "") + it.text
+                        blocks.append(Block(kind="paragraph", text=text, page=p.number))
+                        flow.setdefault("tail", {})[it.col] = blocks[-1]
+                    elif it.kind == "table" and it.rows:
+                        blocks.extend(_table_blocks(it.rows, p.number, None))
+                    elif it.kind == "image":
+                        if page_image is None:
+                            page_image = _render_page(pdoc, p.number - 1, 3.0)
+                        x0, t, x1, b = it.bbox
+                        crop = page_image.crop((int(x0 * 3), int(t * 3), int(x1 * 3), int(b * 3)))
+                        if crop.width < 20 or crop.height < 20:
+                            continue
+                        labels = labels_of.get(id(it), [])
+                        where = " › ".join(x for x in (flow["step"], flow["sub"]) if x)
+                        figure_index += 1
+                        blocks.append(_figure(crop, ctx, page=p.number, index=figure_index, caption=None,
+                                              context=f"step {where}" if where else None, labels=labels))
+                    it.used = True
             elif kind == "figure":
                 last_heading[0] = None
                 flush()
@@ -663,6 +909,11 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                     continue
                 figure_index += 1
                 caption = _caption_after(events, idx, consumed)
+                if caption is None and idx + 1 < len(events) and events[idx + 1][1] == "line":
+                    under: _Line = events[idx + 1][2]  # type: ignore[assignment]
+                    if under.bold and 0 <= under.top - b <= 24 and len(under.text.split()) <= 15:
+                        consumed.add(idx + 1)
+                        caption = under.text.strip()
                 blocks.append(make_figure_block(crop, ctx, page=p.number, index=figure_index, caption=caption))
             elif kind == "diagram":
                 from rag.core.ingest.figures import make_diagram_block
@@ -682,6 +933,52 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
 
     blocks = _merge_continued_tables(blocks)
     return _drop_repeated_figures(blocks, len(pages), int(cfg["furniture_min_pages"]))
+
+
+_FORM_CELL_RE = re.compile(r"[:#]")
+
+
+def _table_blocks(rows: list[list[str]], page: int | None, caption: str | None) -> list[Block]:
+    """A ruled grid as blocks. Most are one table. A title block (a row of "Label: value" cells,
+    then a one-cell row naming what follows, then a real table) comes out as lines of text and a
+    captioned table, which is what it is."""
+    out: list[Block] = []
+    segment: list[list[str]] = []
+    pending = caption
+
+    def flush() -> None:
+        nonlocal pending
+        if not segment:
+            return
+        first = segment[0]
+        filled = [c for c in first if c]
+        form = len(first) >= 2 and len(filled) <= len(first) / 2 and any(_FORM_CELL_RE.search(c) for c in filled)
+        if form or len(segment) == 1:
+            lines = [c for r in segment for c in r if c]
+            text = "\n".join(([pending] if pending else []) + lines)
+            out.append(Block(kind="paragraph", text=text, page=page))
+        else:
+            headers, data = segment[0], segment[1:]
+            text = (f"**{pending}**\n\n" if pending else "") + markdown_table(headers, data)
+            out.append(Block(kind="table", text=text, page=page, meta={"headers": headers, "rows": data, "caption": pending}))
+        pending = None
+        segment.clear()
+
+    width = max(len(r) for r in rows)
+    for r in rows:
+        filled = [c for c in r if c]
+        if width >= 3 and len(filled) == 1 and len(filled[0].split()) <= 8 and segment:
+            flush()                       # a one-cell row: the name of the part that follows
+            pending = filled[0]
+            continue
+        if segment:
+            first = segment[0]
+            first_form = len([c for c in first if c]) <= len(first) / 2 and any(_FORM_CELL_RE.search(c) for c in first if c)
+            if first_form and len(filled) > len(r) / 2:
+                flush()                   # label cells above, a full row below: a table starts here
+        segment.append(r)
+    flush()
+    return out
 
 
 def _caption_near(blocks: list[Block], events, idx: int, consumed: set[int]) -> str | None:

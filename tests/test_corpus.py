@@ -37,7 +37,7 @@ def test_corpus_builds_cleanly(corpus):
     assert stats.failed == 0, stats.errors
     assert stats.added == 29          # lock file, bin/, *.Designer.cs and *_files/ excluded
     db = sqlite3.connect(ws.rag_db)
-    n_spec = db.execute("SELECT COUNT(*) FROM chunks c JOIN documents d USING(doc_id) "
+    n_spec = db.execute("SELECT COUNT(DISTINCT c.table_name) FROM chunks c JOIN documents d USING(doc_id) "
                         "WHERE d.display_path LIKE '%DS-150%' AND c.kind = 'table' AND c.table_name IS NOT NULL").fetchone()[0]
     assert n_spec == 1                # the 36-row table is one table even though it spans two pages
     t = sqlite3.connect(ws.tables_db)

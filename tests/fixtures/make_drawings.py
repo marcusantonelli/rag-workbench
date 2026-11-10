@@ -308,3 +308,269 @@ def make_drawings(root: Path) -> dict[str, Path]:
         "pictures": picture_pdf(root / "Yield pictures.pdf", pics),
         "docx": picture_docx(root / "Weekly yield.docx", sheet_image(root / "sheet_small.png")),
     }
+
+
+# -- controlled documents: a procedure set out as a grid, a Visio-style flowchart ----------------
+def photo(path: Path, label: str | None = None, size=(420, 300)) -> Path:
+    """A photograph stand-in: smooth colour with no text (or one printed sign)."""
+    import random
+
+    rnd = random.Random(len(str(label)) + size[0])
+    img = Image.new("RGB", size)
+    d = ImageDraw.Draw(img)
+    for y in range(0, size[1], 6):
+        d.rectangle([0, y, size[0], y + 6], fill=(90 + y % 80, 110 + rnd.randint(0, 30), 140 - y % 50))
+    for _ in range(12):
+        x, y = rnd.randint(0, size[0]), rnd.randint(0, size[1])
+        d.ellipse([x, y, x + rnd.randint(20, 80), y + rnd.randint(20, 60)], fill=(rnd.randint(60, 200),) * 3)
+    if label:
+        d.rectangle([40, 40, 300, 110], fill="white", outline="black")
+        d.text((56, 56), label, font=_font(30), fill="black")
+    img.save(path)
+    return path
+
+
+def _frame(c, H, page: int, pages: int, title: str, spec: str, rev: str) -> None:
+    """What a controlled document prints on every page: a title box and a control box."""
+    c.setLineWidth(0.8)
+    c.rect(36, H - 66, 540, 30)
+    _text(c, H, 42, 56, f"Title:  {title}", 11)
+    y = H - 62
+    for x, w, t in ((36, 180, ""), (216, 150, f"Specification # {spec}"), (366, 100, f"Rev. {rev}"),
+                    (466, 110, f"Page {page} of {pages}")):
+        c.rect(x, 60, w, 28)
+        if t:
+            _text(c, H, x + 5, H - 70, t, 10)
+    c.rect(36, 44, 540, 16)
+    _text(c, H, 42, H - 49, "This is proprietary information of Example Devices and must not be passed to a third party.", 6)
+    del y
+
+
+def procedure_pdf(path: Path, pics: dict[str, Path]) -> Path:
+    """A work instruction: title block and revision history, numbered sections, then a
+    STEP | PROCEDURE | DESCRIPTION | VISUAL grid that runs over three pages."""
+    c, H = _canvas(path)
+    title, spec, rev, pages = "Lid Seal Work Instruction", "WI-0042", "B", 4
+    # page 1: title block
+    c.rect(40, H - 150, 320, 50)
+    c.rect(360, H - 150, 210, 50)
+    _text(c, H, 46, 118, f"Title: {title}", 11)
+    _text(c, H, 366, 118, f"Specification # {spec}", 11)
+    _text(c, H, 366, 132, f"Revision: {rev}", 11)
+    c.rect(40, H - 180, 530, 30)
+    _text(c, H, 46, 170, "Revision History", 11)
+    xs = [40, 90, 360, 460, 570]
+    for r, row in enumerate([["Ltr", "Description", "ECN #", "Date"], ["A", "Initial release", "ECN-0710", "07/22/2024"],
+                             ["B", "Seal window changed to four hours", "ECN-0881", "01/05/2026"]]):
+        for k, val in enumerate(row):
+            c.rect(xs[k], H - 180 - 28 * (r + 1), xs[k + 1] - xs[k], 28)
+            _text(c, H, xs[k] + 5, 180 + 28 * r + 18, val, 10)
+    _text(c, H, 150, 420, "The content of this procedure is the responsibility of Process Engineering.", 11)
+    c.rect(36, 60, 540, 60)
+    _text(c, H, 250, H - 105, "APPROVALS ON FILE", 10, "Helvetica-Bold")
+    _text(c, H, 400, H - 75, f"Page 1 of {pages}", 10)
+    c.showPage()
+
+    cols = [20, 52, 150, 334, 592]
+
+    def grid(top: float, bottom: float, header: bool = False) -> None:
+        if header:
+            for k, name in enumerate(["STEP", "PROCEDURE", "DESCRIPTION", "VISUAL"]):
+                c.rect(cols[k], H - top - 13, cols[k + 1] - cols[k], 13)
+                _text(c, H, cols[k] + 2, top + 10, name, 9)
+            top += 13
+        for k in range(4):
+            c.rect(cols[k], H - bottom, cols[k + 1] - cols[k], bottom - top)
+
+    def bullets(x: float, y: float, items: list[list[str]], step: float = 12) -> float:
+        for lines in items:
+            _text(c, H, x, y, "•", 10)
+            for ln in lines:
+                _text(c, H, x + 12, y, ln, 10)
+                y += step
+            y += 8
+        return y
+
+    # page 2: sections, then the grid starts
+    _frame(c, H, 2, pages, title, spec, rev)
+    _text(c, H, 36, 100, "1.0", 10, "Helvetica-Bold")
+    _text(c, H, 86, 100, "Purpose:", 10, "Helvetica-Bold")
+    _text(c, H, 86, 120, "1.1", 10)
+    _text(c, H, 136, 120, "This document gives the work instructions for sealing lids on the seam sealer.", 10)
+    _text(c, H, 36, 150, "2.0", 10, "Helvetica-Bold")
+    _text(c, H, 86, 150, "Procedure:", 10, "Helvetica-Bold")
+    grid(170, 690, header=True)
+    _text(c, H, 22, 196, "2.1", 10)
+    _text(c, H, 54, 196, "Check oven", 10)
+    _text(c, H, 54, 208, "calibration", 10)
+    bullets(156, 196, [["The calibration stickers are on the", "left and right oven doors."],
+                       ["Do not use an oven whose sticker", "has expired."]])
+    c.drawImage(str(pics["sign"]), 350, H - 330, width=200, height=140)
+    _text(c, H, 54, 380, "Log in (as required)", 10)
+    bullets(156, 380, [["Start the sealer software from the", "desktop shortcut."], ["Enter the user name and password", "shown in the table."]])
+    for r, row in enumerate([["System", "User ID", "Password"], ["SM8500", "operator", "oper"]]):
+        for k, val in enumerate(row):
+            c.rect(350 + 75 * k, H - 380 - 14 * (r + 1), 75, 14)
+            _text(c, H, 353 + 75 * k, 380 + 14 * r + 11, val, 10)
+    c.drawImage(str(pics["plain"]), 360, H - 620, width=180, height=130)
+    _text(c, H, 156, 668, "Note: should the E stop paddle be pressed by mistake or otherwise", 10)
+    c.showPage()
+
+    # page 3: the grid carries on with no header row
+    _frame(c, H, 3, pages, title, spec, rev)
+    grid(80, 690)
+    _text(c, H, 156, 96, "see section 2.3 before restarting.", 10)
+    c.line(20, H - 120, 592, H - 120)
+    _text(c, H, 22, 136, "2.2", 10)
+    _text(c, H, 54, 136, "Load the oven", 10)
+    y = bullets(156, 136, [["Place lids and headers on a metal tray."], ["Close the outer door and hold it until", "the latch closes."],
+                           ["Select the four hour bake schedule."]])
+    c.drawImage(str(pics["plain2"]), 360, H - 300, width=200, height=150)
+    c.setFillColorRGB(0.8, 0, 0)
+    _text(c, H, 340, 330, "DO NOT SEAL PARTS IF THE INDICATORS ARE RED", 8, "Helvetica-Bold")
+    c.setFillColorRGB(0, 0, 0)
+    _text(c, H, 22, 420, "2.3", 10)                      # a new step part-way down the same cell
+    _text(c, H, 54, 420, "Finish up.", 10)
+    bullets(156, 420, [["Remove completed parts through the", "oven pass-through."], ["Record the lot on the traveler."]])
+    c.showPage()
+
+    # page 4: the last part of the grid, then ordinary text again
+    _frame(c, H, 4, pages, title, spec, rev)
+    grid(80, 260)
+    bullets(156, 96, [["Wipe down the glove box floor."], ["Log out of the sealer software."]])
+    _text(c, H, 36, 300, "3.0", 10, "Helvetica-Bold")
+    _text(c, H, 86, 300, "Records:", 10, "Helvetica-Bold")
+    _text(c, H, 86, 320, "3.1", 10)
+    _text(c, H, 136, 320, "Seal records are kept for five years.", 10)
+    c.showPage()
+    c.save()
+    return path
+
+
+def visio_pdf(path: Path) -> Path:
+    """A flowchart as Visio exports it: every box painted as a fill and a separate outline, a
+    highlight behind a line of text, Yes/No on white patches, note boxes beside the flow,
+    arrows that merge into a shared line through their arrowheads, and a connector symbol
+    that carries the flow to the next page."""
+    c, H = _canvas(path)
+    green = (0.61, 0.79, 0.51)
+
+    def box(x, y, w, h, lines, kind="rect", highlight=False):
+        c.setFillColorRGB(*green) if kind != "diamond" else c.setFillColorRGB(1, 1, 1)
+        if kind == "diamond":
+            for fill, stroke in ((1, 0), (0, 1)):
+                p = c.beginPath()
+                p.moveTo(x + w / 2, H - y)
+                p.lineTo(x + w, H - y - h / 2)
+                p.lineTo(x + w / 2, H - y - h)
+                p.lineTo(x, H - y - h / 2)
+                p.close()
+                c.drawPath(p, stroke=stroke, fill=fill)
+        else:
+            c.rect(x, H - y - h, w, h, stroke=0, fill=1)
+            c.rect(x, H - y - h, w, h, stroke=1, fill=0)
+        if highlight:                                     # the patch Visio paints behind text
+            c.rect(x + 20, H - y - h / 2 - 8, w - 40, 14, stroke=0, fill=1)
+        c.setFillColorRGB(0, 0, 0)
+        c.setFont("Helvetica", 9)
+        n = len(lines)
+        for i, t in enumerate(lines):
+            c.drawCentredString(x + w / 2, H - (y + h / 2 + (i - (n - 1) / 2) * 11) - 3, t)
+
+    def note(x, y, w, h, lines):
+        c.rect(x, H - y - h, w, h, stroke=1, fill=0)
+        for i, t in enumerate(lines):
+            _text(c, H, x + 5, y + 14 + 11 * i, t, 8)
+
+    def label(x, y, t):
+        c.setFillColorRGB(1, 1, 1)
+        c.rect(x - 2, H - y - 3, 22, 13, stroke=0, fill=1)
+        c.setFillColorRGB(0, 0, 0)
+        _text(c, H, x, y + 7, t, 8)
+
+    def pentagon(x, y):
+        c.setFillColorRGB(0.5, 0.72, 0.67)
+        p = c.beginPath()
+        for i, (px, py) in enumerate([(x, y), (x + 30, y), (x + 30, y + 24), (x + 15, y + 36), (x, y + 24)]):
+            (p.moveTo if i == 0 else p.lineTo)(px, H - py)
+        p.close()
+        c.drawPath(p, stroke=1, fill=1)
+        c.setFillColorRGB(0, 0, 0)
+
+    _text(c, H, 60, 60, "Leak failure review", 13, "Helvetica-Bold")
+    box(70, 90, 120, 34, ["Review the failure"])
+    box(70, 160, 120, 60, ["Out of family", "before test?"], "diamond")
+    box(260, 172, 130, 36, ["Check earlier data", "for outliers"], highlight=True)
+    box(70, 270, 120, 36, ["Review work order", "history"])
+    box(260, 270, 130, 36, ["Consider a rescreen"])
+    box(70, 350, 120, 36, ["Send part for", "inspection"])
+    box(470, 420, 80, 30, ["End"])
+    note(410, 160, 150, 48, ["Check the calculation and the", "package type before deciding."])
+    pentagon(250, 350)
+    c.setStrokeColorRGB(0.42, 0.68, 0.18)
+    c.setFillColorRGB(0.42, 0.68, 0.18)
+    _arrow(c, H, [(130, 124), (130, 160)], pieces=True)
+    _arrow(c, H, [(190, 190), (260, 190)], pieces=True)                # yes
+    _arrow(c, H, [(130, 220), (130, 270)], pieces=True)                # no
+    _arrow(c, H, [(130, 306), (130, 350)], pieces=True)
+    _arrow(c, H, [(190, 368), (250, 368)], pieces=True)                # to the connector symbol
+    # two arrows end with their heads on a shared vertical line, which runs down to End
+    _arrow(c, H, [(390, 190), (503, 190)], pieces=True)
+    _arrow(c, H, [(390, 288), (503, 288)], pieces=True)
+    _arrow(c, H, [(510, 190), (510, 420)], pieces=True)
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setFillColorRGB(0, 0, 0)
+    label(215, 178, "Yes")
+    label(134, 236, "No")
+    c.showPage()
+
+    pentagon(115, 80)
+    box(70, 150, 120, 36, ["Does the part meet", "the requirement?"])
+    box(70, 230, 120, 30, ["End"])
+    c.setStrokeColorRGB(0.42, 0.68, 0.18)
+    c.setFillColorRGB(0.42, 0.68, 0.18)
+    _arrow(c, H, [(130, 116), (130, 150)], pieces=True)
+    _arrow(c, H, [(130, 186), (130, 230)], pieces=True)
+    c.setStrokeColorRGB(0, 0, 0)
+    c.setFillColorRGB(0, 0, 0)
+    box(300, 150, 120, 36, ["Record the result"])                      # joined by a plain line, to keep three steps
+    c.line(190, H - 168, 300, H - 168)
+    c.showPage()
+    c.save()
+    return path
+
+
+def ruled_table_pdf(path: Path) -> Path:
+    """A table over two pages whose column names sit above the ruled part (a line under them,
+    no box) and repeat at the top of each page."""
+    c, H = _canvas(path)
+    xs = [72, 150, 250, 350, 540]
+    n = 0
+    for page in range(2):
+        y = 110
+        if page == 0:
+            _text(c, H, 72, 80, "Appendix B: Lot history", 14, "Helvetica-Bold")
+        for x, t in zip(xs, ["Lot", "Step", "Operator", "Result"]):
+            _text(c, H, x + 3, y, t, 9, "Helvetica-Bold")
+        c.line(72, H - y - 4, 540, H - y - 4)
+        y += 16
+        for _ in range(12):
+            row = [f"L26-{3000 + n}", ["Seal", "Leak", "Burn-in"][n % 3], ["J. Ruiz", "A. Chen"][n % 2], "Pass" if n % 5 else "Fail"]
+            for x, t in zip(xs, row):
+                _text(c, H, x + 3, y, t, 9)
+            for x in xs:
+                c.line(x, H - y + 11, x, H - y - 5)
+            c.line(72, H - y - 5, 540, H - y - 5)
+            y += 16
+            n += 1
+        c.showPage()
+    c.save()
+    return path
+
+
+def make_documents(root: Path) -> dict[str, Path]:
+    root.mkdir(parents=True, exist_ok=True)
+    pics = {"sign": photo(root / "sign.png", "CAUTION HOT"), "plain": photo(root / "plain.png"),
+            "plain2": photo(root / "plain2.png", size=(400, 300))}
+    return {"procedure": procedure_pdf(root / "Lid Seal WI.pdf", pics), "visio": visio_pdf(root / "Leak review.pdf"),
+            "ruled": ruled_table_pdf(root / "Lot history.pdf")}

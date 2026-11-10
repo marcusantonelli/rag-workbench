@@ -64,6 +64,7 @@ class Diagram:
     notes: list[str]
     word_ids: set[int]
     order: list[int] = field(default_factory=list)   # node ids in reading order
+    node_notes: dict[int, list[str]] = field(default_factory=dict)   # note boxes beside a step
 
     @property
     def flowchart(self) -> bool:
@@ -88,10 +89,18 @@ class Diagram:
             return "; ".join(f"{text}: {number[n]}" if text else str(number[n])
                              for text, n in sorted(items, key=lambda t: number[t[1]]))
 
+        has_in = {e.dst for e in self.edges} | {e.src for e in self.edges if e.both or not e.directed}
+        has_out = {e.src for e in self.edges} | {e.dst for e in self.edges if e.both or not e.directed}
         lines = [title, ""]
         for nid in self.order:
             n = by_id[nid]
             label = n.label or "(unlabelled)"
+            if n.kind == "offpage":      # a connector symbol that carries the flow to another page
+                nxt, prv = getattr(self, "next_page", None), getattr(self, "prev_page", None)
+                label = ((f"(continues on page {nxt})" if nxt else "(continues on another page)")
+                         if nid in has_in and nid not in has_out else
+                         (f"(continued from page {prv})" if prv else "(continued from another page)")
+                         if nid in has_out and nid not in has_in else "(connector)")
             if n.kind == "decision" and not label.rstrip().endswith("?"):
                 label += " (decision)"
             if n.lane:
@@ -102,6 +111,8 @@ class Diagram:
             if links.get(nid):
                 line += " — " + refs(links[nid])
             lines.append(line)
+            for note in self.node_notes.get(nid, []):
+                lines.append(f"   Note: {note}")
         if self.notes:
             lines += ["", "Notes: " + " / ".join(self.notes)]
         return "\n".join(lines)
@@ -280,8 +291,32 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
         return []
 
     shapes: list[tuple[Box, str]] = []          # (bbox, kind)
+    plain: set[tuple[int, int, int, int]] = set()   # filled with no outline of their own
     heads: list[Pt] = []
     wires: list[list[Pt]] = []
+
+    def _key(b: Box) -> tuple[int, int, int, int]:
+        return tuple(int(round(v)) for v in b)   # type: ignore[return-value]
+
+    def _white(obj) -> bool:
+        c = obj.get("non_stroking_color")
+        vals = list(c) if isinstance(c, (list, tuple)) else [c]
+        try:
+            return all(float(v) >= 0.95 for v in vals) and len(vals) in (1, 3)
+        except (TypeError, ValueError):
+            return False
+
+    def _black(obj) -> bool:
+        c = obj.get("non_stroking_color")
+        vals = list(c) if isinstance(c, (list, tuple)) else [c]
+        try:
+            return all(float(v) <= 0.05 for v in vals) and len(vals) in (1, 3)
+        except (TypeError, ValueError):
+            return False
+
+    # shapes drawn as a fill plus a separate outline share a box
+    outlined = {_key((float(o["x0"]), float(o["top"]), float(o["x1"]), float(o["bottom"])))
+                for o in rects + curves if o.get("stroke")}
 
     for r in rects:
         b = (float(r["x0"]), float(r["top"]), float(r["x1"]), float(r["bottom"]))
@@ -291,27 +326,44 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
                 wires.append([(b[0], (b[1] + b[3]) / 2), (b[2], (b[1] + b[3]) / 2)])
             else:
                 wires.append([((b[0] + b[2]) / 2, b[1]), ((b[0] + b[2]) / 2, b[3])])
+        elif r.get("fill") and not r.get("stroke") and (_black(r) or (h <= 20.0 and _key(b) not in outlined)):
+            continue        # a redaction bar, or the background painted behind a line of text
         elif max(w, h) <= HEAD_MAX and r.get("fill"):
-            heads.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))
+            if not _white(r):
+                heads.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))
         elif min(w, h) >= MIN_SHAPE:
             shapes.append((b, "box"))
+            if r.get("fill") and not r.get("stroke") and _key(b) not in outlined:
+                plain.add(_key(b))
     for c in curves:
         b = (float(c["x0"]), float(c["top"]), float(c["x1"]), float(c["bottom"]))
         w, h = b[2] - b[0], b[3] - b[1]
         pts = _pts(c)
         if max(w, h) <= HEAD_MAX:
-            if c.get("fill") or len(pts) >= 3:
+            if (c.get("fill") and not _white(c)) or (not c.get("fill") and len(pts) >= 3):
                 heads.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))
+            continue
+        if c.get("fill") and not c.get("stroke") and (_black(c) or min(w, h) < 2.0):
             continue
         if min(w, h) >= MIN_SHAPE and (c.get("fill") or _closed_like(pts, b)):
             kind = "decision" if _is_diamond(pts, b) else ("terminal" if len(pts) >= 7 else "box")
             shapes.append((b, kind))
+            if c.get("fill") and not c.get("stroke") and _key(b) not in outlined:
+                plain.add(_key(b))
         elif c.get("stroke", True) and len(pts) >= 2:
             wires.append(pts)
     for ln in lines:
         pts = _pts(ln)
-        if len(pts) >= 2 and _length(pts) >= 4.0:
+        if len(pts) >= 2 and _length(pts) >= 2.0:
             wires.append(pts)
+    # one entry per box (fill and outline are the same shape); the more specific kind wins
+    rank = {"box": 0, "terminal": 1, "decision": 2}
+    unique: dict[tuple[int, int, int, int], tuple[Box, str]] = {}
+    for b, kind in shapes:
+        k = _key(b)
+        if k not in unique or rank[kind] > rank[unique[k][1]]:
+            unique[k] = (b, kind)
+    shapes = list(unique.values())
     if len(shapes) < 3 or not wires:
         return []
 
@@ -347,36 +399,87 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
         owned[k].append(i)
 
     labelled = [k for k in range(len(shapes)) if owned.get(k)]
-    # a shape around other labelled shapes is a group or lane (or a page frame), not a step
-    containers = {k for k in labelled for j in labelled
-                  if j != k and _contains_box(shapes[k][0], shapes[j][0]) and _area(shapes[k][0]) > _area(shapes[j][0])}
+    # A shape around other labelled shapes is a group or lane (or a page frame), not a step.
+    # A single small or near-identical shape inside a step (a highlight, a doubled outline) is
+    # part of that step: its text goes to the step.
+    containers: set[int] = set()
+    absorbed: set[int] = set()
+    wire_ends = [p for w in wires for p in (w[0], w[-1])]
+    for k in sorted(labelled, key=lambda k: _area(shapes[k][0])):
+        inner = [j for j in labelled if j != k and j not in absorbed and _contains_box(shapes[k][0], shapes[j][0])
+                 and _area(shapes[k][0]) > _area(shapes[j][0])]
+        # a fill with no outline inside another shape, which no connector touches, is a
+        # highlight behind that shape's text
+        for j in list(inner):
+            if _key(shapes[j][0]) in plain and not any(_box_dist(shapes[j][0], p) <= 3.0 for p in wire_ends):
+                owned[k].extend(owned[j])
+                for i in owned[j]:
+                    owner[i] = k
+                absorbed.add(j)
+                inner.remove(j)
+        if not inner:
+            continue
+        ratio = _area(shapes[inner[0]][0]) / max(_area(shapes[k][0]), 1.0)
+        small = shapes[inner[0]][0][3] - shapes[inner[0]][0][1] <= 22.0 and ratio < 0.25
+        if len(inner) == 1 and inner[0] not in containers and (ratio >= 0.5 or small):
+            owned[k].extend(owned[inner[0]])
+            for i in owned[inner[0]]:
+                owner[i] = k
+            absorbed.add(inner[0])
+        else:
+            containers.add(k)
     nodes = [Node(id=n, bbox=shapes[k][0], kind=shapes[k][1], label=_join_words([words[i] for i in owned[k]]),
-                  words=sorted(owned[k])) for n, k in enumerate(k for k in labelled if k not in containers)]
+                  words=sorted(owned[k])) for n, k in enumerate(k for k in labelled if k not in containers and k not in absorbed)]
     if len(nodes) < 3:
         return []
+    # Small shapes with no text that a connector runs into are connector symbols (the flow
+    # continues on another page). They count as steps only if a wire reaches them.
+    n_real = len(nodes)
+    for k, (b, _) in enumerate(shapes):
+        if owned.get(k) or max(b[2] - b[0], b[3] - b[1]) > 90 or any(_contains_box(b, n.bbox) for n in nodes[:n_real]) \
+                or any(_contains_box(n.bbox, b) for n in nodes[:n_real]):
+            continue
+        nodes.append(Node(id=len(nodes), bbox=b, kind="offpage"))
 
     # Wires: pieces that meet end to end, or a branch starting on another piece, are one wire.
     uf = _UnionFind(len(wires))
     ends = [(w[0], w[-1]) for w in wires]
-    near_node = lambda p: any(_box_dist(n.bbox, p) <= 1.0 for n in nodes)  # noqa: E731
+    near_node = lambda p, d=1.0: any(_box_dist(n.bbox, p) <= d for n in nodes)  # noqa: E731
+    joined_ends: set[tuple[int, int]] = set()      # (wire, 0 or 1): this end meets another wire
+
+    def meets(a: int, b: int) -> bool:
+        """Does an end of wire a meet wire b: end to end, on its length, or through an arrowhead
+        that points into b (arrows merging into a shared line)?"""
+        hit = False
+        for e, p in enumerate(ends[a]):
+            if near_node(p):
+                continue
+            if min(math.hypot(p[0] - q[0], p[1] - q[1]) for q in ends[b]) <= JOIN or _poly_dist(p, wires[b]) <= JOIN:
+                joined_ends.add((a, e))
+                hit = True
+                continue
+            for h in heads:
+                if math.hypot(h[0] - p[0], h[1] - p[1]) <= HEAD_NEAR and _poly_dist(h, wires[b]) <= 8.0 and not near_node(h, 6.0):
+                    joined_ends.add((a, e))
+                    hit = True
+                    break
+        return hit
+
     for a in range(len(wires)):
-        for b in range(a + 1, len(wires)):
-            joined = False
-            for p in ends[a]:
-                for q in ends[b]:
-                    if math.hypot(p[0] - q[0], p[1] - q[1]) <= JOIN and not near_node(p):
-                        joined = True
-            if not joined:
-                joined = any(_poly_dist(p, wires[b]) <= JOIN and not near_node(p) for p in ends[a]) or \
-                    any(_poly_dist(q, wires[a]) <= JOIN and not near_node(q) for q in ends[b])
-            if joined:
+        for b in range(len(wires)):
+            if a != b and meets(a, b):
                 uf.union(a, b)
+                for e, q in enumerate(ends[b]):    # an end-to-end meeting uses up both ends
+                    if not near_node(q) and min(math.hypot(q[0] - p[0], q[1] - p[1]) for p in ends[a]) <= JOIN:
+                        joined_ends.add((b, e))
     nets: dict[int, list[int]] = defaultdict(list)
     for i in range(len(wires)):
         nets[uf.find(i)].append(i)
 
     def runs_along_a_box(pts: list[Pt]) -> bool:
         """A table rule or a box outline: the middle of the wire lies on or in a box."""
+        if _length(pts) < 12.0:
+            return False      # a short link between two close shapes is near both by nature
         inner = _points_along(pts, (0.3, 0.5, 0.7))
         return any(any(_box_dist(n.bbox, p) <= 1.5 for n in nodes) for p in inner)
 
@@ -389,17 +492,22 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
         # free ends: ends not joined to another piece of the same wire
         free: list[tuple[Pt, list[Pt]]] = []
         for i in members:
-            for p in ends[i]:
-                if not any(j != i and (min(math.hypot(p[0] - q[0], p[1] - q[1]) for q in ends[j]) <= JOIN
-                                       or _poly_dist(p, wires[j]) <= JOIN) for j in members):
+            for e, p in enumerate(ends[i]):
+                if (i, e) not in joined_ends:
                     free.append((p, wires[i]))
         touched: dict[int, bool] = {}       # node id -> has an arrowhead at that end
         branch: dict[int, list[Pt]] = {}
         for p, path in free:
-            best = min(nodes, key=lambda n: _box_dist(n.bbox, p))
-            if _box_dist(best.bbox, p) > ATTACH:
+            other = path[-1] if p is path[0] else path[0]
+            # an arrowhead belongs to the end it is nearer (a short wire has both ends in reach),
+            # and the shape it points at is measured from the arrowhead, which lies past the end
+            mine = [h for h in heads if math.hypot(h[0] - p[0], h[1] - p[1]) <= HEAD_NEAR
+                    and math.hypot(h[0] - p[0], h[1] - p[1]) <= math.hypot(h[0] - other[0], h[1] - other[1])]
+            head = bool(mine)
+            at = min(mine, key=lambda h: math.hypot(h[0] - p[0], h[1] - p[1])) if mine else p
+            best = min(nodes, key=lambda n: min(_box_dist(n.bbox, at), _box_dist(n.bbox, p) + (4.0 if mine else 0.0)))
+            if min(_box_dist(best.bbox, p), _box_dist(best.bbox, at)) > ATTACH:
                 continue
-            head = any(math.hypot(h[0] - p[0], h[1] - p[1]) <= HEAD_NEAR for h in heads)
             touched[best.id] = touched.get(best.id, False) or head
             branch[best.id] = path
         if len(touched) < 2:
@@ -455,11 +563,24 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
         comp_edges = [e for e in edges if e.src in comp]
         wire_boxes = [_bbox_of(p) for paths, made in net_paths if any(e in comp_edges for e in made) for p in paths]
         region = _union([n.bbox for n in comp_nodes] + wire_boxes)
-        # unconnected labelled boxes inside the drawing are part of it too
+        # labelled boxes inside the drawing that nothing connects to are notes: each goes with the
+        # step it sits beside
+        note_nodes: list[Node] = []
+        node_notes: dict[int, list[str]] = defaultdict(list)
         for n in nodes:
-            if n.id not in comp and _contains_box(region, n.bbox, pad=2) and not any(n.id in m for m in merged if m is not comp):
-                comp.add(n.id)
-                comp_nodes.append(n)
+            if n.id in comp or n.kind == "offpage" or any(n.id in m for m in merged if m is not comp):
+                continue
+            w = max(0.0, min(n.bbox[2], region[2] + 2) - max(n.bbox[0], region[0] - 2))
+            h = max(0.0, min(n.bbox[3], region[3] + 2) - max(n.bbox[1], region[1] - 2))
+            if w * h >= 0.5 * _area(n.bbox) and n.label:
+                note_nodes.append(n)
+        for n in sorted(note_nodes, key=lambda n: (n.bbox[1], n.bbox[0])):
+            # a note sits to the right of the step it explains, level with it
+            beside = [m for m in comp_nodes if m.kind != "offpage" and m.bbox[2] <= n.bbox[0] + 2
+                      and min(m.bbox[3], n.bbox[3]) - max(m.bbox[1], n.bbox[1]) > 0]
+            near = min(beside or comp_nodes, key=lambda m: _gap(m.bbox, n.bbox))
+            node_notes[near.id].append(n.label)
+            region = _union([region, n.bbox])
         # lanes: shapes around some of these steps whose own text is a short title (the
         # innermost lane wins); a frame around more than this drawing is left alone. Text in a
         # lane that lies along a connector is that connector's label, not part of the title.
@@ -478,7 +599,7 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
                         n.lane = title
                     region = _union([region, b])
                     lane_words.update(title_words)
-        word_ids = {i for n in comp_nodes for i in n.words} | lane_words
+        word_ids = {i for n in comp_nodes + note_nodes for i in n.words} | lane_words
         # loose text inside the drawing: labels of the wires it lies along, or notes
         # (text owned by a step is not loose; text owned by a frame or other container may be)
         loose = [(i, w) for i, w in enumerate(words)
@@ -505,7 +626,8 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
             else:
                 notes.append(text)
             word_ids.update(ids)
-        d = Diagram(bbox=region, nodes=comp_nodes, edges=comp_edges, notes=notes, word_ids=word_ids)
+        d = Diagram(bbox=region, nodes=comp_nodes, edges=comp_edges, notes=notes, word_ids=word_ids,
+                    node_notes=dict(node_notes))
         d.order = _flow_order(d)
         out.append(d)
     for d in out:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import io
 import json
 import urllib.request
@@ -56,6 +57,18 @@ def describe_image(img: Image.Image, ctx: ExtractContext) -> str | None:
         return None
 
 
+_WORDLIKE = re.compile(r"[A-Za-z]{3,}")
+
+
+def readable(text: str, conf: float | None) -> bool:
+    """Is OCR text from a photograph worth keeping? Sure reads with real words are; low-confidence
+    scraps of a few characters are not."""
+    if conf is not None and conf < 0.6:
+        return False
+    solid = re.sub(r"[^A-Za-z0-9]", "", text)
+    return len(solid) >= 6 or (len(solid) >= 2 and (conf or 0) >= 0.85)
+
+
 def make_figure_block(
     img: Image.Image,
     ctx: ExtractContext,
@@ -63,9 +76,15 @@ def make_figure_block(
     page: int | None,
     index: int,
     caption: str | None,
+    context: str | None = None,
+    labels: list[str] | None = None,
 ) -> Block:
     """Save a figure crop and build its block (caption + OCR text + description). A picture of a
-    table or spreadsheet comes back as a table block instead, with the picture attached."""
+    table or spreadsheet comes back as a table block instead, with the picture attached.
+
+    ``context`` says what the picture goes with (the step of a procedure it illustrates) and
+    ``labels`` are callouts printed on or beside it; both make a photograph findable, since a
+    photo has no text of its own."""
     name = f"p{page}-{index}.png" if page else f"img-{index}.png"
     path: Path = ctx.asset_dir / name
     img.convert("RGB").save(path, format="PNG", optimize=True)
@@ -79,6 +98,14 @@ def make_figure_block(
             return _table_block(found.table, ctx, path, img, page=page, caption=caption)
     description = describe_image(img, ctx)
     parts = [f"**Figure**{f' (page {page})' if page else ''}" + (f": {caption}" if caption else "")]
+    if context:
+        parts.append("Shown with: " + context)
+    if labels:
+        parts.append("Labels: " + "; ".join(labels))
+    if ocr and not readable(ocr, conf):
+        ocr = ""          # glare, engraving and screen blur read as noise; noise only hurts search
+    if ocr and labels and re.sub(r"\W", "", ocr).lower() in re.sub(r"\W", "", " ".join(labels)).lower():
+        ocr = ""          # the same words as the labels
     if ocr:
         parts.append("Text in figure: " + ocr.replace("\n\n", " / "))
     if description:
@@ -92,6 +119,8 @@ def make_figure_block(
             "fingerprint": image_fingerprint(img),
             "ocr_conf": conf,
             "described": bool(description),
+            # nothing but the picture: no caption, labels, readable text or description
+            "bare": not (caption or labels or ocr or description),
         },
     )
 

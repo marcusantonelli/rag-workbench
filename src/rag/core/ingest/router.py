@@ -17,7 +17,7 @@ EXTENSION_TYPES = {
 }
 
 # Bump when an extractor's output changes, so cached extractions are redone.
-EXTRACTOR_VERSION = "4"   # 4: flowcharts from vector shapes, tables from images
+EXTRACTOR_VERSION = "5"   # 4: flowcharts, tables from images; 5: procedure tables, page frames
 
 
 def detect_type(path: Path) -> str | None:

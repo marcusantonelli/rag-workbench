@@ -30,6 +30,7 @@ class ChunkSettings:
     long_section_tokens: int = 800
     topic_shift_percentile: float = 95
     code_max_tokens: int = 800
+    table_chunk_max_rows: int = 1000     # larger tables stored in tables.db get a preview chunk only
 
     @classmethod
     def from_config(cls, c: dict[str, Any]) -> "ChunkSettings":
@@ -170,13 +171,20 @@ class Chunker:
         base = dict(kind="table", embed_text="", heading_path=heading_path, page_start=block.page,
                     page_end=block.page_end or block.page, line_start=block.line_start, line_end=block.line_end,
                     asset_path=meta.get("asset_path"), ocr_conf=meta.get("ocr_conf"))
-        if table_name:
+        if table_name and len(rows) > self.s.table_chunk_max_rows:
             preview = markdown_table(headers, rows[:5])
             text = ((f"**{caption}**\n\n" if caption else "") + preview +
                     f"\n\nFull table ({len(rows)} rows) is in tables.db as {table_name}; "
                     f"columns: {', '.join(str(h) for h in headers)}.")
             return [Chunk(text=text, table_name=table_name, **base)]
-        if self.count(block.text) <= self.s.max_tokens or not rows:
+        if table_name:
+            # also stored for SQL, and every row searchable: groups of rows, each under the
+            # column names, each saying where it sits and where the whole table is
+            base["table_name"] = table_name
+            note = f"; the whole table is in tables.db as {table_name}"
+        else:
+            note = ""
+        if not table_name and (self.count(block.text) <= self.s.max_tokens or not rows):
             return [Chunk(text=block.text, **base)]
         out = []
         group: list[list[Any]] = []
@@ -186,12 +194,12 @@ class Chunker:
             trial = markdown_table(headers, group + [row])
             if group and self.count(prefix + trial) > self.s.max_tokens:
                 out.append(Chunk(text=prefix + markdown_table(headers, group) +
-                                 f"\n\n(rows {start + 1}-{i} of {len(rows)})", **base))
+                                 f"\n\n(rows {start + 1}-{i} of {len(rows)}{note})", **base))
                 group, start = [], i
             group.append(row)
         if group:
             out.append(Chunk(text=prefix + markdown_table(headers, group) +
-                             f"\n\n(rows {start + 1}-{len(rows)} of {len(rows)})", **base))
+                             f"\n\n(rows {start + 1}-{len(rows)} of {len(rows)}{note})", **base))
         return out
 
     # -- code and SQL ------------------------------------------------------------------
@@ -274,9 +282,24 @@ class Chunker:
         def path() -> str | None:
             return " › ".join(t for _, t in stack) or None
 
+        figures: list[Block] = []     # pictures met inside the section being collected
+
         def flush() -> None:
-            chunks.extend(self._prose_chunks(section, path()))
+            prose = self._prose_chunks(section, path())
+            # A picture inside a section doesn't cut the section's text in two. One with words of
+            # its own (caption, labels, readable text) follows as its own chunk; a bare
+            # photograph has nothing to search for, so it rides on a text chunk of its section.
+            free = [c for c in prose if not c.asset_path]
+            extra: list[Chunk] = []
+            for fig in figures:
+                if fig.meta.get("bare"):
+                    if free:
+                        free.pop(0).asset_path = fig.meta.get("asset_path")
+                else:
+                    extra.extend(self._figure_chunks(fig, path()))
+            chunks.extend(prose + extra)
             section.clear()
+            figures.clear()
 
         for block in doc.blocks:
             if block.kind == "heading":
@@ -289,11 +312,12 @@ class Chunker:
             if block.kind in ("paragraph", "note"):
                 section.append(block)
                 continue
+            if block.kind == "figure":
+                figures.append(block)
+                continue
             flush()
             if block.kind == "table":
                 chunks.extend(self._table_chunks(block, path()))
-            elif block.kind == "figure":
-                chunks.extend(self._figure_chunks(block, path()))
             elif block.kind in ("code", "sql"):
                 chunks.extend(self._code_chunks(block, path()))
             else:

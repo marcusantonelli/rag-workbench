@@ -47,10 +47,22 @@ def _get_engine():
         return _engine
 
 
+_call_lock = threading.Lock()
+
+
+def _run(arr: np.ndarray, text_score: float):
+    """One OCR pass. The engine remembers the thresholds of its last call, so every call states
+    its own: 0.5 for ordinary reading, 0.0 for a second look at a single cell."""
+    engine = _get_engine()
+    with _call_lock:
+        result, _ = engine(arr, text_score=text_score, box_thresh=0.5, unclip_ratio=1.6)
+    return result
+
+
 def ocr_fragments(image: Image.Image) -> list[OcrLine]:
     """The text boxes the OCR found, each with its position (one per cell in a table)."""
     arr = np.array(image.convert("RGB"))
-    result, _ = _get_engine()(arr)
+    result = _run(arr, 0.5)
     frags: list[OcrLine] = []
     for box, text, score in result or []:
         xs = [p[0] for p in box]
@@ -212,7 +224,7 @@ def _reread(image: Image.Image, box: tuple[float, float, float, float], gray: np
         sized = tight.resize((max(1, int(tight.width * f)), glyph), Image.LANCZOS)
         padded = ImageOps.expand(sized, int(0.6 * glyph), fill="white")
         try:
-            result, _ = _get_engine()(np.array(padded), use_det=False, use_cls=False, use_rec=True, text_score=0.0)
+            result = _run(np.array(padded), 0.0)
         except Exception:  # noqa: BLE001 - a repair attempt only
             continue
         if result and float(result[0][2]) > score:
@@ -464,6 +476,15 @@ def grid_table(frags: list[OcrLine], image: Image.Image | None = None) -> OcrTab
     keep = [k for k in range(len(table[0]) if table else 0) if any(row[k] for row in table)]
     table = [[row[k] for k in keep] for row in table]
     if len(table) < 2 or len(keep) < 2:
+        return None
+    # a table has a name over most of its columns; a screenshot of a dialog (labels and values
+    # scattered in rough rows) does not, and is better kept as a figure with its text
+    if sum(1 for c in table[0] if c) < 0.6 * len(keep):
+        return None
+    if len(keep) == 2 and len(table) < 5:
+        return None       # two signs or buttons side by side, not a two-column table
+    ragged = sum(1 for row in table[1:] if sum(1 for c in row if c) < 0.5 * len(keep))
+    if ragged > 0.5 * (len(table) - 1):
         return None
     return OcrTable(headers=table[0], rows=table[1:], title=" ".join(title),
                     conf=sum(f.conf for f in frags) / len(frags))

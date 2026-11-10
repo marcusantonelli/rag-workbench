@@ -61,7 +61,7 @@ def test_incremental_update_change_and_prune(tmp_path, corpus):
     pointer = store.conn.execute("SELECT table_name, text FROM chunks WHERE kind='table' AND table_name IS NOT NULL").fetchone()
     store.close()
     assert "die shear" in texts and "wire bonder on station 4" not in texts
-    assert pointer is not None and "45 rows" in pointer["text"]
+    assert pointer is not None and "of 45; the whole table is in tables.db" in pointer["text"]
     t = TablesStore(ws.tables_db, readonly=True)
     names = {r["table_name"] for r in t.catalog()}
     t.close()

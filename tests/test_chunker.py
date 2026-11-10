@@ -52,12 +52,20 @@ def test_heading_trail_and_levels():
     assert paths == ["A › B", "A › C", "D"]
 
 
-def test_big_table_becomes_pointer_chunk_when_named():
+def test_table_stored_for_sql_is_still_chunked_row_by_row():
     rows = [[str(i), f"part {i}"] for i in range(40)]
     block = Block(kind="table", text="(table)", meta={"headers": ["n", "part"], "rows": rows,
                                                        "caption": "Parts", "table_name": "t_parts"})
     chunks = _chunker().chunk(ExtractedDoc(file_type="md", title=None, blocks=[block]), "x.md")
-    assert len(chunks) == 1 and chunks[0].table_name == "t_parts" and "40 rows" in chunks[0].text
+    assert all(c.table_name == "t_parts" and c.text.startswith("**Parts**\n\n| n | part |") for c in chunks)
+    assert sum(c.text.count("| part ") - 1 for c in chunks) == 40                 # every row, once (less each header)
+    assert "of 40; the whole table is in tables.db as t_parts)" in chunks[-1].text
+
+    # past the limit only a preview is chunked
+    huge = Block(kind="table", text="(table)", meta={"headers": ["n", "part"], "caption": "Parts", "table_name": "t_parts",
+                                                      "rows": [[str(i), f"part {i}"] for i in range(1200)]})
+    chunks = _chunker().chunk(ExtractedDoc(file_type="md", title=None, blocks=[huge]), "x.md")
+    assert len(chunks) == 1 and "1200 rows" in chunks[0].text and chunks[0].table_name == "t_parts"
 
 
 def test_oversized_inline_table_splits_by_rows_with_header():

@@ -72,6 +72,10 @@ DEFAULTS: dict[str, Any] = {
         "topic_shift_percentile": 95,
         "code_max_tokens": 800,
         "table_inline_max_rows": 30,
+        # A table too large to sit inline is stored in tables.db for SQL. Up to this many rows it
+        # is also chunked in full (row groups under the column names), so a question about one
+        # row finds it; beyond that only a preview is chunked.
+        "table_chunk_max_rows": 1000,
         "row_chunks": True,          # row-group chunks for small text-heavy tables
         "row_chunk_size": 25,
         "row_chunk_max_rows": 200,

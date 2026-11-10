@@ -80,13 +80,13 @@ def test_visio_style_flowchart(files, ctx):
     assert not any("Operator" == p or "Not OK" in p for p in prose)
 
 
-def test_lookalikes_are_not_flowcharts(files, ctx, cfg):
+def test_lookalikes_are_not_flowcharts(files, ctx, cfg, monkeypatch):
     blocks = _blocks(files["lookalikes"], ctx)
     assert not any(b.kind == "figure" for b in blocks)
     table = next(b for b in blocks if b.kind == "table")
     assert table.meta["headers"] == ["Oven", "Max temp", "Slots"] and table.meta["rows"][-1] == ["OV-3", "175 C", "32"]
     assert any("Safety first" in b.text for b in blocks)
-    cfg.data["pdf"]["diagrams"] = False                 # the switch: flowcharts read as plain text again
+    monkeypatch.setitem(cfg.data["pdf"], "diagrams", False)   # the switch: flowcharts read as plain text again
     assert not any(b.kind == "figure" for b in _blocks(files["flowchart"], ctx))
 
 
@@ -109,11 +109,11 @@ def test_pictures_of_spreadsheets_become_tables(files, ctx):
     assert not any("Table 2." in b.text for b in blocks if b.kind == "paragraph")
 
 
-def test_picture_table_in_docx_and_switch(files, ctx, cfg):
+def test_picture_table_in_docx_and_switch(files, ctx, cfg, monkeypatch):
     blocks = _blocks(files["docx"], ctx)
     table = next(b for b in blocks if b.kind == "table")
     assert [table.meta["headers"]] + table.meta["rows"] == SHEET
-    cfg.data["figures"]["table_ocr"] = False
+    monkeypatch.setitem(cfg.data["figures"], "table_ocr", False)
     blocks = _blocks(files["docx"], ctx)
     assert not any(b.kind == "table" for b in blocks) and any(b.kind == "figure" and "L24-0819" in b.text for b in blocks)
 
