@@ -14,6 +14,8 @@ export interface AppInfo {
   platform: string;
   python: string;
   frozen: boolean;
+  /** Version of the Shammy vector engine, or null when this build doesn't include it. */
+  shammy: string | null;
 }
 
 export interface Device {
@@ -93,6 +95,7 @@ export interface KbSummary {
     chunks_by_kind: Record<string, number>;
   };
   embedding: { backend: string; model: string; dims: number; query_instruction?: string };
+  vector_store: "sqlite-vec" | "shammy";
   runtime: RuntimeCheck;
   last_build_at: string | null;
   built_with: string | null;

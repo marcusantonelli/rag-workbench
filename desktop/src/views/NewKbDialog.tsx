@@ -3,6 +3,11 @@ import { useApp } from "../state";
 import { Button, Dialog } from "../components/ui";
 import { pickPaths } from "../platform";
 
+const STORES = [
+  { id: "sqlite-vec", label: "Standard (sqlite-vec)", note: "Works with every retrieval server. Exact search." },
+  { id: "shammy", label: "Shammy", note: "About a fifth smaller and much faster on large collections. Packs need a retrieval server with Shammy support." },
+];
+
 const SIZES = [
   { dims: 4096, label: "Full detail (4096)", note: "Best retrieval. About 16 KB per chunk." },
   { dims: 2048, label: "Balanced (2048)", note: "Half the size; a small quality cost." },
@@ -14,12 +19,13 @@ export function NewKbDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [dims, setDims] = useState(4096);
   const [folder, setFolder] = useState("");
+  const [vectors, setVectors] = useState("sqlite-vec");
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
     if (!name.trim()) return;
     setBusy(true);
-    const kb = await createKb(name.trim(), dims, folder || undefined);
+    const kb = await createKb(name.trim(), dims, folder || undefined, vectors);
     setBusy(false);
     if (kb) onClose();
   };
@@ -64,6 +70,24 @@ export function NewKbDialog({ onClose }: { onClose: () => void }) {
           </div>
           <span className="field-help">Fixed once the knowledge base is built; changing it means a full rebuild.</span>
         </fieldset>
+
+        {info?.shammy && (
+          <fieldset className="field">
+            <legend className="field-label">Vector store</legend>
+            <div className="choice-list">
+              {STORES.map((s) => (
+                <label key={s.id} className={`choice ${vectors === s.id ? "chosen" : ""}`}>
+                  <input type="radio" name="vectors" checked={vectors === s.id} onChange={() => setVectors(s.id)} />
+                  <span>
+                    <span className="choice-title">{s.label}</span>
+                    <span className="choice-note">{s.note}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <span className="field-help">Can be changed later without embedding anything again (About tab).</span>
+          </fieldset>
+        )}
 
         <div className="field">
           <span className="field-label">Folder</span>

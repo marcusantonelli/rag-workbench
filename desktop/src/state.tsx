@@ -25,7 +25,7 @@ interface AppState {
   setScreen: (s: Screen) => void;
   setTab: (kb: string, t: Tab) => void;
   openKb: (path: string) => Promise<KbSummary | null>;
-  createKb: (name: string, dims: number, folder?: string) => Promise<KbSummary | null>;
+  createKb: (name: string, dims: number, folder?: string, vectors?: string) => Promise<KbSummary | null>;
   closeKb: (id: string) => Promise<void>;
   refreshKb: (id: string) => Promise<void>;
   refreshRuntime: () => Promise<void>;
@@ -192,9 +192,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const createKb = useCallback(
-    async (name: string, dims: number, folder?: string) => {
+    async (name: string, dims: number, folder?: string, vectors: string = "sqlite-vec") => {
       try {
-        const s = await call<KbSummary>("kb.create", { name, dims, folder: folder || null });
+        const s = await call<KbSummary>("kb.create", { name, dims, folder: folder || null, vectors });
         upsertKb(s);
         setScreen({ kind: "kb", id: s.id });
         setTabs((t) => ({ ...t, [s.id]: "build" }));

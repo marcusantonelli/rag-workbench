@@ -156,6 +156,7 @@ class Service:
             "kb.export": self.kb_export,
             "kb.verify": self.kb_verify,
             "kb.merge": self.kb_merge,
+            "kb.convert": self.kb_convert,
             "kb.discover": self.kb_discover,
             "eval.run": self.eval_run,
             "eval.markdown": self.eval_markdown,
@@ -259,7 +260,17 @@ class Service:
     def app_info(self) -> dict[str, Any]:
         return {"version": __version__, "data_dir": str(self.settings.root),
                 "workspaces_dir": str(self.settings.workspaces_dir), "platform": sys.platform,
-                "python": sys.version.split()[0], "frozen": bool(getattr(sys, "frozen", False))}
+                "python": sys.version.split()[0], "frozen": bool(getattr(sys, "frozen", False)),
+                "shammy": self._shammy_version()}
+
+    @staticmethod
+    def _shammy_version() -> str | None:
+        """Version of the Shammy vector engine, or None when this build doesn't include it."""
+        try:
+            import shammy
+        except ImportError:
+            return None
+        return shammy.__version__
 
     def open_path(self, path: str, reveal: bool = False) -> dict[str, Any]:
         p = Path(path)
@@ -387,8 +398,20 @@ class Service:
                 shutil.rmtree(d, ignore_errors=True)
 
     def kb_create(self, name: str, folder: str | None = None, dims: int = 4096,
-                  backend: str = "llama-server") -> dict[str, Any]:
+                  backend: str = "llama-server", vectors: str = "sqlite-vec") -> dict[str, Any]:
+        from rag.core.db.vectors import BACKENDS, VectorStoreError, check_dims
         from rag.core.workspace import Workspace
+
+        if vectors not in BACKENDS:
+            raise ServiceError("bad_params", f"Unknown vector store {vectors!r}.")
+        if vectors == "shammy":
+            if self._shammy_version() is None:
+                raise ServiceError("unavailable", "This build doesn't include the Shammy engine.",
+                                   "Choose sqlite-vec; the knowledge base can be moved to Shammy later.")
+            try:
+                check_dims(int(dims))
+            except VectorStoreError as exc:
+                raise ServiceError("bad_params", str(exc)) from exc
 
         if not name.strip():
             raise ServiceError("bad_params", "Give the knowledge base a name.")
@@ -398,7 +421,8 @@ class Service:
         if root.exists() and any(root.iterdir()):
             raise ServiceError("exists", f"{root} is not empty.", "Choose an empty or new folder.")
         rt = self.settings.runtime
-        overrides: dict[str, Any] = {"embedding": {"backend": backend, "dims": int(dims)}}
+        overrides: dict[str, Any] = {"embedding": {"backend": backend, "dims": int(dims)},
+                                     "vectors": {"backend": vectors}}
         if backend == "llama-server":
             overrides["embedding"]["model"] = rt.get("model_id")
         elif backend == "hash-test":
@@ -469,10 +493,12 @@ class Service:
             ts.close()
         cfg = self._embedding_cfg(k)
         size = (k.path.stat().st_size if k.kind == "pack" else
-                sum(f.stat().st_size for f in (k.root / "rag.db", k.root / "tables.db") if f.exists()))
+                sum(f.stat().st_size for f in (k.root / "rag.db", k.root / "tables.db", k.root / "vectors.shammy")
+                    if f.exists()))
         return {
             "id": k.id, "kind": k.kind, "name": k.name, "path": str(k.path), "root": str(k.root),
             "readonly": k.readonly, "building": k.building, "size_bytes": size,
+            "vector_store": counts.get("vector_store", "sqlite-vec"),
             "manifest": {key: v for key, v in (k.manifest or {}).items() if key != "files"} or None,
             "counts": {**counts, "tables": n_tables, "with_originals": library},
             "embedding": {"backend": cfg.get("backend"), "model": cfg.get("model"), "dims": cfg.get("dims"),
@@ -795,6 +821,34 @@ class Service:
             return res
 
         return self._job("merge", f"Merge into {k.name}", work, kb=k.id)
+
+    def kb_convert(self, kb: str, to: str) -> dict[str, Any]:
+        """Move a workspace's vectors to the other store (sqlite-vec or shammy), as a job. Nothing is embedded again."""
+        from rag.core.db.convert import convert_workspace
+        from rag.core.db.vectors import VectorStoreError
+
+        k = self._kb(kb)
+        if k.readonly:
+            raise ServiceError("readonly", "Packs are read-only snapshots.", "Convert the workspace, then export a new pack.")
+        if k.building:
+            raise ServiceError("busy", "Wait for the build to finish before moving the vectors.")
+        if to == "shammy" and self._shammy_version() is None:
+            raise ServiceError("unavailable", "This build doesn't include the Shammy engine.")
+
+        def work(job: Job) -> Any:
+            k.building = True
+            self.emit("kb", {"id": k.id, "building": True})
+            try:
+                return convert_workspace(k.workspace(), to,
+                                         progress=lambda done, total: job.report({"files_done": done, "files_total": total,
+                                                                                  "stage": "convert"}))
+            except VectorStoreError as exc:
+                raise ServiceError("bad_params", str(exc)) from exc
+            finally:
+                k.building = False
+                self.emit("kb", {"id": k.id, "building": False})
+
+        return self._job("convert", f"Move vectors of {k.name} to {'Shammy' if to == 'shammy' else 'sqlite-vec'}", work, kb=k.id)
 
     def kb_verify(self, kb: str) -> dict[str, Any]:
         """Check a pack's checksums and contents, or a workspace's marker, databases and links."""

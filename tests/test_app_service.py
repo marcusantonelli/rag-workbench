@@ -539,3 +539,35 @@ def test_merge_a_pack_into_a_workspace(svc, corpus, tmp_path):
     with pytest.raises(ServiceError) as err:
         svc.call("kb.merge", {"kb": pack["id"], "sources": [a["path"]]})
     assert err.value.code == "readonly"
+
+
+def test_shammy_knowledge_bases_and_convert(svc, corpus, tmp_path):
+    pytest.importorskip("shammy")
+    assert svc.call("app.info", {})["shammy"]
+    a = svc.call("kb.create", {"name": "On Shammy", "dims": 256, "backend": "hash-test", "vectors": "shammy"})
+    assert a["vector_store"] == "shammy"
+    assert wait_job(svc, svc.call("kb.build", {"kb": a["id"], "inputs": [str(corpus / "calibration.csv"),
+                                                                         str(corpus / "Seal Leak.md")]}))["state"] == "done"
+    before = svc.call("kb.summary", {"kb": a["id"]})
+    assert before["counts"]["vectors"] == before["counts"]["chunks"] > 0 and before["counts"]["tables"] == 1
+    hits = svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})["results"]
+    assert hits
+
+    job = wait_job(svc, svc.call("kb.convert", {"kb": a["id"], "to": "sqlite-vec"}))
+    assert job["state"] == "done", job["error"]
+    assert job["result"]["vectors"] == before["counts"]["vectors"] and job["result"]["missing"] == 0
+    after = svc.call("kb.summary", {"kb": a["id"]})
+    assert after["vector_store"] == "sqlite-vec" and after["counts"]["vectors"] == before["counts"]["vectors"]
+    assert svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})["results"][0]["text"] == hits[0]["text"]
+    assert wait_job(svc, svc.call("kb.convert", {"kb": a["id"], "to": "shammy"}))["state"] == "done"
+    assert wait_job(svc, svc.call("kb.verify", {"kb": a["id"]}))["result"]["ok"]
+
+    ex = wait_job(svc, svc.call("kb.export", {"kb": a["id"], "out": str(tmp_path / "s.ragpack")}))
+    pack = svc.call("kb.open", {"path": ex["result"]["path"]})
+    assert pack["vector_store"] == "shammy" and svc.call("kb.search", {"kb": pack["id"], "query": "helium leak rate"})["results"]
+    with pytest.raises(ServiceError) as err:
+        svc.call("kb.convert", {"kb": pack["id"], "to": "sqlite-vec"})
+    assert err.value.code == "readonly"
+    with pytest.raises(ServiceError) as err:
+        svc.call("kb.create", {"name": "Odd", "dims": 300, "backend": "hash-test", "vectors": "shammy"})
+    assert err.value.code == "bad_params"
