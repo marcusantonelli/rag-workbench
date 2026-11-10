@@ -250,9 +250,15 @@ def narrow(cand: np.ndarray, scores: np.ndarray, c: int) -> np.ndarray:
     return np.take_along_axis(cand, top(s, c), axis=1)
 
 
+EXACT: np.ndarray | None = None      # exact score matrix, set in main(); used to judge ties fairly
+
+
 def recall(cand: np.ndarray, truth: np.ndarray) -> float:
-    hits = sum(len(np.intersect1d(c, t, assume_unique=False)) for c, t in zip(cand, truth))
-    return hits / truth.size
+    """Share of each query's top-k found. A candidate whose exact score equals the k-th best counts:
+    workspaces hold duplicate chunks with identical vectors, and which twin is "the" answer is arbitrary."""
+    kth = np.take_along_axis(EXACT, truth, axis=1).min(axis=1, keepdims=True)
+    got = np.take_along_axis(EXACT, cand, axis=1) >= kth - 1e-6
+    return float(np.minimum(got.sum(axis=1), truth.shape[1]).sum() / truth.size)
 
 
 def score_ratio(cand: np.ndarray, truth: np.ndarray, exact: np.ndarray) -> float:
@@ -334,7 +340,8 @@ def main() -> int:
     if n <= K * 4:
         sys.exit("Too few chunks to test.")
 
-    exact = q @ x.T
+    global EXACT
+    exact = EXACT = q @ x.T
     truth = top(exact, K)
     gb = (6 + 2) * q.shape[0] * n * 4 / 1e9
     if gb > 4:

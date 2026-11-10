@@ -1,25 +1,56 @@
 # Shammy
 
-The purpose-built vector store for this pipeline (plan: "Shammy: low-level plan for a
-purpose-built vector store"). Nothing here is used by `rag` yet.
+The purpose-built vector store for this pipeline: one memory-mapped file per knowledge base,
+no index structure, a scan of 1-bit sketches followed by reranking on larger codes. Design:
+"Shammy: low-level plan for a purpose-built vector store". Not wired into `rag` yet
+(that is milestone 3).
 
-## Milestone 0: prove the funnel
+| | |
+|---|---|
+| `crates/shammy-core` | The engine: format, encoder, writer, reader, search, verify |
+| `crates/shammy-cli` | `shammy`: info, verify, build, delete, search (developer tool) |
+| `python/shammy_ref.py` | The specification as NumPy code; the engine is tested against it |
+| `spec/FORMAT.md` | The byte-level format |
+| `prototype/m0_funnel.py` | Milestone 0: measures the design on a real workspace or pack |
 
-`prototype/m0_funnel.py` reads the vectors of an existing workspace or pack (read-only, no
-re-embedding), encodes them as the plan describes and reports whether the three-stage search
-keeps recall@20 at 0.99 or better against exact search.
+## Build and test
 
 ```bash
-pip install numpy sqlite-vec          # already there if rag-builder is installed
-python shammy/prototype/m0_funnel.py /path/to/siemens-kb.ragpack
+cd shammy
+cargo test --release                 # engine tests
+cargo build --release                # target/release/shammy
+cd .. && python -m pytest tests/test_shammy_parity.py   # engine vs NumPy reference
 ```
 
-Optional, closer to real use (the embedding model must be running, e.g. in RAG Workbench):
+## Try it
+
+Vectors go in as raw little-endian float32 (for example `array.astype("<f4").tofile("v.f32")`):
 
 ```bash
-python shammy/prototype/m0_funnel.py siemens-kb.ragpack --golden golden.jsonl --embed-url http://127.0.0.1:8081
+shammy build kb.shammy --dims 4096 --vectors v.f32 --model Qwen3-Embedding-8B
+shammy info kb.shammy
+shammy verify kb.shammy
+shammy search kb.shammy --query q.f32 -k 10
+shammy search kb.shammy --query q.f32 -k 10 --exact     # ground truth from the lossless tier
 ```
 
-It prints three tables and a verdict, and writes `m0_results.json`. Runtime: about a minute for
-30,000 chunks; RAM is roughly 6.4 KB x chunks x queries / 1000 (lower `--max-rows` or `--queries`
-if needed). The pack must hold real embeddings: a `hash-test` workspace proves nothing.
+## Status
+
+- **Milestone 0 (done):** on the 651-chunk Siemens pack (Qwen3-Embedding-8B, 4096 dims) the
+  8-bit code alone finds 99.8% of the exact top 20 and the 1-bit code 91%; block rotation costs
+  nothing against a full rotation; a centroid doesn't help. The pack is too small to say how
+  few candidates stage 1 can keep at a million chunks; `shammy bench` (milestone 2) will measure
+  that on larger data.
+- **Milestone 1 (done):** format 1.0, append-only writer with commits and tombstones, reader,
+  scalar single-threaded search, verify, crash and corruption tests, bit-exact parity with the
+  reference.
+- **Next, milestone 2:** SIMD kernels, parallel scan, error-bound pruning, `shammy bench`.
+
+## Milestone 0 script
+
+```bash
+python shammy/prototype/m0_funnel.py /path/to/pack.ragpack
+```
+
+Reads stored vectors (read-only), prints three tables and a verdict, writes `m0_results.json`.
+The pack must hold real embeddings; the larger the better.

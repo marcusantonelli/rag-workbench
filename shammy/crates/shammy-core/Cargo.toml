@@ -1,0 +1,11 @@
+[package]
+name = "shammy-core"
+description = "Shammy: a single-file, scan-and-rerank vector store for the RAG pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+memmap2 = "0.9"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+half = "2"
