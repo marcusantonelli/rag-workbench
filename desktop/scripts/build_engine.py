@@ -43,7 +43,7 @@ def main() -> int:
     shutil.rmtree(DIST / "rag-engine", ignore_errors=True)
 
     log("Starting PyInstaller...")
-    subprocess.check_call(
+    result = subprocess.run(
         [
             sys.executable,
             "-m", "PyInstaller",
@@ -54,9 +54,16 @@ def main() -> int:
             str(SPEC),
         ],
         cwd=SPEC.parent,
+        timeout=600,
+        check=False,
     )
 
-    log("PyInstaller returned successfully.")
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"PyInstaller failed with exit code {result.returncode}"
+        )
+
+    log(f"PyInstaller process exited with code {result.returncode}")
 
     exe = DIST / "rag-engine" / (
         "rag-engine.exe" if os.name == "nt" else "rag-engine"
