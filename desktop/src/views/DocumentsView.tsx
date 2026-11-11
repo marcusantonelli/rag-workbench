@@ -8,9 +8,12 @@ import { Passage } from "../components/Passage";
 import { FigureImage } from "../components/FigureImage";
 import { bytes, count, kindLabel, location } from "../format";
 import { takeFocus, type ChunkFocus } from "../focus";
+import { stageText } from "../buildProgress";
 
 export function DocumentsView({ kb }: { kb: KbSummary }) {
-  const { fail, notify, refreshKb } = useApp();
+  const { fail, notify, refreshKb, jobs } = useApp();
+  // the build running on this knowledge base, if any: its current file shows live counts
+  const live = Object.values(jobs).find((j) => j.kb === kb.id && j.kind === "build" && j.state === "running")?.progress ?? null;
   const [docs, setDocs] = useState<DocumentRow[]>([]);
   const [filter, setFilter] = useState("");
   const [type, setType] = useState("");
@@ -125,7 +128,11 @@ export function DocumentsView({ kb }: { kb: KbSummary }) {
                     <span className="doc-dir">{d.title ? parts[parts.length - 1] : parts.slice(0, -1).join("/")}</span>
                   </span>
                   <span className="doc-meta">
-                    {d.status !== "ok" ? <span className={`status status-${d.status}`}>{d.status}</span> : count(d.n_chunks, "chunk")}
+                    {live && d.status === "pending" && d.display_path === live.current
+                      ? <span className="status status-building" title={stageText(live)}>
+                          {live.file_chunks != null ? `${live.file_embedded ?? 0} of ${count(live.file_chunks, "chunk")} embedded` : stageText(live)}
+                        </span>
+                      : d.status !== "ok" ? <span className={`status status-${d.status}`}>{d.status === "pending" ? "waiting" : d.status}</span> : count(d.n_chunks, "chunk")}
                   </span>
                 </button>
               </li>

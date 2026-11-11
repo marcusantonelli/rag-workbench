@@ -121,7 +121,7 @@ export interface DocumentRow {
   title: string | null;
   n_pages: number | null;
   size_bytes: number | null;
-  status: "ok" | "partial" | "failed";
+  status: "ok" | "partial" | "failed" | "pending";
   warnings: string[];
   n_chunks: number;
   extractor: string | null;

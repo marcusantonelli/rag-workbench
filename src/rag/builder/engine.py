@@ -48,6 +48,17 @@ class SourceFile:
     root_key: str
 
 
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _total_size(files) -> int:
+    return sum(_size(sf.path) for sf in files)
+
+
 @dataclass
 class BuildStats:
     seen: int = 0
@@ -148,7 +159,7 @@ class Builder:
             for s in skipped:
                 self.emit("skipped", reason=s)
             stats.skipped = len(skipped)
-            self.emit("start", files=len(files), workspace=str(self.ws.root))
+            self.emit("start", files=len(files), workspace=str(self.ws.root), bytes=_total_size(files))
             settings = ChunkSettings.from_config(self.cfg["chunking"])
             settings.context = self._embed_context(store, settings.context)
             chunker = Chunker(settings, self.count, self.embedder)
@@ -221,11 +232,11 @@ class Builder:
         if (existing is not None and existing["sha256"] == digest and existing["status"] in ("ok", "partial")
                 and current):
             stats.unchanged += 1
-            self.emit("file_unchanged", path=sf.display_path, index=index, total=total)
+            self.emit("file_unchanged", path=sf.display_path, index=index, total=total, bytes=_size(sf.path))
             return
 
         ftype = detect_type(sf.path)
-        self.emit("file_start", path=sf.display_path, type=ftype, index=index, total=total)
+        self.emit("file_start", path=sf.display_path, type=ftype, index=index, total=total, bytes=_size(sf.path))
         if ftype is None:
             stats.failed += 1
             msg = "unrecognized or mismatched file signature"
@@ -287,6 +298,7 @@ class Builder:
             stage = "chunk"
             self.emit("stage", path=sf.display_path, stage="chunk")
             chunks = chunker.chunk(doc, sf.display_path) + card_chunks
+            self.emit("stage", path=sf.display_path, stage="chunked", chunks=len(chunks))
             if not chunks:
                 rec.status = "partial"
                 rec.warnings.append("no text extracted")
@@ -306,7 +318,8 @@ class Builder:
             else:
                 stats.updated += 1
             self.emit("file_done", path=sf.display_path, chunks=len(chunks), cached_extract=cached,
-                      warnings=rec.warnings, seconds=round(time.monotonic() - t0, 2), index=index, total=total)
+                      warnings=rec.warnings, seconds=round(time.monotonic() - t0, 2), index=index, total=total,
+                      bytes=rec.size_bytes)
         except Exception as exc:  # noqa: BLE001 - one bad file never stops a build
             msg = f"{type(exc).__name__}: {exc}"
             store.log_error(sf.display_path, stage, msg + "\n" + traceback.format_exc(limit=6))
@@ -314,7 +327,8 @@ class Builder:
             tables.delete_for_doc(doc_id)
             stats.failed += 1
             stats.errors.append({"path": sf.display_path, "stage": stage, "error": msg})
-            self.emit("file_failed", path=sf.display_path, stage=stage, error=msg, index=index, total=total)
+            self.emit("file_failed", path=sf.display_path, stage=stage, error=msg, index=index, total=total,
+                      bytes=_size(sf.path))
             if stage == "embed" and "cannot reach llama-server" in msg:
                 raise  # the embedder is down; every remaining file would fail the same way
 
@@ -328,13 +342,17 @@ class Builder:
         for i, c in enumerate(chunks):
             if c.text_hash in known:
                 out[i] = known[c.text_hash]
-        stats.reused_vectors += len(chunks) - len(todo)
+        reused = len(chunks) - len(todo)
+        stats.reused_vectors += reused
+        # done/total count every chunk of the file: reused vectors are done from the start
+        self.emit("stage", path=path, stage="embed", done=reused, total=len(chunks), reused=reused)
         if todo:
             batch = max(1, int(self.cfg["embedding"]["batch_size"]))
             for start in range(0, len(todo), batch):
                 idx = todo[start:start + batch]
                 out[idx] = self.embedder.embed_documents([chunks[i].embed_text for i in idx])
-                self.emit("stage", path=path, stage="embed", done=min(start + batch, len(todo)), total=len(todo))
+                self.emit("stage", path=path, stage="embed", done=reused + min(start + batch, len(todo)),
+                          total=len(chunks), reused=reused)
             stats.embedded += len(todo)
         return out
 

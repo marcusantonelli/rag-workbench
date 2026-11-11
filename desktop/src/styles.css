@@ -575,3 +575,9 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 /* A button that reads as a link, inside running text */
 .link-button { background: none; border: 0; padding: 0; color: var(--primary); cursor: pointer; font: inherit; text-decoration: underline; }
 .link-button:disabled { color: var(--muted); cursor: default; }
+/* Build: the file being read now, with its own bar */
+.build-file { margin: 6px 0 10px; }
+.build-file p { margin: 0 0 6px; }
+.file-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 8%, transparent); overflow: hidden; }
+.file-bar span { display: block; height: 100%; background: var(--primary); transition: width 0.4s ease; }
+.status-building { background: var(--primary-soft); color: var(--primary); }

@@ -24,32 +24,137 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import shutil
 import time
 from pathlib import Path
 from typing import Any
 
 
+def _stage_words(e: dict[str, Any]) -> str:
+    st = e.get("stage")
+    if st == "page" and e.get("pages"):
+        return f"page {e['page']} of {e['pages']}"
+    if st == "ocr":
+        return f"OCR page {e.get('page')}"
+    if st == "describe":
+        return f"pictures described: {e.get('done')}"
+    if st == "chunked":
+        return f"{e.get('chunks')} chunks"
+    if st == "embed" and e.get("total"):
+        return f"embedding {e.get('done')} of {e.get('total')} chunks"
+    return {"chunk": "chunking", "write": "saving", "tables": "tables"}.get(st, st or "")
+
+
+def _fraction(e: dict[str, Any], before: float) -> float:
+    """How far into the current file a stage event is (reading counts 60%, embedding the rest)."""
+    st = e.get("stage")
+    if st in ("page", "ocr") and e.get("pages"):
+        return 0.6 * min(1.0, e["page"] / e["pages"])
+    if st == "chunked":
+        return 0.62
+    if st == "embed" and e.get("total"):
+        return 0.65 + 0.35 * min(1.0, e["done"] / e["total"])
+    return before
+
+
+class _Printer:
+    """Build progress for a person. On a terminal: one status line that updates in place (bar,
+    files, the current file and what is happening to it, time left), with a line per finished
+    file above it. Piped or redirected: a line per file, as before."""
+
+    def __init__(self, stream=None):
+        self.out = stream or sys.stdout
+        self.tty = bool(getattr(self.out, "isatty", lambda: False)())
+        self.total = self.done = 0
+        self.bytes_total = self.bytes_done = self.bytes_skipped = 0
+        self.work0: float | None = None
+        self.current = ""
+        self.cur_bytes = 0
+        self.cur_frac = 0.0
+        self.status = False
+
+    def _clear(self) -> None:
+        if self.status:
+            self.out.write("\r\033[K")
+            self.status = False
+
+    def _line(self, text: str) -> None:
+        self._clear()
+        print(text, file=self.out, flush=True)
+
+    def _left(self) -> str:
+        if self.work0 is None or not self.bytes_total:
+            return ""
+        elapsed = time.monotonic() - self.work0
+        # count how far the current file has got, or a large file being read makes the files
+        # finished before it look like the whole rate
+        work = self.bytes_done - self.bytes_skipped + self.cur_bytes * self.cur_frac
+        remaining = self.bytes_total - self.bytes_done - self.cur_bytes * self.cur_frac
+        if elapsed < 10 or work <= 0 or remaining <= 0:
+            return ""
+        secs = elapsed / work * remaining
+        return f" · about {secs / 60:.0f} min left" if secs >= 90 else f" · about {secs:.0f} s left"
+
+    def _status(self, words: str) -> None:
+        if not self.tty:
+            return
+        width = 20
+        filled = int(width * self.done / self.total) if self.total else 0
+        bar = "#" * filled + "-" * (width - filled)
+        text = f"[{bar}] {self.done}/{self.total} · {self.current} · {words}{self._left()}"
+        cols = shutil.get_terminal_size((100, 20)).columns
+        self.out.write("\r\033[K" + text[: max(20, cols - 1)])
+        self.out.flush()
+        self.status = True
+
+    def __call__(self, event: dict[str, Any]) -> None:
+        e = event["event"]
+        if e == "start":
+            self.total, self.bytes_total = event["files"], int(event.get("bytes") or 0)
+            self._line(f"Building {event['files']} files into {event['workspace']}")
+        elif e == "file_start":
+            if self.work0 is None:
+                self.work0 = time.monotonic()
+            self.current = event["path"]
+            self.cur_bytes, self.cur_frac = int(event.get("bytes") or 0), 0.0
+            if self.tty:
+                self._status("reading")
+            else:
+                print(f"[{event['index']}/{event['total']}] {event['path']} ({event['type']})", flush=True)
+        elif e == "stage":
+            self.cur_frac = _fraction(event, self.cur_frac)
+            self._status(_stage_words(event))
+        elif e in ("file_done", "file_unchanged", "file_failed"):
+            self.done = event.get("index", self.done)
+            self.bytes_done += int(event.get("bytes") or 0)
+            self.cur_bytes, self.cur_frac = 0, 0.0
+            if e == "file_unchanged":
+                self.bytes_skipped += int(event.get("bytes") or 0)
+                self._status("unchanged")
+                return
+            if e == "file_done":
+                extra = " (cached extraction)" if event.get("cached_extract") else ""
+                warn = f"  warnings: {'; '.join(event['warnings'])}" if event.get("warnings") else ""
+                head = f"{event['path']}: " if self.tty else "    "
+                self._line(f"{head}{event['chunks']} chunks in {event['seconds']}s{extra}{warn}")
+            else:
+                self._line(f"    FAILED {event['path']}: {event.get('stage', '')} {event['error']}")
+        elif e == "skipped":
+            self._line(f"skipped {event['reason']}")
+        elif e == "file_removed":
+            self._line(f"removed {event['path']}")
+        elif e == "warning":
+            self._line(f"warning: {event.get('message')}")
+        elif e == "done":
+            self._line(f"\nDone in {event['seconds']}s: {event['added']} added, {event['updated']} updated, "
+                       f"{event['unchanged']} unchanged, {event['failed']} failed, {event['removed']} removed; "
+                       f"{event['chunks']} chunks, {event['tables']} tables, {event['embedded']} embedded, "
+                       f"{event['reused_vectors']} vectors reused.")
+
+
 def _print_event(event: dict[str, Any]) -> None:
-    e = event["event"]
-    if e == "start":
-        print(f"Building {event['files']} files into {event['workspace']}")
-    elif e == "file_start":
-        print(f"[{event['index']}/{event['total']}] {event['path']} ({event['type']})", flush=True)
-    elif e == "file_done":
-        extra = " (cached extraction)" if event.get("cached_extract") else ""
-        warn = f"  warnings: {'; '.join(event['warnings'])}" if event.get("warnings") else ""
-        print(f"    {event['chunks']} chunks in {event['seconds']}s{extra}{warn}")
-    elif e == "file_failed":
-        print(f"    FAILED {event['path']}: {event.get('stage', '')} {event['error']}", flush=True)
-    elif e == "skipped":
-        print(f"skipped {event['reason']}")
-    elif e == "file_removed":
-        print(f"removed {event['path']}")
-    elif e == "done":
-        print(f"\nDone in {event['seconds']}s: {event['added']} added, {event['updated']} updated, "
-              f"{event['unchanged']} unchanged, {event['failed']} failed, {event['removed']} removed; "
-              f"{event['chunks']} chunks, {event['tables']} tables, {event['embedded']} embedded, "
-              f"{event['reused_vectors']} vectors reused.")
+    """A line per file (used where a fresh printer isn't made, e.g. `rag remove`)."""
+    _Printer()(event)
 
 
 def _json_event(event: dict[str, Any]) -> None:
@@ -98,7 +203,7 @@ def cmd_build(args) -> int:
     from rag.core.workspace import Workspace
 
     ws = Workspace.open(Path(args.workspace))
-    builder = Builder(ws, progress=_json_event if args.json else _print_event)
+    builder = Builder(ws, progress=_json_event if args.json else _Printer())
     try:
         stats = builder.build([Path(p) for p in args.paths], force=args.force, prune=args.prune,
                               no_cache=args.no_cache)

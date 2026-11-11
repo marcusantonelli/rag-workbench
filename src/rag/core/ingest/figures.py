@@ -105,6 +105,7 @@ def describe_image(img: Image.Image, ctx: ExtractContext, *, context: str | None
             stats["down"] = True      # don't wait out a timeout for every picture
         return None
     stats["done"] += 1
+    ctx.progress("describe", {"done": stats["done"] + stats["failed"]})
     text = re.sub(r"^(this|the) (picture|image|photo|figure) (shows|is|depicts)\s*", "", text, flags=re.I).strip()
     return (text[:1].upper() + text[1:]) if text else None
 

@@ -800,7 +800,12 @@ class Service:
         def work(job: Job) -> Any:
             k.building = True
             self.emit("kb", {"id": k.id, "building": True})
-            counters = {"files_total": 0, "files_done": 0, "chunks": 0, "failed": 0}
+            # what the Build and Documents views show while a build runs
+            counters: dict[str, Any] = {
+                "files_total": 0, "files_done": 0, "chunks": 0, "failed": 0, "added": 0, "unchanged": 0,
+                "bytes_total": 0, "bytes_done": 0, "bytes_skipped": 0, "started": time.time(), "work_started": None,
+            }
+            current: dict[str, Any] = {}
             if self.settings.vision.get("enabled") and self.vision.server.state == "starting":
                 # pictures read before the model is up would be read again by the next build
                 job.report({"current": None}, log={"message": "Waiting for the picture model to load"}, force=True)
@@ -809,26 +814,60 @@ class Service:
                 except RuntimeErrorWithHint:
                     job.report(log={"message": "The picture model didn't start; pictures won't be described this time"})
 
+            def file_state() -> dict[str, Any]:
+                return {"current": current.get("path"), "stage": current.get("stage"),
+                        "stage_done": current.get("stage_done"), "stage_total": current.get("stage_total"),
+                        "page": current.get("page"), "pages": current.get("pages"), "pictures": current.get("pictures"),
+                        "file_chunks": current.get("chunks"), "file_embedded": current.get("embedded"),
+                        "file_bytes": current.get("bytes")}
+
             def progress(e: dict[str, Any]) -> None:
                 ev = e.get("event")
                 if ev == "start":
                     counters["files_total"] = e.get("files", 0)
+                    counters["bytes_total"] = int(e.get("bytes") or 0)
                     job.report({**counters, "current": None}, log={"message": f"{e.get('files', 0)} files to check"},
                                force=True)
                 elif ev in ("file_done", "file_unchanged", "file_failed", "file_removed"):
                     if ev != "file_removed":
                         counters["files_done"] = e.get("index", counters["files_done"])
+                        size = int(e.get("bytes") or 0)
+                        counters["bytes_done"] += size
+                        if ev == "file_unchanged":
+                            counters["bytes_skipped"] += size     # took no time: left out of the estimate
+                            counters["unchanged"] += 1
                     if ev == "file_done":
                         counters["chunks"] += int(e.get("chunks", 0))
+                        counters["added"] += 1
                     if ev == "file_failed":
                         counters["failed"] += 1
-                    job.report(dict(counters), log={"event": ev, "path": e.get("path"), "chunks": e.get("chunks"),
-                                                    "error": e.get("error")})
+                    current.clear()
+                    job.report({**counters, **file_state()},
+                               log={"event": ev, "path": e.get("path"), "chunks": e.get("chunks"), "error": e.get("error"),
+                                    "seconds": e.get("seconds")})
                 elif ev == "file_start":
-                    job.report({"current": e.get("path"), "stage": "extract"})
+                    if counters["work_started"] is None:
+                        counters["work_started"] = time.time()
+                    current.clear()
+                    current.update(path=e.get("path"), stage="extract", bytes=e.get("bytes"))
+                    job.report({**counters, **file_state()})
                 elif ev == "stage":
-                    job.report({"current": e.get("path"), "stage": e.get("stage"),
-                                "stage_done": e.get("done"), "stage_total": e.get("total")})
+                    st = e.get("stage")
+                    current["path"] = e.get("path")
+                    if st == "page":
+                        current.update(stage="page", page=e.get("page"), pages=e.get("pages"))
+                    elif st == "ocr":
+                        current.update(stage="ocr", page=e.get("page"))
+                    elif st == "describe":
+                        current.update(stage="describe", pictures=e.get("done"))
+                    elif st == "chunked":
+                        current.update(stage="chunk", chunks=e.get("chunks"))
+                    elif st == "embed":
+                        current.update(stage="embed", embedded=e.get("done"), chunks=e.get("total"),
+                                       stage_done=e.get("done"), stage_total=e.get("total"))
+                    else:
+                        current.update(stage=st)
+                    job.report(file_state())
                 elif ev == "skipped":
                     job.report(log={"event": "skipped", "message": e.get("reason")})
                 elif ev == "cancelled":

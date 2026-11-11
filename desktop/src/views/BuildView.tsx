@@ -2,6 +2,7 @@ import { FilePlus, FolderPlus, Package, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { call } from "../api";
 import { useApp, useJob } from "../state";
+import { duration, fileFraction, secondsLeft, stageText } from "../buildProgress";
 import type { KbSummary } from "../types";
 import { Button, Notice, Progress, Switch } from "../components/ui";
 import { RuntimeGate } from "./KbView";
@@ -27,14 +28,6 @@ function saveInputs(path: string, inputs: string[]) {
   }
 }
 
-const STAGE: Record<string, string> = {
-  extract: "Reading",
-  ocr: "Running OCR",
-  chunk: "Splitting into chunks",
-  embed: "Embedding",
-  figures: "Saving figures",
-};
-
 export function BuildView({ kb }: { kb: KbSummary }) {
   const { startJob, notify, fail, openKb } = useApp();
   const [inputs, setInputs] = useState<string[]>(() => loadInputs(kb.path));
@@ -44,7 +37,10 @@ export function BuildView({ kb }: { kb: KbSummary }) {
   const [buildId, setBuildId] = useState<string | null>(lastBuild[kb.id] ?? null);
   const [exportId, setExportId] = useState<string | null>(lastExport[kb.id] ?? null);
   const [includeOriginals, setIncludeOriginals] = useState(false);
-  const build = useJob(buildId);
+  const { jobs } = useApp();
+  // follow a build of this knowledge base started anywhere (another tab, before navigating away)
+  const runningId = Object.values(jobs).find((j) => j.kb === kb.id && j.kind === "build" && j.state === "running")?.id;
+  const build = useJob(runningId ?? buildId);
   const exp = useJob(exportId);
 
   const add = (paths: string[]) =>
@@ -90,6 +86,14 @@ export function BuildView({ kb }: { kb: KbSummary }) {
   }, [exp?.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const p = build?.progress ?? {};
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    if (build?.state !== "running") return;
+    const t = window.setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => window.clearInterval(t);
+  }, [build?.state]);
+  const left = secondsLeft(p, now);
+  const fileFrac = fileFraction(p);
   const log = useMemo(() => (build?.log ?? []).filter((e) => e.event !== "file_unchanged").slice(-200).reverse(), [build?.log]);
   const running = build?.state === "running";
   const r = build?.state !== "running" ? build?.result : null;
@@ -146,13 +150,26 @@ export function BuildView({ kb }: { kb: KbSummary }) {
               <Progress value={p.files_done} total={p.files_total} label="Files processed" />
               <p className="build-now">
                 <span>{p.files_total ? `${p.files_done ?? 0} of ${count(p.files_total, "file")}` : "Looking for files"}</span>
-                {p.current && (
-                  <span className="muted">
-                    {STAGE[p.stage] ?? "Working on"} {basename(p.current)}
-                    {p.stage === "embed" && p.stage_total ? ` (${p.stage_done} of ${p.stage_total} chunks)` : ""}
-                  </span>
-                )}
+                <span className="muted">
+                  {p.started ? `${duration(now - p.started)} so far` : ""}
+                  {left != null ? `, about ${duration(left)} left` : ""}
+                  {p.unchanged ? ` · ${p.unchanged} unchanged` : ""}
+                  {p.chunks ? ` · ${count(p.chunks, "chunk")} added` : ""}
+                </span>
               </p>
+              {p.current && (
+                <div className="build-file">
+                  <p>
+                    <strong>{basename(p.current)}</strong>
+                    <span className="muted"> {stageText(p)}</span>
+                    {p.file_chunks != null && p.stage !== "embed" && p.stage !== "chunk" ? <span className="muted"> · {count(p.file_chunks, "chunk")}</span> : null}
+                  </p>
+                  {fileFrac != null && <div className="file-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100}
+                    aria-valuenow={Math.round(fileFrac * 100)} aria-label={`Progress on ${basename(p.current)}`}>
+                    <span style={{ width: `${Math.round(fileFrac * 100)}%` }} />
+                  </div>}
+                </div>
+              )}
               <Button kind="ghost" onClick={() => call("jobs.cancel", { job: build.id })}>Stop after this file</Button>
             </>
           )}
@@ -174,7 +191,7 @@ export function BuildView({ kb }: { kb: KbSummary }) {
                     {e.event === "file_done" ? "Added" : e.event === "file_failed" ? "Failed" : e.event === "file_removed" ? "Removed" : e.event === "skipped" ? "Skipped" : ""}
                   </span>
                   <span className="log-path">{e.path ?? e.message}</span>
-                  <span className="log-extra">{e.event === "file_done" ? count(e.chunks, "chunk") : e.error ?? ""}</span>
+                  <span className="log-extra">{e.event === "file_done" ? count(e.chunks, "chunk") + (e.seconds != null ? ` in ${duration(e.seconds)}` : "") : e.error ?? ""}</span>
                 </li>
               ))}
             </ol>
