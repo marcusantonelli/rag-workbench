@@ -359,24 +359,24 @@ def cmd_search(args) -> int:
     return 0
 
 
-def cmd_spot(args) -> int:
-    """Build (or rebuild) a workspace's spot file: its procedures, steps and references."""
-    from rag.core import spot
+def cmd_spots(args) -> int:
+    """Build (or rebuild) a workspace's spots file: its procedures, steps and references."""
+    from rag.core import spots
     from rag.core.workspace import Workspace
 
     ws = Workspace.open(Path(args.workspace))
     if args.check:
-        st = spot.status(ws.root)
+        st = spots.status(ws.root)
         print(json.dumps(st, indent=2) if args.json else
-              ("no spot file" if not st["present"] else
-               f"{spot.SPOT_NAME}: {'current' if st['current'] else 'out of date (run rag spot)'}; "
+              ("no spots file" if not st["present"] else
+               f"{spots.SPOTS_NAME}: {'current' if st['current'] else 'out of date (run rag spots)'}; "
                f"{st.get('procedures', 0)} procedures, {st.get('steps', 0)} steps, {st.get('links', 0)} references"))
         return 0 if st.get("current") else 1
-    counts = spot.build(ws.rag_db)
+    counts = spots.build(ws.rag_db)
     if args.json:
         print(json.dumps(counts))
     else:
-        print(f"{spot.SPOT_NAME}: {_n(counts['procedures'], 'procedure')}, {_n(counts['steps'], 'step')}, "
+        print(f"{spots.SPOTS_NAME}: {_n(counts['procedures'], 'procedure')}, {_n(counts['steps'], 'step')}, "
               f"{_n(counts['links'], 'reference')} in {_n(counts['documents'], 'document')}")
     return 0
 
@@ -567,19 +567,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("-k", type=int)
     s.add_argument("--type", help="only this file type, e.g. pdf")
     s.add_argument("--doc", action="append", metavar="DOC",
-                   help="only this document: its number (e.g. D02, from the spot file) or part of its path; repeatable")
+                   help="only this document: its number (e.g. D02, from the spots file) or part of its path; repeatable")
     s.add_argument("--json", action="store_true")
     s.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=None,
                    help="reorder the best candidates with the reranker model (default: the workspace's [rerank] setting)")
     s.add_argument("--rerank-url", help="the reranker's address, e.g. http://127.0.0.1:8082 (implies nothing; use with --rerank)")
     s.set_defaults(fn=cmd_search)
 
-    s = sub.add_parser("spot", help="build the spot file (procedures, steps, references) from the stored chunks; "
+    s = sub.add_parser("spots", help="build the spots file (procedures, steps, references) from the stored chunks; "
                                     "nothing is read or embedded again")
     s.add_argument("workspace")
     s.add_argument("--check", action="store_true", help="only say whether it is there and current")
     s.add_argument("--json", action="store_true")
-    s.set_defaults(fn=cmd_spot)
+    s.set_defaults(fn=cmd_spots)
 
     s = sub.add_parser("tables", help="list tables")
     s.add_argument("workspace")

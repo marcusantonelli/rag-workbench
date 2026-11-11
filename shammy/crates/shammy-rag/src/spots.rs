@@ -1,18 +1,19 @@
-//! Reading a knowledge base's spot file (`structure.spot`): which chunks form a procedure and its
+//! Reading a knowledge base's spots file (`structure.spots`): which chunks form a procedure and its
 //! steps, the references between them, and each document's number and revision. The Workbench
-//! writes it (`rag spot`, and after every build); here it is only read.
+//! writes it (`rag spots`, and after every build); here it is only read.
 //!
-//! A spot file is used only while it matches its rag.db (the chunk fingerprint); a missing, stale
-//! or unreadable one is ignored, and search then behaves exactly as without spot files.
+//! A spots file is used only while it matches its rag.db (the chunk fingerprint); a missing, stale
+//! or unreadable one is ignored, and search then behaves exactly as without spots files.
 
 use std::path::Path;
 use std::sync::Mutex;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-pub(crate) const SPOT_NAME: &str = "structure.spot";
-const FORMAT: &str = "spot/1";
+pub(crate) const SPOTS_NAME: &str = "structure.spots";
+const FORMAT: &str = "spots/1";
 
+#[derive(Clone)]
 pub(crate) struct Procedure {
     pub kind: String,
     pub label: Option<String>,
@@ -21,8 +22,17 @@ pub(crate) struct Procedure {
     pub tokens: i64,
 }
 
+#[derive(Clone)]
 pub(crate) struct Step {
     pub step: i64,
+    pub label: Option<String>,
+    pub title: Option<String>,
+    pub tokens: i64,
+}
+
+#[derive(Clone)]
+pub(crate) struct Substep {
+    pub sub: i64,
     pub label: Option<String>,
     pub title: Option<String>,
     pub tokens: i64,
@@ -36,7 +46,7 @@ pub(crate) struct Link {
     pub doc_id: Option<i64>,
 }
 
-pub(crate) struct Spot {
+pub(crate) struct Spots {
     conn: Mutex<Connection>,
 }
 
@@ -52,30 +62,39 @@ pub(crate) fn norm_number(s: &str) -> String {
     s.chars().filter(|c| !c.is_whitespace() && *c != '-' && *c != '_').collect::<String>().to_uppercase()
 }
 
-impl Spot {
-    /// The spot file beside rag.db, when there is one and it matches.
-    pub(crate) fn open(dir: &Path, rag: &Connection) -> Option<Spot> {
-        let path = dir.join(SPOT_NAME);
+impl Spots {
+    /// The spots file beside rag.db, when there is one and it matches.
+    pub(crate) fn open(dir: &Path, rag: &Connection) -> Option<Spots> {
+        let path = dir.join(SPOTS_NAME);
         if !path.is_file() {
             return None;
         }
         let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
         let meta = |key: &str| -> Option<String> {
-            conn.query_row("SELECT value FROM spot_meta WHERE key = ?", [key], |r| r.get::<_, Option<String>>(0)).ok().flatten()
+            conn.query_row("SELECT value FROM spots_meta WHERE key = ?", [key], |r| r.get::<_, Option<String>>(0)).ok().flatten()
         };
         if meta("format").as_deref() != Some(FORMAT) || meta("chunks") != fingerprint(rag).ok() {
             return None;
         }
-        Some(Spot { conn: Mutex::new(conn) })
+        Some(Spots { conn: Mutex::new(conn) })
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub(crate) fn member(&self, chunk_id: i64) -> rusqlite::Result<Option<(i64, i64)>> {
-        self.conn().query_row("SELECT proc_id, step FROM members WHERE chunk_id = ?", [chunk_id], |r| Ok((r.get(0)?, r.get(1)?)))
+    /// (proc_id, step, sub) of a chunk inside a procedure.
+    pub(crate) fn member(&self, chunk_id: i64) -> rusqlite::Result<Option<(i64, i64, i64)>> {
+        self.conn().query_row("SELECT proc_id, step, sub FROM members WHERE chunk_id = ?", [chunk_id],
+                              |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .optional()
+    }
+
+    pub(crate) fn substeps(&self, proc_id: i64, step: i64) -> rusqlite::Result<Vec<Substep>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare_cached("SELECT sub, label, title, tokens FROM substeps WHERE proc_id = ? AND step = ? ORDER BY sub")?;
+        let rows = stmt.query_map([proc_id, step], |r| Ok(Substep { sub: r.get(0)?, label: r.get(1)?, title: r.get(2)?, tokens: r.get(3)? }))?;
+        rows.collect()
     }
 
     pub(crate) fn procedure(&self, proc_id: i64) -> rusqlite::Result<Option<Procedure>> {
@@ -91,12 +110,12 @@ impl Spot {
         rows.collect()
     }
 
-    /// (chunk_id, step) of steps lo..=hi, in reading order.
-    pub(crate) fn members(&self, proc_id: i64, lo: i64, hi: i64) -> rusqlite::Result<Vec<(i64, i64)>> {
+    /// (chunk_id, step, sub) of steps lo..=hi, in reading order.
+    pub(crate) fn members(&self, proc_id: i64, lo: i64, hi: i64) -> rusqlite::Result<Vec<(i64, i64, i64)>> {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
-            "SELECT chunk_id, step FROM members WHERE proc_id = ?1 AND step BETWEEN ?2 AND ?3 ORDER BY step, ordinal")?;
-        let rows = stmt.query_map(rusqlite::params![proc_id, lo, hi], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            "SELECT chunk_id, step, sub FROM members WHERE proc_id = ?1 AND step BETWEEN ?2 AND ?3 ORDER BY step, ordinal")?;
+        let rows = stmt.query_map(rusqlite::params![proc_id, lo, hi], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         rows.collect()
     }
 

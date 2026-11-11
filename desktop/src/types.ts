@@ -102,7 +102,7 @@ export interface KbSummary {
   config_fingerprint: string | null;
   /** 1 = file and headings in each embedded chunk; 2 = also the document's title, number and revision. */
   embed_context?: number | null;
-  /** The spot file (structure.spot): procedures, steps and references found in the chunks. */
+  /** The spots file (structure.spots): procedures, steps and references found in the chunks. */
   structure?: { present: boolean; current: boolean; built_at?: string; documents?: number; procedures?: number; steps?: number; links?: number; error?: string };
 }
 
@@ -179,11 +179,11 @@ export interface SearchHit {
     lines: string | null;
     heading_path: string | null;
     symbol?: string | null;
-    /** From the spot file: the document's number and revision. */
+    /** From the spots file: the document's number and revision. */
     document?: string | null;
     revision?: string | null;
   };
-  /** The hit's procedure, when the knowledge base has a current spot file and the hit is in one. */
+  /** The hit's procedure, when the knowledge base has a current spots file and the hit is in one. */
   procedure?: {
     id: number;
     kind: "numbered" | "list" | "flowchart";
@@ -193,7 +193,12 @@ export interface SearchHit {
     from: string | null;
     to: string | null;
     whole: boolean;
+    /** What came back: all of it, steps from-to, sub-steps from-to inside `step`, or part of `step`. */
+    level: "procedure" | "steps" | "substeps" | "chunks";
+    step?: string | null;
   };
+  /** The first result from a long procedure: its steps around this passage. */
+  outline?: { steps: { label: string | null; title: string; shown: boolean }[]; before: boolean; after: boolean };
   /** References in the result's text: other steps ("see Section 8.4") and other documents. */
   related?: { kind: "section" | "document"; ref: string; title?: string | null; file?: string | null }[];
 }

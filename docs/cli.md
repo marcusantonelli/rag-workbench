@@ -105,24 +105,33 @@ rag search plant-kb "inner door won't open" --doc D02
 rag search plant-kb "fixture for TO-39" --doc WI-2210 --doc MF164
 ```
 
-### Procedures and the spot file
+### Procedures and the spots file
 
-Every build also writes `structure.spot` next to `rag.db`: which chunks make up each procedure
-and its steps, the warnings in each step, references ("see Section 8.4", "see MF164"), and each
-document's number and revision. With it, a search that hits one step of a procedure returns the
-procedure: all of it when it is short (`[search] procedure_tokens`, 1500 by default), otherwise
-the step and the steps around it (`procedure_window`). The source line names the document and the
-steps, and references are listed under the passage.
+Every build also writes `structure.spots` next to `rag.db`: which chunks make up each procedure
+and its steps (and the sub-steps of long steps), the warnings in each step, references ("see
+Section 8.4", "see MF164"), and each document's number and revision. With it, a search that hits
+one step of a procedure returns more of the procedure, as much as fits in `[search]
+procedure_tokens` (1500 by default):
 
-A knowledge base built before 0.4.1 has no spot file. Make one from its stored chunks; nothing is
+- a short procedure comes back whole;
+- in a longer one, the step that matched and the steps around it (`procedure_window`);
+- in a step too long for that, the sub-steps around the match, or the chunks around it.
+
+The source line names the document and what was included ("steps 7.32-7.34 of 40", "step 7.20 of
+40, sub-steps 7.20.6-7.20.8"). The first result from a long procedure also lists the steps around
+it, with the included ones in bold, and references are listed under the passage. At most
+`procedure_hits` (3) results come from one procedure while other documents still have results to
+give; hits in the step just next to one already returned widen that result instead.
+
+A knowledge base built before 0.4.1 has no spots file. Make one from its stored chunks; nothing is
 read or embedded again, and it takes seconds:
 
 ```
-rag spot plant-kb
-rag spot plant-kb --check
+rag spots plant-kb
+rag spots plant-kb --check
 ```
 
-Packs exported from 0.4.1 carry the spot file; the retrieval server uses it when it's there and
+Packs exported from 0.4.1 carry the spots file; the retrieval server uses it when it's there and
 searches exactly as before when it isn't. It counts as a procedure only when the numbered steps,
 numbered list or flowchart read as instructions, so manuals and web pages stay plain sections.
 
@@ -174,7 +183,7 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 | `rag merge DEST SRC... [--on-conflict newer\|keep\|replace] [--keep-copies] [--dry-run]` | Copy compatible packs or workspaces into DEST (created if missing). No re-embedding. |
 | `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |
 | `rag compact WS` | Rewrite `vectors.shammy` without deleted rows. Builds do this on their own when a quarter of the rows are deleted. |
-| `rag spot WS [--check] [--json]` | Build the spot file (procedures, steps, references) from the stored chunks; `--check` only says whether it's there and current. Builds, merges and exports do this on their own. |
+| `rag spots WS [--check] [--json]` | Build the spots file (procedures, steps, references) from the stored chunks; `--check` only says whether it's there and current. Builds, merges and exports do this on their own. |
 | `rag search WS\|PACK "question" [-k N] [--type pdf] [--doc D02] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--doc` (repeatable) keeps only those documents, by number or part of the path. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8082`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |

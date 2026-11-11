@@ -24,7 +24,7 @@ from typing import Any, Callable
 import numpy as np
 
 from rag import __version__
-from rag.core import spot
+from rag.core import spots
 from rag.core.db.merge import refresh_spot
 from rag.core.chunk.chunker import ChunkSettings, Chunker, card_chunk, row_chunks
 from rag.core.chunk.tokens import TokenCounter
@@ -175,7 +175,7 @@ class Builder:
         finally:
             store.close()
             tables.close()
-        if stats.added or stats.updated or stats.removed or not spot.status(self.ws.root)["current"]:
+        if stats.added or stats.updated or stats.removed or not spots.status(self.ws.root)["current"]:
             refresh_spot(self.ws.root, lambda e: self.emit(e.pop("event"), **e))
         stats.seconds = round(time.monotonic() - started, 2)
         self.emit("done", **{k: v for k, v in stats.__dict__.items() if k != "errors"},

@@ -58,15 +58,15 @@ class SourcePlan:
 
 
 def refresh_spot(root: Path, emit: ProgressFn | None = None) -> None:
-    """Rebuild a knowledge base's spot file after its chunks changed. Best effort: without a
-    current spot file search simply works as it did before there were spot files."""
-    from rag.core import spot
+    """Rebuild a knowledge base's spots file after its chunks changed. Best effort: without a
+    current spots file search simply works as it did before there were spots files."""
+    from rag.core import spots
 
     try:
-        spot.build(Path(root) / "rag.db")
+        spots.build(Path(root) / "rag.db")
     except Exception as exc:  # noqa: BLE001 - structure is an extra; never fail the build or merge over it
         if emit:
-            emit({"event": "warning", "message": f"{spot.SPOT_NAME} wasn't rebuilt: {exc}"})
+            emit({"event": "warning", "message": f"{spots.SPOTS_NAME} wasn't rebuilt: {exc}"})
 
 
 def _embedding(meta: dict[str, str]) -> dict[str, str]:

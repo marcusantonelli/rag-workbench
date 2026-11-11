@@ -25,9 +25,12 @@ marker and `.ragpack` extension (read the old names forever), docs, and the GitH
   including odd/even and per-section variants; remove them from scanned pages too.
 - Word text boxes (DrawingML and VML), without reading AlternateContent twice.
 - Forms on scanned pages: label/value pairs and checkbox states from OCR.
-- Procedure retrieval (0.4.1): done (spot file, procedure expansion, document filter, embedding
+- Procedure retrieval (0.4.1): done (spots file, procedure expansion, document filter, embedding
   context 2 for new knowledge bases). Still open: grouping by revision ("latest revision only")
   and the experiments below.
+- Reading on through a long procedure (decision pending): an engine/C#/MCP call that returns a
+  procedure's steps by id and range, offered to the agent only when a result says there is more
+  (the result names the call and the next range).
 - Auto-update (0.4.1):
   - Tauri updater plugin; `latest.json` and signed installers on the GitHub releases
     (`releases/latest/download/latest.json`). The repo is public.
@@ -69,7 +72,7 @@ marker and `.ragpack` extension (read the old names forever), docs, and the GitH
 
 Measure first, with a question set from real documents (suggestion #3), on two knowledge bases
 side by side: one built with context 1, one with context 2.
-- Step graphs in the spot file: prerequisites, required tools and specs per step, branch targets
+- Step graphs in the spots file: prerequisites, required tools and specs per step, branch targets
   from flowcharts, so "what do I need before step 7" is a walk instead of a search.
 - Two-level search: one vector per procedure (the mean of its step vectors, or an embedded
   summary) to pick the procedure first, then the step.

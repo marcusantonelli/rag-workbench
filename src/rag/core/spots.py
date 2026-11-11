@@ -1,4 +1,4 @@
-"""The spot file: a knowledge base's structure, beside its rag.db (``structure.spot``).
+"""The spots file: a knowledge base's structure, beside its rag.db (``structure.spots``).
 
 It records which chunks make up a procedure and its steps, the warnings and notes in each step,
 the references between steps and documents ("see Section 8.4", "see MF164"), and each document's
@@ -10,7 +10,7 @@ knowledge base built by any earlier version, thrown away and rebuilt at any time
 base without one searches exactly as before. It is a plain SQLite file, so the retrieval server
 reads it too.
 
-A spot file is only used while it matches its rag.db (the ``chunks`` fingerprint): after any
+A spots file is only used while it matches its rag.db (the ``chunks`` fingerprint): after any
 build it is stale until rebuilt, and a stale one is ignored rather than trusted.
 
 Detection is conservative. A group of numbered headings counts as a procedure only when its title
@@ -33,11 +33,11 @@ from typing import Any
 from rag.core.structure import (_FILE_NUMBER, CAUTION, DOC_REF, LIST_STEP, NOTE, SECTION_REF, heading_number, identity,
                                 imperative_share, is_prefix, label, procedural_title)
 
-SPOT_NAME = "structure.spot"
-FORMAT = "spot/1"
+SPOTS_NAME = "structure.spots"
+FORMAT = "spots/1"
 
 SCHEMA = """
-CREATE TABLE spot_meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE spots_meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE documents (doc_id INTEGER PRIMARY KEY, title TEXT, number TEXT, revision TEXT);
 -- kind: numbered (numbered headings), list (a numbered list in one section), flowchart
 CREATE TABLE procedures (proc_id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL, kind TEXT NOT NULL,
@@ -45,9 +45,13 @@ CREATE TABLE procedures (proc_id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL, k
 -- step 0 is the procedure's own text before its first step
 CREATE TABLE steps (proc_id INTEGER NOT NULL, step INTEGER NOT NULL, label TEXT, title TEXT,
                     tokens INTEGER NOT NULL, PRIMARY KEY (proc_id, step));
--- role: text | caution | note | figure | table
+-- a step with two or more numbered sub-steps (7.20.1, 7.20.2 …); sub 0 is the step's own text
+-- before its first sub-step. Steps without sub-steps have no rows here.
+CREATE TABLE substeps (proc_id INTEGER NOT NULL, step INTEGER NOT NULL, sub INTEGER NOT NULL, label TEXT,
+                       title TEXT, tokens INTEGER NOT NULL, PRIMARY KEY (proc_id, step, sub));
+-- role: text | caution | note | figure | table; sub is 0 outside sub-steps
 CREATE TABLE members (chunk_id INTEGER PRIMARY KEY, proc_id INTEGER NOT NULL, step INTEGER NOT NULL,
-                      ordinal INTEGER NOT NULL, role TEXT NOT NULL);
+                      sub INTEGER NOT NULL, ordinal INTEGER NOT NULL, role TEXT NOT NULL);
 CREATE INDEX members_step ON members (proc_id, step, ordinal);
 -- kind: section (a step or procedure in the same document) | document (another document)
 CREATE TABLE links (chunk_id INTEGER NOT NULL, kind TEXT NOT NULL, ref TEXT NOT NULL, proc_id INTEGER,
@@ -56,13 +60,13 @@ CREATE INDEX links_chunk ON links (chunk_id);
 """
 
 
-def spot_path(root: Path) -> Path:
-    """Where a knowledge base's spot file lives (root is the folder holding rag.db)."""
-    return Path(root) / SPOT_NAME
+def spots_path(root: Path) -> Path:
+    """Where a knowledge base's spots file lives (root is the folder holding rag.db)."""
+    return Path(root) / SPOTS_NAME
 
 
 def fingerprint(conn: sqlite3.Connection) -> str:
-    """Which chunks a rag.db holds, cheaply: a spot file is only valid for exactly these."""
+    """Which chunks a rag.db holds, cheaply: a spots file is only valid for exactly these."""
     n, hi, total = conn.execute(
         "SELECT COUNT(*), COALESCE(MAX(chunk_id), 0), COALESCE(SUM(chunk_id), 0) FROM chunks").fetchone()
     return f"{n}:{hi}:{total}"
@@ -131,8 +135,11 @@ def _numbered(doc_id: int, chunks: list[_Chunk]) -> tuple[list[_Proc], set[int]]
         if proc is None:
             proc = groups[parent] = _Proc(doc_id, "numbered", label(parent), titles.get(parent), parent)
         key = parent if deepest == parent else deepest[:len(parent) + 1]
-        step = proc.steps.setdefault(key, {"label": label(key), "title": titles.get(key), "chunks": []})
+        step = proc.steps.setdefault(key, {"label": label(key), "title": titles.get(key), "chunks": [], "subs": {}})
         step["chunks"].append(c)
+        if len(deepest) > len(key):
+            sub = deepest[:len(key) + 1]
+            step["subs"][c.chunk_id] = (sub, label(sub), titles.get(sub))
         assigned.add(c.chunk_id)
 
     out: list[_Proc] = []
@@ -186,9 +193,9 @@ def _norm_number(s: str) -> str:
 
 
 def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
-    """Build (or rebuild) the spot file for the rag.db at ``rag_db``. Returns counts."""
+    """Build (or rebuild) the spots file for the rag.db at ``rag_db``. Returns counts."""
     rag_db = Path(rag_db)
-    out = Path(out) if out else spot_path(rag_db.parent)
+    out = Path(out) if out else spots_path(rag_db.parent)
     src = sqlite3.connect(f"file:{rag_db.as_posix()}?mode=ro", uri=True)
     src.row_factory = sqlite3.Row
     try:
@@ -255,8 +262,26 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                     counts["steps"] += 1
                     if isinstance(key, tuple):
                         where[key] = (proc_id, number)
+                    # sub-steps, when the step has two or more of them
+                    subs_of = step.get("subs") or {}
+                    keys = sorted({v[0] for v in subs_of.values()})
+                    sub_no: dict[tuple[int, ...], int] = {}
+                    if len(keys) >= 2:
+                        info = {v[0]: v for v in subs_of.values()}
+                        sub_no = {k: i for i, k in enumerate(keys, start=1)}
+                        own = [c for c in step["chunks"] if c.chunk_id not in subs_of]
+                        if own:
+                            db.execute("INSERT INTO substeps VALUES (?, ?, 0, ?, ?, ?)",
+                                       (proc_id, number, step["label"], step["title"], sum(c.tokens for c in own)))
+                        for k in keys:
+                            db.execute("INSERT INTO substeps VALUES (?, ?, ?, ?, ?, ?)",
+                                       (proc_id, number, sub_no[k], info[k][1], info[k][2],
+                                        sum(c.tokens for c in step["chunks"] if subs_of.get(c.chunk_id, (None,))[0] == k)))
+                            where.setdefault(k, (proc_id, number))
                     for c in sorted(step["chunks"], key=lambda c: c.ordinal):
-                        db.execute("INSERT INTO members VALUES (?, ?, ?, ?, ?)", (c.chunk_id, proc_id, number, c.ordinal, _role(c)))
+                        sub = sub_no.get(subs_of[c.chunk_id][0], 0) if c.chunk_id in subs_of and sub_no else 0
+                        db.execute("INSERT INTO members VALUES (?, ?, ?, ?, ?, ?)",
+                                   (c.chunk_id, proc_id, number, sub, c.ordinal, _role(c)))
                         member_of[c.chunk_id] = (proc_id, number)
                         counts["members"] += 1
                 if proc.key is not None:
@@ -287,7 +312,7 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
 
         for k, v in {"format": FORMAT, "chunks": fp, "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                      **{f"count_{k}": str(v) for k, v in counts.items()}}.items():
-            db.execute("INSERT INTO spot_meta VALUES (?, ?)", (k, v))
+            db.execute("INSERT INTO spots_meta VALUES (?, ?)", (k, v))
         db.commit()
     finally:
         db.close()
@@ -310,16 +335,16 @@ def _replace(tmp: Path, out: Path) -> None:
 
 
 def status(root: Path) -> dict[str, Any]:
-    """Whether a knowledge base has a spot file and whether it matches its rag.db."""
-    path = spot_path(root)
+    """Whether a knowledge base has a spots file and whether it matches its rag.db."""
+    path = spots_path(root)
     if not path.is_file():
         return {"present": False, "current": False}
     try:
-        spot = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        spots = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
         try:
-            meta = dict(spot.execute("SELECT key, value FROM spot_meta").fetchall())
+            meta = dict(spots.execute("SELECT key, value FROM spots_meta").fetchall())
         finally:
-            spot.close()
+            spots.close()
         rag = sqlite3.connect(f"file:{(Path(root) / 'rag.db').as_posix()}?mode=ro", uri=True)
         try:
             fp = fingerprint(rag)
@@ -341,21 +366,21 @@ def norm_number(s: str) -> str:
     return re.sub(r"[\s_-]", "", s).upper()
 
 
-class SpotIndex:
-    """A current spot file opened for searching (the reference search's twin of the shared
+class SpotsIndex:
+    """A current spots file opened for searching (the reference search's twin of the shared
     engine's reader)."""
 
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
     @classmethod
-    def open(cls, root: Path, rag_conn: sqlite3.Connection) -> "SpotIndex | None":
-        path = spot_path(root)
+    def open(cls, root: Path, rag_conn: sqlite3.Connection) -> "SpotsIndex | None":
+        path = spots_path(root)
         if not path.is_file():
             return None
         try:
             conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, check_same_thread=False)
-            meta = dict(conn.execute("SELECT key, value FROM spot_meta").fetchall())
+            meta = dict(conn.execute("SELECT key, value FROM spots_meta").fetchall())
         except sqlite3.Error:
             return None
         if meta.get("format") != FORMAT or meta.get("chunks") != fingerprint(rag_conn):
@@ -366,9 +391,10 @@ class SpotIndex:
     def close(self) -> None:
         self.conn.close()
 
-    def member(self, chunk_id: int) -> tuple[int, int] | None:
-        row = self.conn.execute("SELECT proc_id, step FROM members WHERE chunk_id = ?", (chunk_id,)).fetchone()
-        return (row[0], row[1]) if row else None
+    def member(self, chunk_id: int) -> tuple[int, int, int] | None:
+        """(proc_id, step, sub) of a chunk inside a procedure."""
+        row = self.conn.execute("SELECT proc_id, step, sub FROM members WHERE chunk_id = ?", (chunk_id,)).fetchone()
+        return (row[0], row[1], row[2]) if row else None
 
     def procedure(self, proc_id: int) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT doc_id, kind, label, title, steps, tokens FROM procedures WHERE proc_id = ?",
@@ -381,10 +407,14 @@ class SpotIndex:
         return [{"step": r[0], "label": r[1], "title": r[2], "tokens": r[3]} for r in self.conn.execute(
             "SELECT step, label, title, tokens FROM steps WHERE proc_id = ? ORDER BY step", (proc_id,))]
 
-    def members(self, proc_id: int, lo: int, hi: int) -> list[tuple[int, int]]:
-        """(chunk_id, step) of steps lo..hi, in reading order."""
-        return [(r[0], r[1]) for r in self.conn.execute(
-            "SELECT chunk_id, step FROM members WHERE proc_id = ? AND step BETWEEN ? AND ? ORDER BY step, ordinal",
+    def substeps(self, proc_id: int, step: int) -> list[dict[str, Any]]:
+        return [{"sub": r[0], "label": r[1], "title": r[2], "tokens": r[3]} for r in self.conn.execute(
+            "SELECT sub, label, title, tokens FROM substeps WHERE proc_id = ? AND step = ? ORDER BY sub", (proc_id, step))]
+
+    def members(self, proc_id: int, lo: int, hi: int) -> list[tuple[int, int, int]]:
+        """(chunk_id, step, sub) of steps lo..hi, in reading order."""
+        return [(r[0], r[1], r[2]) for r in self.conn.execute(
+            "SELECT chunk_id, step, sub FROM members WHERE proc_id = ? AND step BETWEEN ? AND ? ORDER BY step, ordinal",
             (proc_id, lo, hi))]
 
     def links(self, chunk_id: int) -> list[dict[str, Any]]:

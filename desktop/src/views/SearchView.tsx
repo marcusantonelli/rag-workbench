@@ -45,9 +45,12 @@ function remember(key: string, value: string) {
 function procedureNote(p: NonNullable<SearchHit["procedure"]>): string {
   const name = p.title || p.label || (p.kind === "flowchart" ? "the flowchart" : "the procedure");
   const what = p.kind === "flowchart" ? "flowchart" : "procedure";
+  const of = `of the ${what} ${name} (${p.steps} ${p.kind === "flowchart" ? "page" : "step"}${p.steps === 1 ? "" : "s"})`;
   if (p.whole) return `The whole ${what} ${name} is included: ${p.steps} ${p.kind === "flowchart" ? "page" : "step"}${p.steps === 1 ? "" : "s"}`;
-  if (p.from === p.to) return `Step ${p.from} of the ${what} ${name} (${p.steps} steps)`;
-  return `Steps ${p.from} to ${p.to} of the ${what} ${name} (${p.steps} steps)`;
+  if (p.level === "substeps") return `Step ${p.step} is long, so ${p.from === p.to ? `its sub-step ${p.from}` : `its sub-steps ${p.from} to ${p.to}`} ${of}`;
+  if (p.level === "chunks") return `Part of step ${p.step}${p.from && p.from !== p.step ? ` (sub-step ${p.from})` : ""}, which is too long to include whole, ${of}`;
+  if (p.from === p.to) return `Step ${p.from} ${of}`;
+  return `Steps ${p.from} to ${p.to} ${of}`;
 }
 
 export function SearchView({ kb }: { kb: KbSummary }) {
@@ -274,6 +277,18 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                     {procedureNote(hit.procedure)} ({hit.chunk_ids?.length ?? 1} chunk{(hit.chunk_ids?.length ?? 1) === 1 ? "" : "s"},
                     matched in chunk {hit.chunk_id}).
                   </p>
+                )}
+                {hit.outline && (
+                  <details className="evidence-outline">
+                    <summary>Where this sits in the procedure</summary>
+                    <ol>
+                      {hit.outline.before && <li className="muted">…</li>}
+                      {hit.outline.steps.map((x, i) => (
+                        <li key={i} className={x.shown ? "shown" : undefined}>{x.title}</li>
+                      ))}
+                      {hit.outline.after && <li className="muted">…</li>}
+                    </ol>
+                  </details>
                 )}
                 {hit.related && hit.related.length > 0 && (
                   <p className="evidence-note">

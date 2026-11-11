@@ -11,7 +11,7 @@
 
 mod query;
 mod rerank;
-mod spot;
+mod spots;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -64,6 +64,7 @@ fn d_rrf() -> f64 { 60.0 }
 fn d_neighbors() -> i64 { 1 }
 fn d_budget() -> i64 { 6000 }
 fn d_proc_tokens() -> i64 { 1500 }
+fn d_proc_hits() -> usize { 3 }
 
 /// One search. Only `query` is required; the defaults are the Workbench's.
 #[derive(Clone, Debug, Deserialize)]
@@ -97,7 +98,7 @@ pub struct Request {
     /// Also return the compact Markdown form an agent reads.
     #[serde(default)]
     pub markdown: bool,
-    /// With a current spot file: answer a hit inside a procedure with its procedure (whole when it
+    /// With a current spots file: answer a hit inside a procedure with its procedure (whole when it
     /// is at most `procedure_tokens` long, else the hit's step and up to `procedure_window` steps
     /// on each side that still fit).
     #[serde(default = "d_true")]
@@ -106,7 +107,11 @@ pub struct Request {
     pub procedure_tokens: i64,
     #[serde(default = "d_neighbors")]
     pub procedure_window: i64,
-    /// Only these documents: a document number ("D02", needs the spot file) or part of the path.
+    /// At most this many results from one procedure while other results are left; more only fill
+    /// places nothing else took.
+    #[serde(default = "d_proc_hits")]
+    pub procedure_hits: usize,
+    /// Only these documents: a document number ("D02", needs the spots file) or part of the path.
     #[serde(default)]
     pub documents: Vec<String>,
 }
@@ -120,7 +125,7 @@ pub struct Info {
     pub query_instruction: Option<String>,
     pub chunks: i64,
     pub vectors: i64,
-    /// Procedures in its spot file; None when it has no current spot file.
+    /// Procedures in its spots file; None when it has no current spots file.
     pub procedures: Option<i64>,
 }
 
@@ -132,7 +137,7 @@ enum Vectors {
 /// A knowledge base opened for searching. Safe to share between threads.
 pub struct Retriever {
     conn: Mutex<Connection>,
-    spot: Option<spot::Spot>,
+    spots: Option<spots::Spots>,
     vectors: Vectors,
     dir: PathBuf,
     dims: usize,
@@ -184,6 +189,61 @@ fn register_sqlite_vec() {
     });
 }
 
+/// A hit inside a procedure: what to return for it (see `Retriever::plan`).
+#[derive(Clone)]
+struct Plan {
+    pid: i64,
+    proc_: spots::Procedure,
+    steps: Vec<spots::Step>,
+    idx: usize,
+    /// "procedure" (whole), "steps", "substeps" or "chunks"; lo..=hi index steps, or subs for "substeps"
+    level: &'static str,
+    lo: usize,
+    hi: usize,
+    subs: Vec<spots::Substep>,
+    chunks: Vec<i64>,
+    at: Option<String>,
+}
+
+struct Rendered {
+    span: Vec<i64>,
+    text: String,
+    info: Value,
+    outline: Option<Value>,
+    window: (i64, i64, i64),
+    tokens: i64,
+}
+
+struct ProcResult {
+    index: usize,
+    plan: Plan,
+    span: Vec<i64>,
+    tokens: i64,
+}
+
+/// From item i, add up to `window` items on each side (after first, then before) while the total
+/// stays within cap.
+fn grow(tokens: &[i64], i: usize, cap: i64, window: i64) -> (usize, usize) {
+    let (mut lo, mut hi, mut total) = (i, i, tokens[i]);
+    for _ in 0..window.max(0) {
+        let mut grew = false;
+        if hi + 1 < tokens.len() && total + tokens[hi + 1] <= cap {
+            hi += 1;
+            total += tokens[hi];
+            grew = true;
+        }
+        if lo >= 1 && total + tokens[lo - 1] <= cap {
+            lo -= 1;
+            total += tokens[lo];
+            grew = true;
+        }
+        if !grew {
+            break;
+        }
+    }
+    (lo, hi)
+}
+
 fn round5(x: f64) -> f64 {
     (x * 1e5).round() / 1e5
 }
@@ -227,8 +287,8 @@ impl Retriever {
         } else {
             return Err(Error::Store(format!("unknown vector store {backend:?}; this version reads sqlite-vec and shammy")));
         };
-        let spot = spot::Spot::open(&dir, &conn);
-        Ok(Self { conn: Mutex::new(conn), spot, vectors, dir, dims })
+        let spots = spots::Spots::open(&dir, &conn);
+        Ok(Self { conn: Mutex::new(conn), spots, vectors, dir, dims })
     }
 
     pub fn info(&self) -> Result<Info> {
@@ -243,7 +303,7 @@ impl Retriever {
         };
         Ok(Info { path: self.dir.display().to_string(), vector_store: store.into(), dims: self.dims,
                   model: meta("embed_model"), query_instruction: meta("query_instruction"), chunks, vectors,
-                  procedures: self.spot.as_ref().map(|s| s.count("procedures")) })
+                  procedures: self.spots.as_ref().map(|s| s.count("procedures")) })
     }
 
     fn vector_ids(&self, conn: &Connection, vector: &[f32], k: usize, file_type: Option<&str>, threads: usize) -> Result<Vec<i64>> {
@@ -345,10 +405,10 @@ impl Retriever {
                 keep.insert(id);
             }
         }
-        if let Some(spot) = &self.spot {
-            let wanted: HashSet<String> = terms.iter().map(|t| spot::norm_number(t)).collect();
-            for (id, number) in spot.numbers()? {
-                if wanted.contains(&spot::norm_number(&number)) {
+        if let Some(spots) = &self.spots {
+            let wanted: HashSet<String> = terms.iter().map(|t| spots::norm_number(t)).collect();
+            for (id, number) in spots.numbers()? {
+                if wanted.contains(&spots::norm_number(&number)) {
                     keep.insert(id);
                 }
             }
@@ -356,79 +416,198 @@ impl Retriever {
         Ok(Some(keep))
     }
 
-    /// The hit's procedure: whole when it fits `procedure_tokens`, else the hit's step with up to
-    /// `procedure_window` steps on each side that fit. None when the hit isn't in a procedure or its
-    /// step alone is too long (it is then expanded the usual way).
-    #[allow(clippy::type_complexity)]
-    fn procedure(&self, conn: &Connection, spot: &spot::Spot, req: &Request, cid: i64, included: &HashSet<i64>)
-                 -> Result<Option<(Vec<i64>, HashMap<i64, ChunkRow>, String, Value, (i64, i64, i64))>> {
-        let Some((pid, step)) = spot.member(cid)? else { return Ok(None) };
-        let Some(proc_) = spot.procedure(pid)? else { return Ok(None) };
-        let steps = spot.steps(pid)?;
+    /// What to return for a hit inside a procedure, at the largest size that fits
+    /// `procedure_tokens`: the whole procedure; the hit's step and the steps around it; the hit's
+    /// sub-step and those around it; or the chunks around the hit inside its step.
+    fn plan(&self, conn: &Connection, spots: &spots::Spots, req: &Request, cid: i64) -> Result<Option<Plan>> {
+        let Some((pid, step, sub)) = spots.member(cid)? else { return Ok(None) };
+        let Some(proc_) = spots.procedure(pid)? else { return Ok(None) };
+        let steps = spots.steps(pid)?;
         let Some(idx) = steps.iter().position(|s| s.step == step) else { return Ok(None) };
-        let cap = req.procedure_tokens;
-        let (lo, hi, whole) = if proc_.tokens <= cap {
-            (0, steps.len() - 1, true)
-        } else {
-            if steps[idx].tokens > cap {
-                return Ok(None);
-            }
-            let (mut lo, mut hi, mut total) = (idx, idx, steps[idx].tokens);
-            for _ in 0..req.procedure_window.max(0) {
-                let mut grew = false;
-                if hi + 1 < steps.len() && total + steps[hi + 1].tokens <= cap {
-                    hi += 1;
-                    total += steps[hi].tokens;
-                    grew = true;
-                }
-                if lo >= 1 && total + steps[lo - 1].tokens <= cap {
-                    lo -= 1;
-                    total += steps[lo].tokens;
-                    grew = true;
-                }
-                if !grew {
-                    break;
-                }
-            }
-            (lo, hi, false)
-        };
-        let members: Vec<(i64, i64)> = spot.members(pid, steps[lo].step, steps[hi].step)?.into_iter()
-            .filter(|(c, _)| !included.contains(c)).collect();
-        if !members.iter().any(|(c, _)| *c == cid) {
-            return Ok(None);
+        let (cap, win) = (req.procedure_tokens, req.procedure_window);
+        let base = Plan { pid, proc_, steps, idx, level: "procedure", lo: 0, hi: 0, subs: Vec::new(), chunks: Vec::new(), at: None };
+        if base.proc_.tokens <= cap {
+            let hi = base.steps.len() - 1;
+            return Ok(Some(Plan { hi, ..base }));
         }
+        if base.steps[idx].tokens <= cap {
+            let tokens: Vec<i64> = base.steps.iter().map(|s| s.tokens).collect();
+            let (lo, hi) = grow(&tokens, idx, cap, win);
+            return Ok(Some(Plan { level: "steps", lo, hi, ..base }));
+        }
+        let subs = spots.substeps(pid, step)?;
+        let j = subs.iter().position(|x| x.sub == sub);
+        if let (true, Some(j)) = (subs.len() >= 2, j) {
+            if subs[j].tokens <= cap {
+                let tokens: Vec<i64> = subs.iter().map(|x| x.tokens).collect();
+                let (lo, hi) = grow(&tokens, j, cap, win);
+                return Ok(Some(Plan { level: "substeps", lo, hi, subs, ..base }));
+            }
+        }
+        // one step (or sub-step) longer than procedure_tokens: the chunks around the hit inside it
+        let inside: Vec<i64> = spots.members(pid, step, step)?.into_iter()
+            .filter(|m| subs.len() < 2 || m.2 == sub).map(|m| m.0).collect();
+        let rows = self.load(conn, &inside)?;
+        let inside: Vec<i64> = inside.into_iter().filter(|c| rows.contains_key(c)).collect();
+        let Some(k) = inside.iter().position(|c| *c == cid) else { return Ok(None) };
+        let tokens: Vec<i64> = inside.iter().map(|c| rows[c].n_tokens.unwrap_or(0)).collect();
+        let (lo, hi) = grow(&tokens, k, cap, win);
+        let at = match j {
+            Some(j) if subs.len() >= 2 && sub > 0 => subs[j].label.clone(),
+            _ => base.steps[idx].label.clone(),
+        };
+        Ok(Some(Plan { level: "chunks", chunks: inside[lo..=hi].to_vec(), at, ..base }))
+    }
+
+    /// The text, chunks, procedure note and outline for a plan, leaving out chunks already
+    /// returned. None when nothing is left.
+    fn render(&self, conn: &Connection, spots: &spots::Spots, plan: &Plan, exclude: &HashSet<i64>) -> Result<Option<Rendered>> {
+        let (pid, steps) = (plan.pid, &plan.steps);
+        let mut members = match plan.level {
+            "procedure" | "steps" => spots.members(pid, steps[plan.lo].step, steps[plan.hi].step)?,
+            level => {
+                let st = steps[plan.idx].step;
+                let all = spots.members(pid, st, st)?;
+                if level == "substeps" {
+                    let (a, b) = (plan.subs[plan.lo].sub, plan.subs[plan.hi].sub);
+                    all.into_iter().filter(|m| a <= m.2 && m.2 <= b).collect()
+                } else {
+                    let wanted: HashSet<i64> = plan.chunks.iter().copied().collect();
+                    all.into_iter().filter(|m| wanted.contains(&m.0)).collect()
+                }
+            }
+        };
+        members.retain(|m| !exclude.contains(&m.0));
         let ids: Vec<i64> = members.iter().map(|m| m.0).collect();
         let rows = self.load(conn, &ids)?;
-        let members: Vec<(i64, i64)> = members.into_iter().filter(|(c, _)| rows.contains_key(c)).collect();
+        members.retain(|m| rows.contains_key(&m.0));
+        if members.is_empty() {
+            return Ok(None);
+        }
+        let numbered = plan.proc_.kind == "numbered";
+        let nonempty_s = |v: &Option<String>| v.clone().filter(|t| !t.is_empty());
+        let step_titles: HashMap<i64, Option<String>> =
+            steps.iter().map(|s| (s.step, nonempty_s(&s.title).or_else(|| nonempty_s(&s.label)))).collect();
+        let mut sub_titles: HashMap<i64, HashMap<i64, Option<String>>> = HashMap::new();
         let mut blocks: Vec<String> = Vec::new();
-        for st in &steps[lo..=hi] {
-            let texts: Vec<&str> = members.iter().filter(|(_, m)| *m == st.step).map(|(c, _)| rows[c].text.as_str()).collect();
-            if texts.is_empty() {
+        let mut last_step: Option<i64> = None;
+        let mut i = 0;
+        while i < members.len() {
+            let (step, sub) = (members[i].1, members[i].2);
+            let mut group: Vec<i64> = Vec::new();
+            while i < members.len() && (members[i].1, members[i].2) == (step, sub) {
+                group.push(members[i].0);
+                i += 1;
+            }
+            let mut parts: Vec<String> = Vec::new();
+            if numbered && last_step != Some(step) {
+                if let Some(Some(t)) = step_titles.get(&step) {
+                    parts.push(format!("### {t}"));
+                }
+            }
+            if numbered && sub > 0 {
+                if !sub_titles.contains_key(&step) {
+                    let found = spots.substeps(pid, step)?.into_iter()
+                        .map(|x| (x.sub, nonempty_s(&x.title).or_else(|| nonempty_s(&x.label)))).collect();
+                    sub_titles.insert(step, found);
+                }
+                if let Some(Some(t)) = sub_titles[&step].get(&sub) {
+                    parts.push(format!("#### {t}"));
+                }
+            }
+            parts.push(group.iter().map(|c| rows[c].text.as_str()).collect::<Vec<_>>().join("\n\n"));
+            blocks.push(parts.join("\n\n"));
+            last_step = Some(step);
+        }
+        let p = &plan.proc_;
+        let mut info = json!({"id": pid, "kind": p.kind, "title": p.title, "label": p.label, "steps": p.steps,
+                              "level": plan.level, "whole": plan.level == "procedure"});
+        let (shown, window): (Vec<usize>, (i64, i64, i64)) = if plan.level == "procedure" || plan.level == "steps" {
+            info["from"] = json!(steps[plan.lo].label);
+            info["to"] = json!(steps[plan.hi].label);
+            ((plan.lo..=plan.hi).collect(), (pid, steps[plan.lo].step, steps[plan.hi].step))
+        } else {
+            info["step"] = json!(steps[plan.idx].label);
+            if plan.level == "substeps" {
+                info["from"] = json!(plan.subs[plan.lo].label);
+                info["to"] = json!(plan.subs[plan.hi].label);
+            } else {
+                info["from"] = json!(plan.at);
+                info["to"] = json!(plan.at);
+            }
+            (vec![plan.idx], (pid, steps[plan.idx].step, steps[plan.idx].step))
+        };
+        let mut outline = None;
+        if numbered && plan.level != "procedure" {
+            let n = steps.len();
+            let (a, b) = (*shown.iter().min().unwrap_or(&0), *shown.iter().max().unwrap_or(&0));
+            let (s0, e0) = if n <= 20 { (0, n - 1) } else { (a.saturating_sub(8), (b + 8).min(n - 1)) };
+            let items: Vec<Value> = (s0..=e0).map(|x| {
+                let t = nonempty_s(&steps[x].title).or_else(|| nonempty_s(&steps[x].label)).unwrap_or_default();
+                json!({"label": steps[x].label, "title": t.chars().take(50).collect::<String>(), "shown": shown.contains(&x)})
+            }).collect();
+            outline = Some(json!({"steps": items, "before": s0 > 0, "after": e0 < n - 1}));
+        }
+        let span: Vec<i64> = members.iter().map(|m| m.0).collect();
+        let tokens = span.iter().map(|c| rows[c].n_tokens.unwrap_or(0)).sum();
+        Ok(Some(Rendered { span, text: blocks.join("\n\n"), info, outline, window, tokens }))
+    }
+
+    /// A hit in the step just before or after a window of steps already returned widens that
+    /// window instead of coming back as a separate piece (up to twice `procedure_tokens`).
+    /// Returns the tokens used after merging, or None when it wasn't merged.
+    #[allow(clippy::too_many_arguments)]
+    fn merge(&self, conn: &Connection, spots: &spots::Spots, req: &Request, plan: &Plan, procs: &mut [ProcResult],
+             results: &mut [Value], included: &mut HashSet<i64>, budget: i64, used: i64) -> Result<Option<i64>> {
+        let idx = plan.idx;
+        for prev in procs.iter_mut() {
+            let p = &prev.plan;
+            if p.pid != plan.pid || p.level != "steps" || idx + 1 < p.lo || idx > p.hi + 1 {
                 continue;
             }
-            let body = texts.join("\n\n");
-            let header = if proc_.kind == "numbered" {
-                st.title.clone().filter(|t| !t.is_empty()).or_else(|| st.label.clone().filter(|t| !t.is_empty()))
+            let (lo, hi) = (p.lo.min(idx), p.hi.max(idx));
+            if p.steps[lo..=hi].iter().map(|s| s.tokens).sum::<i64>() > 2 * req.procedure_tokens {
+                return Ok(None);
+            }
+            let wider = Plan { lo, hi, ..p.clone() };
+            let exclude: HashSet<i64> = included.difference(&prev.span.iter().copied().collect()).copied().collect();
+            let Some(r) = self.render(conn, spots, &wider, &exclude)? else { return Ok(None) };
+            if used + r.tokens - prev.tokens > budget {
+                return Ok(None);
+            }
+            let related = self.related(conn, spots, &r.span, Some(r.window))?;
+            let item = &mut results[prev.index];
+            item["text"] = json!(r.text);
+            if r.span.len() > 1 {
+                item["chunk_ids"] = json!(r.span);
+            }
+            item["procedure"] = r.info;
+            if let (Some(o), true) = (r.outline, item.get("outline").is_some()) {
+                item["outline"] = o;
+            }
+            if related.is_empty() {
+                if let Some(m) = item.as_object_mut() {
+                    m.remove("related");
+                }
             } else {
-                None
-            };
-            blocks.push(match header {
-                Some(h) => format!("### {h}\n\n{body}"),
-                None => body,
-            });
+                item["related"] = json!(related);
+            }
+            included.extend(r.span.iter().copied());
+            let grown = used + r.tokens - prev.tokens;
+            prev.plan = wider;
+            prev.span = r.span;
+            prev.tokens = r.tokens;
+            return Ok(Some(grown));
         }
-        let info = json!({"id": pid, "kind": proc_.kind, "title": proc_.title, "label": proc_.label, "steps": proc_.steps,
-                          "from": steps[lo].label, "to": steps[hi].label, "whole": whole});
-        let span: Vec<i64> = members.iter().map(|m| m.0).collect();
-        Ok(Some((span, rows, blocks.join("\n\n"), info, (pid, steps[lo].step, steps[hi].step))))
+        Ok(None)
     }
 
     /// References made in a result's chunks, except to steps the result already holds.
-    fn related(&self, conn: &Connection, spot: &spot::Spot, span: &[i64], window: Option<(i64, i64, i64)>) -> Result<Vec<Value>> {
+    fn related(&self, conn: &Connection, spots: &spots::Spots, span: &[i64], window: Option<(i64, i64, i64)>) -> Result<Vec<Value>> {
         let mut out: Vec<Value> = Vec::new();
         let mut seen: HashSet<(String, String)> = HashSet::new();
         for c in span {
-            for link in spot.links(*c)? {
+            for link in spots.links(*c)? {
                 let key = (link.kind.clone(), link.reference.clone());
                 if seen.contains(&key) {
                     continue;
@@ -440,7 +619,7 @@ impl Retriever {
                         }
                     }
                     let title = match (link.proc_id, link.step) {
-                        (Some(p), Some(st)) => spot.step_info(p, st)?
+                        (Some(p), Some(st)) => spots.step_info(p, st)?
                             .and_then(|(label, title)| title.filter(|t| !t.is_empty()).or(label)),
                         _ => None,
                     };
@@ -538,7 +717,16 @@ impl Retriever {
         let mut tables: Vec<Value> = Vec::new();
         let mut included: HashSet<i64> = HashSet::new();
         let (mut used, mut tag) = (0i64, 0usize);
-        for cid in &candidates {
+        let mut procs: Vec<ProcResult> = Vec::new();          // procedure results so far, for merging
+        let mut procs_seen: HashMap<i64, usize> = HashMap::new();
+        // hits past a procedure's procedure_hits wait at the end of the queue: they only fill places
+        // nothing else took
+        let mut queue: Vec<i64> = candidates.clone();
+        let mut deferred: HashSet<i64> = HashSet::new();
+        let mut at = 0;
+        while at < queue.len() {
+            let cid = &queue[at].clone();
+            at += 1;
             if results.len() >= req.k {
                 break;
             }
@@ -558,16 +746,34 @@ impl Retriever {
             let mut text = row.text.clone();
             let mut span = vec![*cid];
             let mut proc_info = Value::Null;
+            let mut outline = None;
             let mut window = None;
-            let found = match (&self.spot, req.expand && req.procedures) {
-                (Some(spot), true) => self.procedure(&conn, spot, req, *cid, &included)?,
+            let mut plan = match (&self.spots, req.expand && req.procedures) {
+                (Some(spots), true) => self.plan(&conn, spots, req, *cid)?,
                 _ => None,
             };
-            let tokens = if let Some((s, span_rows, t, info, w)) = found {
-                let tokens = s.iter().map(|c| span_rows[c].n_tokens.unwrap_or(0)).sum::<i64>();
-                (span, text, proc_info, window) = (s, t, info, Some(w));
-                tokens
+            if let (Some(p), Some(spots)) = (&plan, &self.spots) {
+                if p.level == "steps" {
+                    if let Some(grown) = self.merge(&conn, spots, req, p, &mut procs, &mut results, &mut included, req.max_result_tokens, used)? {
+                        used = grown;
+                        continue;
+                    }
+                }
+                if !deferred.contains(cid) && procs_seen.get(&p.pid).copied().unwrap_or(0) >= req.procedure_hits {
+                    deferred.insert(*cid);           // enough from this procedure for now; others first
+                    queue.push(*cid);
+                    continue;
+                }
+            }
+            let rendered = match (&plan, &self.spots) {
+                (Some(p), Some(spots)) => self.render(&conn, spots, p, &included)?,
+                _ => None,
+            };
+            let tokens = if let Some(r) = rendered {
+                (span, text, proc_info, outline, window) = (r.span, r.text, r.info, r.outline, Some(r.window));
+                r.tokens
             } else {
+                plan = None;
                 if req.expand && row.kind == "prose" && req.neighbors > 0 {
                     let around: Vec<ChunkRow> = self.neighbors(&conn, row, req.neighbors)?.into_iter()
                         .filter(|r| !included.contains(&r.chunk_id)).collect();
@@ -603,8 +809,8 @@ impl Retriever {
             if let Some(s) = rerank_scores.get(cid) {
                 item["rerank_score"] = json!(s);
             }
-            if let Some(spot) = &self.spot {
-                let (number, revision) = spot.document(row.doc_id)?;
+            if let Some(spots) = &self.spots {
+                let (number, revision) = spots.document(row.doc_id)?;
                 if let Some(n) = number.filter(|n| !n.is_empty()) {
                     item["source"]["document"] = json!(n);
                     if let Some(r) = revision.filter(|r| !r.is_empty()) {
@@ -613,11 +819,20 @@ impl Retriever {
                 }
                 if !proc_info.is_null() {
                     item["procedure"] = proc_info;
+                    if let (Some(o), Some(p)) = (outline, &plan) {
+                        if procs_seen.get(&p.pid).copied().unwrap_or(0) == 0 {
+                            item["outline"] = o;          // once per procedure: the first result
+                        }
+                    }
                 }
-                let related = self.related(&conn, spot, &span, window)?;
+                let related = self.related(&conn, spots, &span, window)?;
                 if !related.is_empty() {
                     item["related"] = json!(related);
                 }
+            }
+            if let Some(p) = plan {
+                *procs_seen.entry(p.pid).or_insert(0) += 1;
+                procs.push(ProcResult { index: results.len(), plan: p, span: span.clone(), tokens });
             }
             results.push(item);
         }
@@ -642,16 +857,43 @@ fn nonempty(v: &Value) -> Option<String> {
 fn procedure_note(p: &Value) -> String {
     let name = nonempty(&p["title"]).or_else(|| nonempty(&p["label"])).unwrap_or_else(|| "procedure".into());
     let n = p["steps"].as_i64().unwrap_or(0);
-    let from = nonempty(&p["from"]).unwrap_or_else(|| "?".into());
-    let to = nonempty(&p["to"]).unwrap_or_else(|| "?".into());
+    let a = nonempty(&p["from"]).unwrap_or_else(|| "?".into());
+    let b = nonempty(&p["to"]).unwrap_or_else(|| "?".into());
+    let step = nonempty(&p["step"]);
+    let level = p["level"].as_str().unwrap_or("");
     let span = if p["whole"].as_bool().unwrap_or(false) {
         format!("whole, {n} step{}", if n == 1 { "" } else { "s" })
+    } else if level == "substeps" {
+        let st = step.unwrap_or_else(|| "?".into());
+        if a == b { format!("step {st} of {n}, sub-step {a}") } else { format!("step {st} of {n}, sub-steps {a}-{b}") }
+    } else if level == "chunks" {
+        if Some(&a) == step.as_ref() {
+            format!("part of step {a} of {n}")
+        } else {
+            format!("part of step {} of {n}, sub-step {a}", step.unwrap_or_else(|| "?".into()))
+        }
     } else if p["from"] == p["to"] {
-        format!("step {from} of {n}")
+        format!("step {a} of {n}")
     } else {
-        format!("steps {from}-{to} of {n}")
+        format!("steps {a}-{b} of {n}")
     };
     format!("{name} ({span})")
+}
+
+/// The procedure's steps, the ones shown in bold, so a reader knows where this passage sits.
+fn outline_note(p: &Value, o: &Value) -> String {
+    let mut items: Vec<String> = o["steps"].as_array().into_iter().flatten().map(|x| {
+        let t = x["title"].as_str().unwrap_or("").to_string();
+        if x["shown"].as_bool().unwrap_or(false) { format!("**{t}**") } else { t }
+    }).collect();
+    if o["before"].as_bool().unwrap_or(false) {
+        items.insert(0, "…".into());
+    }
+    if o["after"].as_bool().unwrap_or(false) {
+        items.push("…".into());
+    }
+    let name = nonempty(&p["title"]).or_else(|| nonempty(&p["label"])).unwrap_or_else(|| "the procedure".into());
+    format!("Outline of {name}: {}", items.join("; "))
 }
 
 fn related_note(x: &Value) -> String {
@@ -695,6 +937,9 @@ pub fn markdown(response: &Value) -> String {
         let place = if loc.is_empty() { String::new() } else { format!(" · {}", loc.join(" · ")) };
         out.push(format!("[{}] {}{}  (chunk {})", r["tag"].as_str().unwrap_or(""), s["file"].as_str().unwrap_or(""), place, r["chunk_id"]));
         out.push(r["text"].as_str().unwrap_or("").to_string());
+        if r["outline"].is_object() {
+            out.push(outline_note(&r["procedure"], &r["outline"]));
+        }
         if let Some(related) = r["related"].as_array().filter(|a| !a.is_empty()) {
             out.push(format!("Related: {}", related.iter().map(related_note).collect::<Vec<_>>().join("; ")));
         }

@@ -124,12 +124,13 @@ DEFAULTS: dict[str, Any] = {
         "keep": 6,               # results returned (no reranker in v1)
         "neighbors": 1,
         "max_result_tokens": 6000,
-        # With a current spot file (structure.spot), a hit inside a procedure comes back with its
+        # With a current spots file (structure.spots), a hit inside a procedure comes back with its
         # procedure: whole when it is at most procedure_tokens long, else the hit's step with up
         # to procedure_window steps on each side that still fit.
         "procedures": True,
         "procedure_tokens": 1500,
         "procedure_window": 1,
+        "procedure_hits": 3,         # at most this many results from one procedure
     },
     "rerank": {
         # Optional second pass: a small reranker model reorders the best fused candidates before

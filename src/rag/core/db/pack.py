@@ -70,13 +70,13 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
             (ws.config_path, "config.toml"),
         ]
         # the structure (procedures and steps), made fresh for exactly the chunks in this pack;
-        # readers that don't know spot files ignore it
+        # readers that don't know spots files ignore it
         structure = None
         try:
-            from rag.core import spot
+            from rag.core import spots
 
-            structure = spot.build(tmp_dir / "rag.db", tmp_dir / spot.SPOT_NAME)
-            entries.append((tmp_dir / spot.SPOT_NAME, spot.SPOT_NAME))
+            structure = spots.build(tmp_dir / "rag.db", tmp_dir / spots.SPOTS_NAME)
+            entries.append((tmp_dir / spots.SPOTS_NAME, spots.SPOTS_NAME))
         except Exception:  # noqa: BLE001 - a pack without structure still searches as before
             structure = None
         if backend == "shammy":

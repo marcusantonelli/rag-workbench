@@ -567,3 +567,9 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 @media (max-width: 720px) { .search-bar input.doc-filter { flex-basis: 140px; } }
 /* Details: a fact with a button beside it */
 .fact-with-action { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* Search: a long procedure's outline, the steps shown in this result highlighted */
+.evidence-outline { margin: 4px 0 12px; font-size: 13px; }
+.evidence-outline summary { cursor: pointer; color: var(--muted); }
+.evidence-outline ol { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--rule); }
+.evidence-outline li { padding: 1px 0; color: var(--muted); }
+.evidence-outline li.shown { color: var(--ink); font-weight: 600; }

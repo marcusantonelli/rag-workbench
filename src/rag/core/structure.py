@@ -1,4 +1,4 @@
-"""Document structure shared by the chunker and the spot file: step numbers in headings and
+"""Document structure shared by the chunker and the spots file: step numbers in headings and
 lists, and a document's identity (title, document number, revision).
 
 Kept deliberately conservative: a pattern only counts when it is unambiguous, because a wrong

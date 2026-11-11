@@ -45,7 +45,7 @@ public sealed class RetrievalOptions
     /// <summary>Rerank the fused candidates with a model. Null means no reranking.</summary>
     public RerankOptions? Rerank { get; init; }
 
-    /// <summary>With a spot file (structure.spot): a hit inside a procedure brings its procedure (default true).</summary>
+    /// <summary>With a spots file (structure.spots): a hit inside a procedure brings its procedure (default true).</summary>
     public bool? Procedures { get; init; }
 
     /// <summary>A procedure up to this many tokens comes whole; a longer one as the hit's step and the steps around it (default 1500).</summary>
@@ -54,12 +54,20 @@ public sealed class RetrievalOptions
     /// <summary>Steps on each side of the hit's step, when they fit (default 1).</summary>
     public int? ProcedureWindow { get; init; }
 
-    /// <summary>Only these documents: document numbers ("D02", needs the spot file) or parts of file paths.</summary>
+    /// <summary>At most this many results from one procedure while other results are left (default 3).</summary>
+    public int? ProcedureHits { get; init; }
+
+    /// <summary>Only these documents: document numbers ("D02", needs the spots file) or parts of file paths.</summary>
     public IReadOnlyList<string>? Documents { get; init; }
 }
 
-/// <summary>The procedure a result belongs to (from the spot file).</summary>
-public sealed record RetrievalProcedure(long Id, string Kind, string? Title, string? Label, int Steps, string? From, string? To, bool Whole);
+/// <summary>The procedure a result belongs to (from the spots file). Level says what was returned:
+/// "procedure" (all of it), "steps" (From..To), "substeps" (From..To inside Step) or "chunks" (part of Step).</summary>
+public sealed record RetrievalProcedure(long Id, string Kind, string? Title, string? Label, int Steps, string? From, string? To,
+                                        bool Whole, string Level, string? Step);
+
+/// <summary>One line of a long procedure's outline; Shown marks the steps in the result.</summary>
+public sealed record RetrievalOutlineStep(string? Label, string Title, bool Shown);
 
 /// <summary>A reference in a result's text: another step ("section") or another document ("document"; File is null when it isn't in the knowledge base).</summary>
 public sealed record RetrievalReference(string Kind, string Ref, string? Title, string? File);
@@ -68,7 +76,7 @@ public sealed record RetrievalHit(string Tag, long ChunkId, string Kind, double 
                                   string File, string FileType, int? Page, int? PageEnd, string? Sheet, string? Range,
                                   string? Lines, string? HeadingPath, string? Symbol, string? TableName, string? AssetPath)
 {
-    /// <summary>The document's number and revision, from the spot file.</summary>
+    /// <summary>The document's number and revision, from the spots file.</summary>
     public string? Document { get; init; }
     public string? Revision { get; init; }
 
@@ -76,6 +84,9 @@ public sealed record RetrievalHit(string Tag, long ChunkId, string Kind, double 
     public RetrievalProcedure? Procedure { get; init; }
 
     public IReadOnlyList<RetrievalReference> Related { get; init; } = [];
+
+    /// <summary>For the first result from a long procedure: its steps around this passage (empty otherwise).</summary>
+    public IReadOnlyList<RetrievalOutlineStep> Outline { get; init; } = [];
 }
 
 public sealed record RetrievalTable(string TableName, long ChunkId, double Score, string Summary, string Card);
@@ -138,7 +149,7 @@ public sealed class ShammyRetriever : IDisposable
         Procedures = root.TryGetProperty("procedures", out var pr) && pr.ValueKind == JsonValueKind.Number ? pr.GetInt64() : null;
     }
 
-    /// <summary>Procedures in the knowledge base's spot file; null when it has no current one (results then carry no structure).</summary>
+    /// <summary>Procedures in the knowledge base's spots file; null when it has no current one (results then carry no structure).</summary>
     public long? Procedures { get; }
 
     /// <summary>Open the folder that holds <c>rag.db</c> (a workspace, or a pack after unpacking).</summary>
@@ -175,6 +186,7 @@ public sealed class ShammyRetriever : IDisposable
         Set("procedures", options.Procedures);
         Set("procedure_tokens", options.ProcedureTokens);
         Set("procedure_window", options.ProcedureWindow);
+        Set("procedure_hits", options.ProcedureHits);
         if (options.Documents is { Count: > 0 } docs) request["documents"] = docs;
         if (options.Rerank is { } r)
         {
@@ -202,7 +214,13 @@ public sealed class ShammyRetriever : IDisposable
             if (h.TryGetProperty("procedure", out var p) && p.ValueKind == JsonValueKind.Object)
                 procedure = new RetrievalProcedure(p.GetProperty("id").GetInt64(), Str(p, "kind") ?? "", Str(p, "title"), Str(p, "label"),
                                                    Int(p, "steps") ?? 0, Str(p, "from"), Str(p, "to"),
-                                                   p.TryGetProperty("whole", out var w) && w.ValueKind == JsonValueKind.True);
+                                                   p.TryGetProperty("whole", out var w) && w.ValueKind == JsonValueKind.True,
+                                                   Str(p, "level") ?? "", Str(p, "step"));
+            var outline = new List<RetrievalOutlineStep>();
+            if (h.TryGetProperty("outline", out var ol) && ol.TryGetProperty("steps", out var ols) && ols.ValueKind == JsonValueKind.Array)
+                foreach (var x in ols.EnumerateArray())
+                    outline.Add(new RetrievalOutlineStep(Str(x, "label"), Str(x, "title") ?? "",
+                                                         x.TryGetProperty("shown", out var sh) && sh.ValueKind == JsonValueKind.True));
             var related = new List<RetrievalReference>();
             if (h.TryGetProperty("related", out var rel) && rel.ValueKind == JsonValueKind.Array)
                 foreach (var x in rel.EnumerateArray())
@@ -214,6 +232,7 @@ public sealed class ShammyRetriever : IDisposable
                                       Str(s, "table_name"), Str(s, "asset_path"))
             {
                 Document = Str(s, "document"), Revision = Str(s, "revision"), Procedure = procedure, Related = related,
+                Outline = outline,
             });
         }
         var tables = new List<RetrievalTable>();

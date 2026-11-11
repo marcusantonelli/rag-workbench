@@ -29,7 +29,7 @@ export function AboutView({ kb }: { kb: KbSummary }) {
   const rebuildSpot = async () => {
     setSpotBusy(true);
     try {
-      const r = await call<KbSummary>("kb.spot", { kb: kb.id });
+      const r = await call<KbSummary>("kb.spots", { kb: kb.id });
       const n = r.structure?.procedures ?? 0;
       notify({ tone: "success", title: `Structure built: ${n} procedure${n === 1 ? "" : "s"} found` });
       refreshKb(kb.id);
