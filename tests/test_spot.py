@@ -92,7 +92,7 @@ The controller keeps its settings through a reset.
 
 
 @pytest.fixture(scope="module")
-def corpus(tmp_path_factory):
+def proc_corpus(tmp_path_factory):
     d = tmp_path_factory.mktemp("procs")
     (d / "WI-2210 sealer.md").write_text(SEALER, encoding="utf-8")
     (d / "manual.md").write_text(MANUAL, encoding="utf-8")
@@ -103,9 +103,9 @@ def corpus(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def ws(corpus, tmp_path_factory):
+def ws(proc_corpus, tmp_path_factory):
     w = Workspace.init(tmp_path_factory.mktemp("spotws") / "ws", TEST_EMBEDDING)
-    assert Builder(w).build([corpus]).failed == 0
+    assert Builder(w).build([proc_corpus]).failed == 0
     return w
 
 
@@ -150,7 +150,8 @@ def test_context_two_names_the_document_and_one_is_unchanged():
     assert [c.text_hash for c in v1] == [c.text_hash for c in v2]
 
 
-def test_new_workspaces_use_context_two_and_old_ones_keep_one(corpus, tmp_path):
+def test_new_workspaces_use_context_two_and_old_ones_keep_one(proc_corpus, tmp_path):
+    corpus = proc_corpus
     new = Workspace.init(tmp_path / "new", TEST_EMBEDDING)
     assert new.config["chunking"]["context"] == 2
     old = Workspace.init(tmp_path / "old", {**TEST_EMBEDDING, "chunking": {"context": 1}})
@@ -295,3 +296,35 @@ def test_figure_text_keeps_what_the_description_confirms():
     desc = "A yellow label reading CAUTION Hot Surface on the oven door, and a dialog titled EStop."
     assert confirmed_text("CAUTION\n\nHot Sutace.\n\nEStop\n\nEmergencyStopButtonhasbeenpress", desc) == "CAUTION\n\nEStop"
     assert confirmed_text("Oxygen (ppm) 12", "Settings screen: Oxygen (ppm) 12") == "Oxygen (ppm) 12"
+
+
+def test_file_names_give_document_numbers_only_when_they_start_with_one():
+    number = lambda name: identity(None, [""], name).number  # noqa: E731
+    assert number("docs/WI-1234 Seal.pdf") == "WI-1234" and number("QP-114 Pull Test.pdf") == "QP-114"
+    # a crawler's hash suffix, or an asset code inside a long name, is not a document number
+    assert number("x/whats-new-in-opcenter-execution-semiconductor-8-6-de595425.html") is None
+    assert number("Siemens-PLM-Whats-new-in-Camstar-Semiconductor-Suite-V7-SU6-fs-73745-A4_tcm84-46-eba9f644.pdf") is None
+    assert number("calibration.csv") is None
+
+
+def test_other_sources_search_exactly_as_before(built_ws, tmp_path):
+    """Spreadsheets, CSV, code, SQL, HTML, text, Markdown and scans: no procedures, and the same
+    passages with or without the spot file (only document numbers are added to citations)."""
+    assert spot.status(built_ws.root)["procedures"] == 0
+    copy = tmp_path / "copy"
+    shutil.copytree(built_ws.root, copy)
+    w = Workspace.open(copy)
+    store, s = _searcher(w)
+    queries = ["helium leak rate limit", "burn-in yield by lot", "calibration due date", "GetLotYield",
+               "die attach void limits", "gowning order", "SELECT lot_id FROM yields"]
+    try:
+        with_spot = [s.search(q, k=6).to_dict()["results"] for q in queries]
+        spot.spot_path(copy).unlink()
+        without = [s.search(q, k=6).to_dict()["results"] for q in queries]
+    finally:
+        s.close()
+        store.close()
+    for a, b in zip(with_spot, without):
+        assert [(x["chunk_id"], x.get("chunk_ids"), x["text"]) for x in a] == \
+               [(x["chunk_id"], x.get("chunk_ids"), x["text"]) for x in b]
+        assert not any("procedure" in x or "related" in x for x in a)

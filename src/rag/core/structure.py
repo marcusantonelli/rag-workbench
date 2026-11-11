@@ -93,12 +93,15 @@ class Identity:
 
 
 _NUMBER = re.compile(
-    r"(?i:\b(?:specification|spec|document|doc|procedure|work\s+instruction|instruction|sop|drawing|dwg|form|part)"
+    r"(?i:\b(?:specification|spec|document|doc|procedure|work\s+instruction|instruction|sop|drawing|dwg|form)"
     r"\s*(?:#|no\.?|number|num\.?|id)\s*[:.]?\s*)"
     r"((?=[A-Z0-9._/-]*\d)[A-Z0-9][A-Z0-9._/-]{1,30})(?![a-z])")
 _REVISION = re.compile(r"(?i:\brev(?:ision)?\.?\s*(?:level\s*)?[:#]?\s*)([A-Z]{1,2}\d{0,2}|\d{1,3}(?:\.\d{1,2})?)(?![A-Za-z0-9])")
 _TITLE = re.compile(r"(?im)^\s*(?:\*\*)?title\s*[:|]\s*(?:\*\*)?\s*([^|\n]{3,120}?)\s*(?:\||$)")
-_FILE_NUMBER = re.compile(r"\b([A-Z]{1,5}[-_]?\d{2,7}(?:[-_][A-Z0-9]{1,6})*)\b")
+# a document number at the start of a file name, as people name them: "WI-1234 Seal.pdf",
+# "QP-114 Pull Test.pdf", "SOP_0042 rev B.docx". Case-sensitive and anchored, so a crawler's hash
+# ("…-de595425.html") or an asset code in the middle of a long name is never taken for one.
+_FILE_NUMBER = re.compile(r"^([A-Z]{1,5}[-_ ]?\d{2,7}(?:-[A-Z]?\d{1,4})?)(?=$|[\s_.]|-[A-Za-z])")
 
 
 def identity(title: str | None, texts: list[str], display_path: str = "") -> Identity:
@@ -118,7 +121,7 @@ def identity(title: str | None, texts: list[str], display_path: str = "") -> Ide
     if m:
         out.revision = m.group(1)
     if out.number is None and display_path:
-        m = _FILE_NUMBER.search(PurePosixPath(display_path.replace("\\", "/")).stem.upper())
+        m = _FILE_NUMBER.match(PurePosixPath(display_path.replace("\\", "/")).stem)
         if m:
             out.number = m.group(1)
     if out.title and out.title.lower() == (out.number or "").lower():

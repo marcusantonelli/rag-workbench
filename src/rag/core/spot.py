@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from rag.core.structure import (CAUTION, DOC_REF, LIST_STEP, NOTE, SECTION_REF, heading_number, identity,
+from rag.core.structure import (_FILE_NUMBER, CAUTION, DOC_REF, LIST_STEP, NOTE, SECTION_REF, heading_number, identity,
                                 imperative_share, is_prefix, label, procedural_title)
 
 SPOT_NAME = "structure.spot"
@@ -223,8 +223,9 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                 by_number.setdefault(_norm_number(ident.number), doc_id)
         for d in docs:
             name = Path((d["display_path"] or "").replace("\\", "/")).stem
-            for m in re.finditer(r"[A-Z]{1,5}[- ]?\d{2,7}(?:-[A-Z0-9]{1,6})*", name.upper()):
-                by_number.setdefault(_norm_number(m.group(0)), d["doc_id"])
+            m = _FILE_NUMBER.match(name)
+            if m:
+                by_number.setdefault(_norm_number(m.group(1)), d["doc_id"])
 
         for doc_id, chunks in per_doc.items():
             procs, assigned = _numbered(doc_id, chunks)
