@@ -6,7 +6,7 @@ and a manifest. A small Python retrieval path is included for testing packs
 before the C# retrieval server exists.
 """
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 SCHEMA_VERSION = 1
 PACK_FORMAT = "ragpack/1"
 # ragpack/2 is ragpack/1 with the vectors in vectors.shammy instead of rag.db's chunk_vec table.

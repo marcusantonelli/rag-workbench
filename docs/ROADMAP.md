@@ -27,15 +27,45 @@ Details in `docs/release-notes/0.4.1.md`. Updater public key (minisign 76327FDFB
 
 ## 0.4.2
 
-- Page headers and footers: keep the document number, revision and title once per document as
-  metadata (shown in citations); detect them by position and repetition over runs of pages,
-  including odd/even and per-section variants; remove them from scanned pages too.
-- Word text boxes (DrawingML and VML), without reading AlternateContent twice.
-- Forms on scanned pages: label/value pairs and checkbox states from OCR.
-- Procedures: grouping by revision ("latest revision only"); bulleted (unnumbered) step lists in
-  sections whose title reads as a procedure.
-- Documents tab: list a document's chunks while it is being built.
+Sections for every document with headings (the spots file beyond procedures), general PDF
+layout reading (block-arrow flowcharts, boxed panels, titled tables), rebuild from scratch while
+the knowledge base is open elsewhere, a steadier time-left estimate, Stop now. Details in
+`docs/release-notes/0.4.2.md`.
 
+## 0.4.3
+
+- Query instruction editable by experienced users: the whole query template, with `${query}`
+  (and `${task}`) placeholders instead of `{query}`. Changing it changes what is embedded for a
+  question, so it belongs to the knowledge base (recorded like the embedding model) and Details
+  warns when it differs from the one the knowledge base was built and evaluated with.
+- Search: the "only documents" box becomes a multi-select filter listing the knowledge base's
+  documents (by number and title, with a search field).
+- Build tab: thumbnails of the pictures being described in the current document, with each
+  description as it arrives.
+- Low-confidence chunks (OCR confidence, table re-reads, figure text) flagged for review: a simple
+  threshold for the first N documents, then outliers by standard deviation over the knowledge
+  base. 0.4.3 only finds and lists them (Documents tab, `rag review`); editing them is 0.5.
+- Carried over from the earlier 0.4.2 list: page headers and footers (document number, revision
+  and title once per document as metadata; detected by position and repetition over runs of
+  pages, odd/even and per-section variants; removed from scanned pages too); Word text boxes
+  (DrawingML and VML, without reading AlternateContent twice); forms on scanned pages (label/value
+  pairs and checkbox states from OCR); procedures grouped by revision ("latest revision only")
+  and bulleted step lists in sections whose title reads as a procedure; the Documents tab listing
+  a document's chunks while it is being built.
+- Updates: a pre-release channel (Settings → Updates → "Also offer pre-releases"), which needs a
+  second update feed because `releases/latest` never returns a pre-release.
+
+## 0.5 (editing what was read)
+
+Editing chunk text and metadata changes the knowledge base by hand, so it needs more than a
+release's worth of UI: an edit has to survive a rebuild of its file (stored as an overlay keyed by
+the source file's hash and the chunk's position and text hash, re-applied when the file is read
+again and flagged when the text under it changed), be re-embedded on save, travel in packs, be
+visible and undoable (an edit log with who and when), and keep both search engines in step.
+- Edit a chunk's text (starting from the 0.4.3 review list), re-embedded on save.
+- Metadata at document level (title, document number, revision, custom fields such as owner or
+  area) and at chunk level (custom tags); custom fields usable as search filters and shown in
+  citations.
 ## To measure on real machines (0.4.0, 0.4.1)
 
 - Picture model (Qwen3-VL 4B and 2B): seconds per picture and memory on GPU and on CPU, next to
