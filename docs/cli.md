@@ -200,7 +200,7 @@ rag unpack docs-kb.ragpack D:\RAG\docs-kb
 | `rag init WS [--name NAME] [--dims N] [--embedder NAME] [--vectors shammy]` | Create a workspace. `--dims 2048` or `1024` stores smaller vectors; it can't be changed later without a full rebuild. `--vectors shammy` keeps the vectors in `vectors.shammy` instead of inside `rag.db`. |
 | `rag list [FOLDER] [--json]` | Workspaces and packs in a folder; the app's workspaces folder by default. |
 | `rag verify WS\|PACK [--json]` | Check it's whole: marker, settings, database integrity, counts that must agree, tables, figures; packs also every checksum. Exits 1 if something is wrong. |
-| `rag build WS PATH... [--prune] [--force] [--json]` | Read files and folders into the workspace. `--force` rebuilds everything; `--json` prints progress as JSON lines. |
+| `rag build WS PATH... [--prune] [--force] [--reread-older] [--json]` | Read files and folders into the workspace. `--force` rebuilds everything (picture descriptions are kept and reused); `--reread-older` also reads again PDF and Word files read by an older version of their reader; `--json` prints progress as JSON lines. |
 | `rag remove WS PATTERN...` | Remove documents by path or glob, e.g. `"*/Archive/*"`. |
 | `rag status WS` | Counts by type, failed files and embedding settings. |
 | `rag export WS OUT.ragpack [--name NAME] [--include-originals] [--slim]` | Write a pack. Originals let the agent open source files but make the pack larger. `--slim` (Shammy workspaces) leaves out the float16 vector copies: about a third of the vector size, but results aren't rescored exactly and the pack can't be merged. |
@@ -214,7 +214,8 @@ rag unpack docs-kb.ragpack D:\RAG\docs-kb
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |
 | `rag sql WS\|PACK "SELECT ..." [--json]` | Read-only SQL over the tables, as the agent runs it. |
-| `rag eval WS\|PACK golden.jsonl [--report R.md] [--out R.json]` | Recall@5, recall@20 and MRR by question type, with the retrieved chunks in the report. |
+| `rag review WS\|PACK [--limit N] [--json]` | Chunks read with OCR at low confidence, worst first: below 0.75 until there are 30 OCR'd chunks, then more than two standard deviations below the knowledge base's mean. |
+| `rag eval WS\|PACK golden.jsonl [--report R.md] [--out R.json]` | Recall@5, recall@20 and MRR by question type, with the retrieved chunks in the report; and read@5, whether the answer is in the passages the agent is handed (sections, procedures or neighbouring chunks), with their size in tokens. |
 | `rag check-embedder WS` | Embed a test sentence; shows the model, dimensions and speed. |
 
 `rag COMMAND --help` lists every option.

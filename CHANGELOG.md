@@ -10,6 +10,7 @@ apps that chose **Also offer pre-releases**.
 
 | Version | Date | What changed |
 |---|---|---|
+| [0.4.3](docs/release-notes/0.4.3.md) | 2026-11-11 | Headings from PDF bookmarks and a heading check, charts kept apart from flowcharts, picture descriptions remembered and older PDF/Word files read again on request, document picker and query template in Search, pictures shown while described, review list, read@5 in evaluations. |
 | [0.4.2](docs/release-notes/0.4.2.md) | 2026-11-11 | Sections give every document with headings its context in search; PDF and Word layouts read by shared rules (block-arrow and Word-shape flowcharts, boxed panels, text boxes, titled tables); rebuild from scratch while open; Stop… Now; time left in all and per file; opt-in pre-releases. |
 | [0.4.1](docs/release-notes/0.4.1.md) | 2026-11-11 | Procedures (spots file, whole-procedure answers, outlines, reading on), document name in embedded text for new knowledge bases, build progress, auto-update, domain-neutral project. |
 | [0.4.0](docs/release-notes/0.4.0.md) | 2026-11-10 | Shammy vector store and shared search engine, optional reranker and picture model, rebuilt PDF flowcharts, procedure tables, pictures of tables, forms; Docling removed. |

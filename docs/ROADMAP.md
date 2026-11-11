@@ -35,44 +35,27 @@ the knowledge base is open elsewhere, a steadier time-left estimate, Stop now. D
 
 ## 0.4.3
 
-- Query instruction editable by experienced users: the whole query template, with `${query}`
-  (and `${task}`) placeholders instead of `{query}`. Changing it changes what is embedded for a
-  question, so it belongs to the knowledge base (recorded like the embedding model) and Details
-  warns when it differs from the one the knowledge base was built and evaluated with.
-- Search: the "only documents" box becomes a multi-select filter listing the knowledge base's
-  documents (by number and title, with a search field).
-- Build tab: thumbnails of the pictures being described in the current document, with each
-  description as it arrives.
-- Low-confidence chunks (OCR confidence, table re-reads, figure text) flagged for review: a simple
-  threshold for the first N documents, then outliers by standard deviation over the knowledge
-  base. 0.4.3 only finds and lists them (Documents tab, `rag review`); editing them is 0.5.
-- Carried over from the earlier 0.4.2 list: page headers and footers (document number, revision
-  and title once per document as metadata; detected by position and repetition over runs of
-  pages, odd/even and per-section variants; removed from scanned pages too); Word text boxes
-  (DrawingML and VML, without reading AlternateContent twice); forms on scanned pages (label/value
-  pairs and checkbox states from OCR); procedures grouped by revision ("latest revision only")
-  and bulleted step lists in sections whose title reads as a procedure; the Documents tab listing
-  a document's chunks while it is being built.
-- Picture descriptions kept by picture (a hash of the image, the model and the prompt), so a
-  file read again doesn't describe its pictures again. Then the reader version can be bumped to
-  re-read every PDF and Word file with the 0.4.2 layout rules without hours of descriptions.
+Headings from PDF bookmarks and a heading check, charts kept apart from flowcharts, picture
+descriptions remembered and older PDF/Word files read again on request, document picker and
+query template in Search, pictures shown while they are described, the review list, and read@5
+in evaluations. Details in `docs/release-notes/0.4.3.md`.
+
+## Next 0.4.x
+
+- Tagged PDFs: their H1–H6 structure tags as headings, before bookmarks and type size.
+- Page headers and footers: keep the document number, revision and title once per document as
+  metadata (shown in citations); detect them by position and repetition over runs of pages,
+  including odd/even and per-section variants; remove them from scanned pages too.
+- Forms on scanned pages: label/value pairs and checkbox states from OCR.
+- Procedures grouped by revision ("latest revision only") and bulleted step lists in sections
+  whose title reads as a procedure.
+- Documents tab: list a document's chunks while it is being built.
 - Word: SmartArt (its data part holds the nodes and their connections), and flowcharts kept only
   as VML or as embedded Visio/EMF pictures (EMF needs converting before it can be described).
-- Headings in PDFs, which sections, heading paths and the embedded context all depend on:
-  - use the PDF's own bookmarks (outline) and, in tagged PDFs, its H1–H6 tags as the headings
-    when present, falling back to type size and bold only when neither exists;
-  - a heading report per document (`rag inspect`, Details): how many headings at each level, and a
-    warning for documents that came out flat (no headings across many pages) or with suspicious
-    ones (dozens of one-line "sections", headings longer than the text under them).
-- Charts kept apart from flowcharts: axes with tick marks and numeric labels, bars sharing a
-  baseline, evenly spaced grid lines, legends (swatch and label) and long curves mark a chart. A
-  drawing with those is a chart, described as a picture, never a flowchart, even when it has
-  arrows and boxed labels.
-- `rag eval` measures what the agent reads too: whether the expected text is in the returned
-  passage (section, procedure or neighbours), not only whether the matching chunk ranks. Needed
-  to decide between sections and neighbouring chunks, and to set `section_tokens`.
 - Layout regression set: a folder of real (redacted) documents with their expected reading,
-  checked by one command on every change.
+  checked by one command on every change (needs the documents).
+- Tuning with read@5 on a real question set: `section_tokens`, when a document counts as one
+  section, and the flowchart distances.
 
 ## 0.5 (editing what was read)
 
