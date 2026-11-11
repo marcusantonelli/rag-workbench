@@ -17,7 +17,7 @@ EXTENSION_TYPES = {
 }
 
 # Bump when an extractor's output changes, so cached extractions are redone.
-EXTRACTOR_VERSION = "5"   # 4: flowcharts, tables from images; 5: procedure tables, page frames
+EXTRACTOR_VERSION = "6"   # 4: flowcharts, tables from images; 5: procedure tables, page frames
 
 
 def detect_type(path: Path) -> str | None:
@@ -76,13 +76,35 @@ def _extractor(ftype: str) -> Callable[..., ExtractedDoc]:
     raise UnsupportedFile(f"no extractor for {ftype}")
 
 
+def reading_tag(config, ctx: ExtractContext | None = None) -> str:
+    """The reader version a document was read with: "v6", or "v6+vis" when its pictures were
+    described (every one that was asked for)."""
+    from rag.core.ingest.figures import describe_settings
+
+    tag = f"v{EXTRACTOR_VERSION}"
+    if describe_settings(config) is not None and not (ctx is not None and ctx.describe_stats["failed"]):
+        tag += "+vis"
+    return tag
+
+
+def is_current(extractor: str | None, config, has_pictures: bool) -> bool:
+    """Was a document read by this reader, with descriptions if they are on now and it has pictures?
+    (Turning descriptions off doesn't make described documents stale.)"""
+    from rag.core.ingest.figures import describe_settings
+
+    version = str(extractor or "").rsplit("@", 1)[-1]
+    if version.split("+")[0] != f"v{EXTRACTOR_VERSION}":
+        return False
+    return not (has_pictures and describe_settings(config) is not None and "+vis" not in version)
+
+
 def extract(path: Path, ftype: str, ctx: ExtractContext, *, cache_dir: Path | None,
             overrides_file: Path | None = None, use_cache: bool = True) -> tuple[ExtractedDoc, bool]:
     """Extract a file, reusing the cached result for identical content.
 
     Returns (doc, from_cache).
     """
-    cache_file = cache_dir / f"{ctx.sha256}.{ftype}.v{EXTRACTOR_VERSION}.json" if cache_dir else None
+    cache_file = cache_dir / f"{ctx.sha256}.{ftype}.{reading_tag(ctx.config)}.json" if cache_dir else None
     if use_cache and cache_file is not None and cache_file.exists():
         try:
             return ExtractedDoc.from_dict(json.loads(cache_file.read_text(encoding="utf-8"))), True
@@ -93,7 +115,10 @@ def extract(path: Path, ftype: str, ctx: ExtractContext, *, cache_dir: Path | No
         doc = fn(path, ctx, overrides_file=overrides_file)
     else:
         doc = fn(path, ctx)
-    if cache_file is not None:
+    if ctx.describe_stats["failed"]:
+        doc.warnings.append(f"{ctx.describe_stats['failed']} pictures couldn't be described (the picture model "
+                            "didn't answer); the next build tries again")
+    if cache_file is not None and not ctx.describe_stats["failed"]:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(doc.to_dict(), default=str), encoding="utf-8")

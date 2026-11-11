@@ -57,7 +57,7 @@ RetrievalResult found = kb.Search(question, vector, new RetrievalOptions
 {
     K = 6,
     FileType = fileType,                                            // null for all
-    Rerank = rerankOn ? new RerankOptions { Url = "http://127.0.0.1:8081" } : null,
+    Rerank = rerankOn ? new RerankOptions { Url = "http://127.0.0.1:8082" } : null,
 });
 return found.Markdown;      // the compact text for the agent; found.Results / found.Json for structure
 ```
@@ -66,7 +66,7 @@ return found.Markdown;      // the compact text for the agent; found.Results / f
   for but failed (results are then in the usual order and `found.RerankError` says why), and
   `null` when it wasn't asked for. A reranker that is down never fails the search.
 - The reranker is any `/v1/rerank` endpoint over plain http, for example
-  `llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8081`.
+  `llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8082`.
 - `kb.SearchJson(requestJson, vector)` takes and returns raw JSON (fields in `shammy.h`) if the
   server passes the agent's options straight through.
 - Table tools (`describe_table`, `query_table`) still read `tables.db` in the server as before;

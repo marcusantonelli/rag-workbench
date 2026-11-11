@@ -53,7 +53,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
   const [agentView, setAgentView] = useState(false);
   const [showCandidates, setShowCandidates] = useState(false);
   const [rerank, setRerank] = useState(() => stored("rag.rerank") === "1");
-  const [rerankUrl, setRerankUrl] = useState(() => stored("rag.rerankUrl") || "http://127.0.0.1:8081");
+  const [rerankUrl, setRerankUrl] = useState(() => stored("rag.rerankUrl") || "http://127.0.0.1:8082");
   const input = useRef<HTMLInputElement>(null);
 
   useEffect(() => input.current?.focus(), [kb.id]);
@@ -134,7 +134,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                 setRerankUrl(e.target.value);
                 remember("rag.rerankUrl", e.target.value);
               }}
-              placeholder="http://127.0.0.1:8081"
+              placeholder="http://127.0.0.1:8082"
               aria-label="Reranker address"
               spellCheck={false}
             />
@@ -149,7 +149,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
       </div>
       {res?.rerank && !res.rerank.applied && (
         <Notice tone="warn" title="Not reranked: these results are in the usual order">
-          {res.rerank.error} Start a reranker with <code>llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8081</code>,
+          {res.rerank.error} Start a reranker with <code>llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8082</code>,
           or turn reranking off.
         </Notice>
       )}

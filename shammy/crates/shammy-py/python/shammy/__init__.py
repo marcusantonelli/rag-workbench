@@ -277,7 +277,7 @@ class Retriever:
 
         r = shammy.Retriever("path/to/workspace")
         out = r.search("how is the lid seal tested?", query_vector, k=6,
-                       rerank={"enabled": True, "url": "http://127.0.0.1:8081"})
+                       rerank={"enabled": True, "url": "http://127.0.0.1:8082"})
         for hit in out["results"]: ...
 
     The caller embeds the question (with the model and instruction ``r.info()`` names).

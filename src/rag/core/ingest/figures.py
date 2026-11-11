@@ -7,6 +7,7 @@ import hashlib
 import re
 import io
 import json
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -22,39 +23,89 @@ def image_fingerprint(img: Image.Image) -> str:
     return hashlib.md5(small.tobytes()).hexdigest()
 
 
-def describe_image(img: Image.Image, ctx: ExtractContext) -> str | None:
-    """Ask an OpenAI-compatible vision endpoint (e.g. the inference server) to describe a figure."""
-    cfg = ctx.config["figures"]
-    url = cfg.get("describe_url")
+def describe_settings(config) -> dict | None:
+    """Where picture descriptions come from, or None when they are off: the workspace's
+    [figures] describe_url, else RAG_DESCRIBE_URL (set by the desktop app while its picture
+    model runs, or by you for a llama-server of your own)."""
+    import os
+
+    cfg = config["figures"]
+    url = (cfg.get("describe_url") or os.environ.get("RAG_DESCRIBE_URL") or "").strip().rstrip("/")
     if not url:
         return None
+    if "/v1/" not in url and not url.endswith("/completions"):
+        url += "/v1/chat/completions"          # a bare server address
+    return {"url": url, "model": cfg.get("describe_model") or os.environ.get("RAG_DESCRIBE_MODEL") or "default",
+            "timeout": float(cfg.get("describe_timeout_s", 120))}
+
+
+PROMPT = (
+    "This picture is from a technical document such as a work instruction, procedure or "
+    "specification{where}. In 1-3 sentences, say what it shows so that someone searching for it "
+    "would find it: name the equipment, parts, controls, screens and indicators, and copy any "
+    "labels, buttons, field names and values you can read exactly. If it is a screenshot, give "
+    "the window or screen title and the settings with their values. If it is a table, transcribe "
+    "it as a Markdown table instead. Describe only what is visible; don't guess part numbers or "
+    "values you can't read. No preamble."
+)
+
+
+def _blank(img: Image.Image) -> bool:
+    """A redaction box, an empty frame or a solid fill: nothing for a model to describe."""
+    from PIL import ImageStat
+
+    return max(ImageStat.Stat(img.convert("L").resize((64, 64))).stddev) < 6
+
+
+def describe_image(img: Image.Image, ctx: ExtractContext, *, context: str | None = None,
+                   caption: str | None = None) -> str | None:
+    """Ask the vision model (any OpenAI-compatible chat endpoint) to describe a picture. Optional:
+    a failure never fails the build, but it is counted, so the document is read again next time."""
+    settings = describe_settings(ctx.config)
+    if settings is None or _blank(img):
+        return None
+    stats = ctx.describe_stats
+    if stats.get("down"):
+        stats["failed"] += 1          # the model stopped answering earlier in this document
+        return None
+    im = img.convert("RGB")
+    if max(im.size) > 1280:           # more pixels cost time and memory, not accuracy
+        f = 1280 / max(im.size)
+        im = im.resize((max(1, int(im.width * f)), max(1, int(im.height * f))), Image.LANCZOS)
     buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="PNG")
+    im.save(buf, format="PNG")
+    where = ""
+    if context:
+        where = f", illustrating: {context}"
+    elif caption:
+        where = f", captioned: {caption}"
     payload = {
-        "model": cfg.get("describe_model") or "default",
+        "model": settings["model"],
         "messages": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": "Describe this figure from a technical document in 2-4 "
-                                         "sentences. Include any labels, values or part names you can read. "
-                                         "If it is a table or spreadsheet, transcribe it as a Markdown table "
-                                         "instead. If it is a flowchart, list its steps in order with where "
-                                         "each one leads, including branch labels such as Yes and No."},
                 {"type": "image_url", "image_url": {
                     "url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}},
+                {"type": "text", "text": PROMPT.format(where=where)},
             ],
         }],
         "temperature": 0,
-        "max_tokens": 300,
+        "max_tokens": 320,
     }
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+    req = urllib.request.Request(settings["url"], data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=float(cfg.get("describe_timeout_s", 60))) as resp:
+        with urllib.request.urlopen(req, timeout=settings["timeout"]) as resp:
             data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"].strip() or None
-    except Exception:  # descriptions are optional; never fail a build over one
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+    except Exception as exc:  # noqa: BLE001 - descriptions are optional; never fail a build over one
+        stats["failed"] += 1
+        if isinstance(exc, (urllib.error.URLError, ConnectionError, TimeoutError, OSError)):
+            stats["down"] = True      # don't wait out a timeout for every picture
         return None
+    stats["done"] += 1
+    text = re.sub(r"^(this|the) (picture|image|photo|figure) (shows|is|depicts)\s*", "", text, flags=re.I).strip()
+    return (text[:1].upper() + text[1:]) if text else None
 
 
 _WORDLIKE = re.compile(r"[A-Za-z]{3,}")
@@ -96,7 +147,7 @@ def make_figure_block(
         ocr, conf = found.text, found.conf
         if found.table is not None:
             return _table_block(found.table, ctx, path, img, page=page, caption=caption)
-    description = describe_image(img, ctx)
+    description = describe_image(img, ctx, context=context, caption=caption)
     parts = [f"**Figure**{f' (page {page})' if page else ''}" + (f": {caption}" if caption else "")]
     if context:
         parts.append("Shown with: " + context)
@@ -155,9 +206,7 @@ def make_diagram_block(img: Image.Image, diagram, ctx: ExtractContext, *, page: 
     kind = "Flowchart" if diagram.flowchart else "Diagram"
     title = f"**{kind}**{f' (page {page})' if page else ''}" + (f": {caption}" if caption else "")
     text = diagram.to_text(title)
-    description = describe_image(img, ctx)
-    if description:
-        text += "\n\nDescription: " + description
+    description = None      # the steps rebuilt from the drawing are exact; a model's summary adds nothing
     return Block(
         kind="figure",
         text=text,

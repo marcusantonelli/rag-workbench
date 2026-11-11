@@ -47,6 +47,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "port": 0,                    # 0 = pick a free port
         "autostart": True,
     },
+    "vision": {
+        "enabled": False,             # describe pictures during builds (runs a second llama-server)
+        "model_path": None,
+        "mmproj_path": None,          # the model's image encoder
+        "model_id": None,
+        "ctx": 8192,
+        "port": 0,                    # 0 = 8083, or a free one
+    },
     "workspaces_dir": None,           # default: <data>/workspaces
     "recent": [],                     # [{path, kind, name, opened_at}]
 }
@@ -85,6 +93,15 @@ class Settings:
         self.data["runtime"].update(changes)
         self.save()
         return self.data["runtime"]
+
+    @property
+    def vision(self) -> dict[str, Any]:
+        return self.data["vision"]
+
+    def update_vision(self, **changes: Any) -> dict[str, Any]:
+        self.data["vision"].update(changes)
+        self.save()
+        return self.data["vision"]
 
     @property
     def workspaces_dir(self) -> Path:

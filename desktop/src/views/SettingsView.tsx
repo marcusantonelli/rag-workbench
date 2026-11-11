@@ -5,6 +5,7 @@ import { useApp, useJob } from "../state";
 import { Button, Notice, Progress, Switch } from "../components/ui";
 import { basename, bytes } from "../format";
 import { GGUF_FILTER, pickPaths } from "../platform";
+import { PicturesPanel } from "./PicturesPanel";
 
 const VARIANT_LABEL: Record<string, string> = {
   "cuda-12.4": "CUDA 12.4 (NVIDIA)",
@@ -114,6 +115,8 @@ export function SettingsView() {
         )}
         {showLog && <pre className="log">{runtime.log_tail.join("\n") || "(nothing yet)"}</pre>}
       </section>
+
+      <PicturesPanel />
 
       <section className="panel">
         <h2>Hardware</h2>

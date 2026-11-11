@@ -373,7 +373,152 @@ def _free_port(preferred: int = PREFERRED_PORT) -> int:
 
 
 # ----------------------------------------------------------------------------------------------
-# The managed server
+# One llama-server process
+# ----------------------------------------------------------------------------------------------
+class ManagedServer:
+    """Starts one llama-server, watches it until /health answers, keeps its log, stops it, and
+    cleans up one left behind by a crashed app (by its pid file)."""
+
+    def __init__(self, label: str, pidfile: Path, on_change: Callable[[], None]):
+        self.label = label
+        self.pidfile = pidfile
+        self.on_change = on_change
+        self.proc: subprocess.Popen | None = None
+        self.log: deque[str] = deque(maxlen=400)
+        self.state = "stopped"          # stopped | starting | ready | failed
+        self.error: str | None = None
+        self.url: str | None = None
+        self.lock = threading.RLock()
+        self._fallback: list[str] | None = None
+        self._exe: Path | None = None
+        self._port = 0
+        self.kill_stale()
+
+    def running(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def kill_stale(self) -> None:
+        pf = self.pidfile
+        if not pf.exists():
+            return
+        try:
+            pid = int(pf.read_text().strip())
+        except ValueError:
+            pf.unlink(missing_ok=True)
+            return
+        try:
+            if sys.platform.startswith("linux"):
+                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="ignore")
+                if "llama-server" in cmd:
+                    os.kill(pid, 15)
+            elif sys.platform == "win32":
+                out = _run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"]) or ""
+                if "llama-server" in out.lower():
+                    _run(["taskkill", "/PID", str(pid), "/T", "/F"])
+        except (OSError, ProcessLookupError, PermissionError):
+            pass
+        pf.unlink(missing_ok=True)
+
+    def launch(self, exe: Path, cmd: list[str], port: int, *, fallback: list[str] | None = None) -> None:
+        """Start cmd. If it exits before it is ready and a fallback (e.g. the same on the CPU) is
+        given, start that instead, once."""
+        with self.lock:
+            self._exe, self._port, self._fallback = exe, port, fallback
+            self.log.clear()
+            self._spawn(cmd)
+
+    def _spawn(self, cmd: list[str]) -> None:
+        self.log.append("$ " + " ".join(cmd))
+        self.state, self.error, self.url = "starting", None, None
+        self.on_change()
+        try:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                         encoding="utf-8", errors="replace", env=_server_env(self._exe),
+                                         creationflags=_NO_WINDOW, bufsize=1)
+        except OSError as exc:
+            self.state, self.error = "failed", f"Could not start llama-server: {exc}"
+            self.on_change()
+            return
+        self.pidfile.write_text(str(self.proc.pid))
+        threading.Thread(target=self._pump, args=(self.proc,), daemon=True).start()
+        threading.Thread(target=self._watch, args=(self.proc, f"http://127.0.0.1:{self._port}"), daemon=True).start()
+
+    def wait(self, should_stop: Callable[[], bool] | None = None, timeout: float = 600) -> None:
+        deadline = time.monotonic() + timeout
+        while self.state == "starting" and time.monotonic() < deadline:
+            if should_stop and should_stop():
+                self.stop()
+                raise Cancelled("cancelled")
+            time.sleep(0.25)
+        if self.state != "ready":
+            raise RuntimeErrorWithHint(self.error or f"The {self.label} did not become ready.",
+                                       "See the server log in Settings.")
+
+    def _pump(self, proc: subprocess.Popen) -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            self.log.append(line.rstrip())
+
+    def _watch(self, proc: subprocess.Popen, url: str) -> None:
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            try:
+                with _open(url + "/health", timeout=5) as resp:
+                    if resp.status == 200:
+                        with self.lock:
+                            if self.proc is proc:
+                                self.state, self.url = "ready", url
+                        self.on_change()
+                        break
+            except (urllib.error.URLError, OSError, ValueError):
+                pass
+            time.sleep(0.5)
+        else:
+            with self.lock:
+                if self.proc is proc:
+                    self.state, self.error = "failed", f"The {self.label} did not become ready in 10 minutes."
+            self.on_change()
+            return
+        if proc.poll() is not None or self.state != "ready":
+            # Exited before (or instead of) becoming ready.
+            with self.lock:
+                if self.proc is not proc or self.state == "stopped":
+                    return
+                fallback, self._fallback = self._fallback, None
+                if fallback:
+                    self.log.append(f"exited with code {proc.returncode}; retrying without the GPU")
+                    self._spawn(fallback)
+                    return
+                tail = " | ".join(list(self.log)[-6:])
+                self.state = "failed"
+                self.error = f"llama-server exited (code {proc.returncode}). {tail}"[:800]
+            self.on_change()
+            return
+        proc.wait()
+        with self.lock:
+            if self.proc is proc and self.state == "ready":
+                self.state, self.url = "failed", None
+                self.error = f"The {self.label} stopped unexpectedly (code {proc.returncode})."
+                self.on_change()
+
+    def stop(self) -> None:
+        with self.lock:
+            proc, self.proc = self.proc, None
+            self.state, self.url, self.error, self._fallback = "stopped", None, None, None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        self.pidfile.unlink(missing_ok=True)
+        self.on_change()
+
+
+# ----------------------------------------------------------------------------------------------
+# The managed embedding server
 # ----------------------------------------------------------------------------------------------
 class Runtime:
     def __init__(self, settings: Settings, emit: Callable[[str, dict[str, Any]], None] | None = None):
@@ -385,19 +530,18 @@ class Runtime:
         self.models_dir.mkdir(parents=True, exist_ok=True)
         self._hw: dict[str, Any] | None = None
         self._devices: list[dict[str, Any]] | None = None
-        self._proc: subprocess.Popen | None = None
-        self._log: deque[str] = deque(maxlen=400)
-        self._state = "stopped"          # stopped | starting | ready | failed
-        self._error: str | None = None
         self._device_note = ""
-        self._url: str | None = None
-        self._lock = threading.RLock()
-        self._kill_stale()
+        self.server = ManagedServer("embedding model", self.root / "llama-server.pid",
+                                    lambda: self.emit("runtime", self.status()))
 
     # -- facts ------------------------------------------------------------------------------
     @property
     def cfg(self) -> dict[str, Any]:
         return self.settings.runtime
+
+    @property
+    def _state(self) -> str:
+        return self.server.state
 
     def hardware(self, refresh: bool = False) -> dict[str, Any]:
         if self._hw is None or refresh:
@@ -426,7 +570,13 @@ class Runtime:
     def url(self) -> str | None:
         if self.cfg.get("mode") == "external":
             return self.cfg.get("url")
-        return self._url if self._state == "ready" else None
+        return self.server.url if self.server.state == "ready" else None
+
+    def devices(self) -> list[dict[str, Any]]:
+        if self._devices is None:
+            exe = self.server_exe()
+            self._devices = list_devices(exe)[0] if exe else []
+        return self._devices
 
     def status(self) -> dict[str, Any]:
         hw = self.hardware()
@@ -435,10 +585,10 @@ class Runtime:
         managed = self.cfg.get("mode") != "external"
         return {
             "mode": self.cfg.get("mode"),
-            "state": self._state if managed else "external",
+            "state": self.server.state if managed else "external",
             "ready": self.url() is not None,
             "url": self.url(),
-            "error": self._error,
+            "error": self.server.error,
             "accel": self.cfg.get("accel", "auto"),
             "variant": self.installed_variant(),
             "recommended_variant": recommended,
@@ -453,12 +603,12 @@ class Runtime:
             "needs_setup": managed and (self.installed_variant() is None or model is None),
             "hardware": hw,
             "external_url": self.cfg.get("url"),
-            "log_tail": list(self._log)[-60:],
+            "log_tail": list(self.server.log)[-60:],
         }
 
     # -- setup ------------------------------------------------------------------------------
-    def setup(self, *, download_model: bool, model_path: str | None, model_id: str | None,
-              progress: ProgressFn, should_stop: Callable[[], bool]) -> dict[str, Any]:
+    def ensure_build(self, progress: ProgressFn, should_stop: Callable[[], bool]) -> Path:
+        """The llama.cpp build for this machine, downloaded if needed; returns llama-server."""
         hw = self.hardware(refresh=True)
         variant, why = choose_variant(hw, self.cfg.get("accel", "auto"))
         progress({"stage": "plan", "message": why})
@@ -470,7 +620,11 @@ class Runtime:
             raise RuntimeErrorWithHint("llama-server was not found in the downloaded build.")
         progress({"stage": "devices", "message": "Checking which devices llama.cpp can use"})
         self._devices, _ = list_devices(exe)
+        return exe
 
+    def setup(self, *, download_model: bool, model_path: str | None, model_id: str | None,
+              progress: ProgressFn, should_stop: Callable[[], bool]) -> dict[str, Any]:
+        self.ensure_build(progress, should_stop)
         if model_path:
             p = Path(model_path)
             if not p.is_file() or p.suffix.lower() != ".gguf":
@@ -521,43 +675,12 @@ class Runtime:
         staging.replace(target)
 
     # -- process ----------------------------------------------------------------------------
-    def _pidfile(self) -> Path:
-        return self.root / "llama-server.pid"
-
-    def _kill_stale(self) -> None:
-        """Stop a llama-server left behind by an app that crashed."""
-        pf = self._pidfile()
-        if not pf.exists():
-            return
-        try:
-            pid = int(pf.read_text().strip())
-        except ValueError:
-            pf.unlink(missing_ok=True)
-            return
-        try:
-            if sys.platform.startswith("linux"):
-                cmd = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="ignore")
-                if "llama-server" in cmd:
-                    os.kill(pid, 15)
-            elif sys.platform == "win32":
-                out = _run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"]) or ""
-                if "llama-server" in out.lower():
-                    _run(["taskkill", "/PID", str(pid), "/T", "/F"])
-        except (OSError, ProcessLookupError, PermissionError):
-            pass
-        pf.unlink(missing_ok=True)
-
-    def _gpu_plan(self, model: Path) -> tuple[bool, str]:
+    def gpu_plan(self, need_mb: int) -> tuple[bool, str]:
         if self.cfg.get("accel") == "cpu":
             return False, "Force CPU is on."
-        devices = self._devices
-        if devices is None:
-            exe = self.server_exe()
-            devices = list_devices(exe)[0] if exe else []
-            self._devices = devices
+        devices = self.devices()
         if not devices:
             return False, "llama.cpp found no usable GPU with this build: running on the CPU."
-        need_mb = model.stat().st_size // (1024 * 1024) + 1536
         best = max(devices, key=lambda d: d["free_mb"])
         if best["free_mb"] < need_mb and self.cfg.get("accel") != "gpu":
             return False, (f"{best['name']} has {best['free_mb']} MiB free; the model needs about {need_mb} MiB: "
@@ -565,103 +688,29 @@ class Runtime:
         return True, f"Running on {best['name']} ({best['id']})."
 
     def start(self, *, wait: bool = False, should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
-        with self._lock:
+        with self.server.lock:
             if self.cfg.get("mode") == "external":
                 return self.status()
-            if self._proc is not None and self._proc.poll() is None:
+            if self.server.running():
                 return self.status()
             exe, model = self.server_exe(), self.model_path()
             if exe is None or model is None:
-                self._state, self._error = "stopped", None
+                self.server.state, self.server.error = "stopped", None
                 return self.status()
-            use_gpu, note = self._gpu_plan(model)
+            use_gpu, note = self.gpu_plan(model.stat().st_size // (1024 * 1024) + 1536)
             self._device_note = note
             port = _free_port(int(self.cfg.get("port") or 0) or PREFERRED_PORT)
             ctx = str(int(self.cfg.get("ctx") or 8192))
             cmd = [str(exe), "-m", str(model), "--embedding", "--pooling", "last", "-c", ctx, "-b", ctx, "-ub", ctx,
                    "--host", "127.0.0.1", "--port", str(port)]
             cmd += ["-ngl", "99"] if use_gpu else ["-ngl", "0", "--device", "none"]
-            self._log.clear()
-            self._log.append("$ " + " ".join(cmd))
-            self._state, self._error, self._url = "starting", None, None
-            self.emit("runtime", self.status())
-            try:
-                self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                              encoding="utf-8", errors="replace", env=_server_env(exe),
-                                              creationflags=_NO_WINDOW, bufsize=1)
-            except OSError as exc:
-                self._state, self._error = "failed", f"Could not start llama-server: {exc}"
-                self.emit("runtime", self.status())
-                return self.status()
-            self._pidfile().write_text(str(self._proc.pid))
-            threading.Thread(target=self._pump, args=(self._proc,), daemon=True).start()
-            threading.Thread(target=self._watch, args=(self._proc, f"http://127.0.0.1:{port}"), daemon=True).start()
+            self.server.launch(exe, cmd, port)
         if wait:
-            deadline = time.monotonic() + 600
-            while self._state == "starting" and time.monotonic() < deadline:
-                if should_stop and should_stop():
-                    self.stop()
-                    raise Cancelled("cancelled")
-                time.sleep(0.25)
-            if self._state != "ready":
-                raise RuntimeErrorWithHint(self._error or "llama-server did not become ready.",
-                                           "See the server log in Settings.")
+            self.server.wait(should_stop)
         return self.status()
 
-    def _pump(self, proc: subprocess.Popen) -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            self._log.append(line.rstrip())
-
-    def _watch(self, proc: subprocess.Popen, url: str) -> None:
-        deadline = time.monotonic() + 600
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            try:
-                with _open(url + "/health", timeout=5) as resp:
-                    if resp.status == 200:
-                        with self._lock:
-                            if self._proc is proc:
-                                self._state, self._url = "ready", url
-                        self.emit("runtime", self.status())
-                        break
-            except (urllib.error.URLError, OSError, ValueError):
-                pass
-            time.sleep(0.5)
-        else:
-            with self._lock:
-                if self._proc is proc:
-                    self._state, self._error = "failed", "llama-server did not become ready in 10 minutes."
-            self.emit("runtime", self.status())
-            return
-        if proc.poll() is not None or self._state != "ready":
-            # Exited before (or instead of) becoming ready.
-            if self._proc is proc and self._state != "stopped":
-                tail = " | ".join(list(self._log)[-6:])
-                self._state = "failed"
-                self._error = f"llama-server exited (code {proc.returncode}). {tail}"[:800]
-                self.emit("runtime", self.status())
-            return
-        proc.wait()
-        with self._lock:
-            if self._proc is proc and self._state == "ready":
-                self._state, self._url = "failed", None
-                self._error = f"llama-server stopped unexpectedly (code {proc.returncode})."
-                self.emit("runtime", self.status())
-
     def stop(self) -> dict[str, Any]:
-        with self._lock:
-            proc, self._proc = self._proc, None
-            self._state, self._url, self._error = "stopped", None, None
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        self._pidfile().unlink(missing_ok=True)
-        self.emit("runtime", self.status())
+        self.server.stop()
         return self.status()
 
     def restart(self) -> dict[str, Any]:
@@ -677,7 +726,7 @@ class Runtime:
             raise ValueError("accel must be auto, gpu or cpu")
         if "mode" in changes and changes["mode"] not in ("managed", "external"):
             raise ValueError("mode must be managed or external")
-        running = self._proc is not None and self._proc.poll() is None
+        running = self.server.running()
         self.settings.update_runtime(**changes)
         if "llama_build" in changes:
             self._devices = None
@@ -685,4 +734,122 @@ class Runtime:
             self.stop()
             if self.cfg.get("mode") == "managed":
                 self.start()
+        return self.status()
+
+
+# ----------------------------------------------------------------------------------------------
+# The managed vision model (picture descriptions)
+# ----------------------------------------------------------------------------------------------
+VISION_MODEL = {
+    "id": "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M",
+    "file": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+    "url": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf",
+    "approx_bytes": 2_497_281_664,
+    "mmproj_file": "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
+    "mmproj_url": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
+    "mmproj_bytes": 453_974_304,
+}
+VISION_PORT = 8083    # embedding 8081, the reranker's usual 8082
+
+
+class VisionRuntime:
+    """A second llama-server, running a small vision-language model, that describes the pictures
+    in documents during a build. It shares the embedding server's llama.cpp build and Force CPU
+    setting. Builds find it through RAG_DESCRIBE_URL (set by the app while it is ready)."""
+
+    def __init__(self, runtime: Runtime, emit: Callable[[str, dict[str, Any]], None] | None = None):
+        self.rt = runtime
+        self.settings = runtime.settings
+        self.emit = emit or (lambda name, data: None)
+        self._device_note = ""
+        self.server = ManagedServer("picture model", runtime.root / "llama-server-vision.pid",
+                                    lambda: self.emit("vision", self.status()))
+
+    @property
+    def cfg(self) -> dict[str, Any]:
+        return self.settings.vision
+
+    def files(self) -> tuple[Path | None, Path | None]:
+        m, p = self.cfg.get("model_path"), self.cfg.get("mmproj_path")
+        return (Path(m) if m and Path(m).is_file() else None, Path(p) if p and Path(p).is_file() else None)
+
+    def url(self) -> str | None:
+        return self.server.url if self.server.state == "ready" else None
+
+    def status(self) -> dict[str, Any]:
+        model, mmproj = self.files()
+        return {
+            "enabled": bool(self.cfg.get("enabled")),
+            "state": self.server.state,
+            "ready": self.url() is not None,
+            "url": self.url(),
+            "error": self.server.error,
+            "model_id": self.cfg.get("model_id"),
+            "model_path": str(model) if model else None,
+            "mmproj_path": str(mmproj) if mmproj else None,
+            "size_bytes": sum(p.stat().st_size for p in (model, mmproj) if p) or None,
+            "needs_setup": model is None or mmproj is None or self.rt.server_exe() is None,
+            "default_model": VISION_MODEL,
+            "device_note": self._device_note,
+            "log_tail": list(self.server.log)[-60:],
+        }
+
+    def setup(self, *, progress: ProgressFn, should_stop: Callable[[], bool]) -> dict[str, Any]:
+        if self.rt.server_exe() is None:
+            self.rt.ensure_build(progress, should_stop)
+        model = self.rt.models_dir / VISION_MODEL["file"]
+        mmproj = self.rt.models_dir / VISION_MODEL["mmproj_file"]
+        if not model.exists():
+            download(VISION_MODEL["url"], model, progress=progress, should_stop=should_stop,
+                     label=VISION_MODEL["file"], expected_bytes=VISION_MODEL["approx_bytes"])
+        if not mmproj.exists():
+            download(VISION_MODEL["mmproj_url"], mmproj, progress=progress, should_stop=should_stop,
+                     label=VISION_MODEL["mmproj_file"], expected_bytes=VISION_MODEL["mmproj_bytes"])
+        self.settings.update_vision(model_path=str(model), mmproj_path=str(mmproj), model_id=VISION_MODEL["id"],
+                                    enabled=True)
+        progress({"stage": "start", "message": "Starting the picture model"})
+        self.start(wait=True, should_stop=should_stop)
+        return self.status()
+
+    def start(self, *, wait: bool = False, should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
+        with self.server.lock:
+            if self.server.running():
+                return self.status()
+            exe = self.rt.server_exe()
+            model, mmproj = self.files()
+            if exe is None or model is None or mmproj is None:
+                self.server.state, self.server.error = "stopped", None
+                return self.status()
+            need = (model.stat().st_size + mmproj.stat().st_size) // (1024 * 1024) + 1536
+            use_gpu, note = self.rt.gpu_plan(need)
+            port = _free_port(int(self.cfg.get("port") or 0) or VISION_PORT)
+            ctx = str(int(self.cfg.get("ctx") or 8192))
+            base = [str(exe), "-m", str(model), "--mmproj", str(mmproj), "-c", ctx, "-np", "1",
+                    "--host", "127.0.0.1", "--port", str(port)]
+            cpu = base + ["-ngl", "0", "--device", "none", "--no-mmproj-offload"]
+            if use_gpu:
+                # The GPU may be full with the embedding model; then the CPU is tried, once.
+                self._device_note = note
+                self.server.launch(exe, base + ["-ngl", "99"], port, fallback=cpu)
+            else:
+                self._device_note = note
+                self.server.launch(exe, cpu, port)
+        if wait:
+            self.server.wait(should_stop)
+        return self.status()
+
+    def stop(self) -> dict[str, Any]:
+        self.server.stop()
+        return self.status()
+
+    def configure(self, **changes: Any) -> dict[str, Any]:
+        allowed = {"enabled", "ctx", "port"}
+        bad = set(changes) - allowed
+        if bad:
+            raise ValueError(f"unknown picture model settings: {', '.join(sorted(bad))}")
+        self.settings.update_vision(**changes)
+        if changes.get("enabled") is False:
+            self.stop()
+        elif changes.get("enabled") is True and not self.status()["needs_setup"]:
+            self.start()
         return self.status()

@@ -547,7 +547,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--json", action="store_true")
     s.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=None,
                    help="reorder the best candidates with the reranker model (default: the workspace's [rerank] setting)")
-    s.add_argument("--rerank-url", help="the reranker's address, e.g. http://127.0.0.1:8081 (implies nothing; use with --rerank)")
+    s.add_argument("--rerank-url", help="the reranker's address, e.g. http://127.0.0.1:8082 (implies nothing; use with --rerank)")
     s.set_defaults(fn=cmd_search)
 
     s = sub.add_parser("tables", help="list tables")

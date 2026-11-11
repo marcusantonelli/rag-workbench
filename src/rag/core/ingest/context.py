@@ -16,6 +16,8 @@ class ExtractContext:
     display_path: str
     assets_root: Path                       # <workspace>/assets
     progress: Callable[[str, dict], None] = field(default=lambda stage, info: None)
+    # picture descriptions asked for in this document: done, failed, and whether the model stopped answering
+    describe_stats: dict = field(default_factory=lambda: {"done": 0, "failed": 0, "down": False})
 
     @property
     def asset_dir(self) -> Path:

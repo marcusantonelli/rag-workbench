@@ -10,7 +10,7 @@ public sealed class RerankOptions
 {
     public bool Enabled { get; init; } = true;
 
-    /// <summary>For example <c>http://127.0.0.1:8081</c> ("/v1/rerank" is added) or a full endpoint. Plain http.</summary>
+    /// <summary>For example <c>http://127.0.0.1:8082</c> ("/v1/rerank" is added) or a full endpoint. Plain http.</summary>
     public string Url { get; init; } = "";
 
     public string Model { get; init; } = "";

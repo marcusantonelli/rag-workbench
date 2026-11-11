@@ -183,7 +183,7 @@ question together with each of the best 20 candidates and reorders them before
 the cut. It needs a `/v1/rerank` endpoint, for example:
 
 ```bash
-llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8081
+llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8082
 ```
 
 Turn it on for one search with `rag search WS "question" --rerank`
@@ -194,6 +194,21 @@ usual order, and says it wasn't reranked.
 
 `rag sql` runs agent-style SQL read-only: an authorizer allows only reads, one
 statement per call, rows capped at 200, a 2-second time limit.
+
+## Reading difficult documents
+
+Beyond plain text, headings and ruled tables, the reader handles:
+
+- **Flowcharts drawn as shapes** (Visio, PowerPoint, draw.io exports): rebuilt as numbered steps
+  with where each leads and the branch labels, across pages, with side notes attached.
+- **Work instructions laid out as one long table** (STEP | PROCEDURE | DESCRIPTION | VISUAL):
+  read as a document, a heading per step with its bullets and pictures in order.
+- **Pictures of tables and spreadsheets**, and tables on scanned pages: rebuilt as real tables.
+- **Forms**: values typed into fillable PDF fields, checkboxes and radio buttons (☒ ☐ ◉ ○),
+  label/value grids ("Lot number: L26-3007"), and Word content controls, form checkboxes and
+  tracked changes.
+- **Photos and screenshots**, optionally: a vision model describes each one (see
+  [Picture descriptions](docs/cli.md#picture-descriptions)).
 
 ## Vector store: sqlite-vec or Shammy
 

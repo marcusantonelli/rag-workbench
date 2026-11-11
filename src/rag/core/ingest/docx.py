@@ -33,12 +33,99 @@ def _style_level(style_name: str) -> int:
     return min(int(m.group(1)), 6) if m else 0
 
 
+_W = "{%s}" % _NS["w"]
+_SKIP = {"del", "moveFrom", "drawing", "pict", "object", "instrText", "delText", "rPr", "pPr", "sdtPr",
+         "sdtEndPr", "fldData", "commentReference", "footnoteReference", "endnoteReference"}
+
+
+def _run_font(r) -> str:
+    fonts = r.find(f"{_W}rPr/{_W}rFonts")
+    if fonts is None:
+        return ""
+    return fonts.get(f"{_W}ascii") or fonts.get(f"{_W}hAnsi") or fonts.get(f"{_W}cs") or ""
+
+
+def _legacy_checkbox(fld) -> str | None:
+    """☒ or ☐ for a legacy FORMCHECKBOX field (its state is in the field's data, not its text)."""
+    box = fld.find(f"{_W}ffData/{_W}checkBox")
+    if box is None:
+        return None
+    for tag in ("checked", "default"):
+        el = box.find(f"{_W}{tag}")
+        if el is not None:
+            return "☐" if el.get(f"{_W}val") in ("0", "false", "off") else "☒"
+    return "☐"
+
+
+def _para_text(p) -> str:
+    """A paragraph's text as Word shows it: runs inside content controls, hyperlinks, tracked
+    insertions and simple fields too (python-docx skips those), deleted text left out, tabs and
+    breaks kept, Wingdings boxes and ticks as ☐ ☑ ☒ ✓ ✗, legacy form checkboxes by their state."""
+    from rag.core.ingest.forms import checkbox_symbol
+
+    out: list[str] = []
+
+    def walk(el) -> None:
+        for child in el:
+            tag = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
+            if tag in _SKIP:
+                continue
+            if tag == "r":
+                font = _run_font(child)
+                for part in child:
+                    ptag = part.tag.split("}")[-1] if isinstance(part.tag, str) else ""
+                    if ptag == "t":
+                        text = part.text or ""
+                        if "wingdings" in font.lower():
+                            text = "".join(checkbox_symbol(ch, font) or ch for ch in text)
+                        out.append(text)
+                    elif ptag == "tab":
+                        out.append("\t")
+                    elif ptag in ("br", "cr"):
+                        out.append("\n")
+                    elif ptag == "noBreakHyphen":
+                        out.append("-")
+                    elif ptag == "sym":
+                        sym_font = part.get(f"{_W}font") or ""
+                        try:
+                            ch = chr(int(part.get(f"{_W}char") or "0", 16))
+                        except ValueError:
+                            continue
+                        out.append(checkbox_symbol(ch, sym_font) or ("" if 0xF000 <= ord(ch) <= 0xF0FF else ch))
+                    elif ptag == "fldChar" and part.get(f"{_W}fldCharType") == "begin":
+                        box = _legacy_checkbox(part)
+                        if box:
+                            out.append(box)
+            elif tag in ("hyperlink", "ins", "smartTag", "sdt", "sdtContent", "customXml", "fldSimple",
+                         "moveTo", "dir", "bdo", "AlternateContent", "Choice"):
+                walk(child)
+
+    walk(p)
+    return "".join(out)
+
+
+def _block_elements(parent):
+    """Paragraphs and tables in document order, including those inside block-level content
+    controls (Word forms and templates put whole sections in them)."""
+    for child in parent.iterchildren():
+        tag = child.tag.split("}")[-1] if isinstance(child.tag, str) else ""
+        if tag in ("p", "tbl"):
+            yield child
+        elif tag in ("sdt", "sdtContent", "customXml"):
+            yield from _block_elements(child if tag != "sdt" else (child.find(f"{_W}sdtContent") if child.find(f"{_W}sdtContent") is not None else child))
+
+
+def _cell_text(cell) -> str:
+    paras = [p for p in _block_elements(cell._tc) if p.tag == f"{_W}p"]
+    return " ".join(t for t in (_para_text(p).strip() for p in paras) if t)
+
+
 def _table_rows(table) -> list[list[str]]:
     """Rows of cell text. A merged cell repeats in every column it spans, so columns
     stay aligned (python-docx returns the same cell for each spanned position)."""
     rows: list[list[str]] = []
     for row in table.rows:
-        cells = [" ".join(p.text.strip() for p in cell.paragraphs if p.text.strip()) for cell in row.cells]
+        cells = [_cell_text(cell) for cell in row.cells]
         if any(cells):
             rows.append(cells)
     return rows
@@ -74,11 +161,13 @@ def extract_docx(path: Path, ctx: ExtractContext, *, file_type: str = "docx") ->
     min_px = 64
     has_title = False
 
-    for child in document.element.body.iterchildren():
+    from rag.core.ingest.forms import form_lines
+
+    for child in _block_elements(document.element.body):
         tag = child.tag.split("}")[-1]
         if tag == "p":
             para = Paragraph(child, document)
-            text = para.text.strip()
+            text = _para_text(child).strip()
             style = para.style.name if para.style is not None else ""
             level = _style_level(style)
             if text:
@@ -112,6 +201,10 @@ def extract_docx(path: Path, ctx: ExtractContext, *, file_type: str = "docx") ->
                 continue
             if len(rows) == 1 or max(len(r) for r in rows) == 1:
                 blocks.append(Block(kind="paragraph", text=" / ".join(" ".join(r) for r in rows)))
+                continue
+            pairs = form_lines(rows)
+            if pairs is not None:          # a form laid out as a grid: "Label: value" lines
+                blocks.append(Block(kind="paragraph", text="\n".join(pairs), meta={"form": True}))
                 continue
             headers, data = _split_header(rows)
             blocks.append(Block(kind="table", text=markdown_table(headers, data),

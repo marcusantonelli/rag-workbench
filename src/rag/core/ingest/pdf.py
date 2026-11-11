@@ -248,6 +248,9 @@ def _reading_groups(words: list[dict], depth: int = 0) -> list[list[dict]]:
     return out
 
 
+_BOXES = {"☐", "☑", "☒", "◉", "○", "✓", "✗"}
+
+
 def _words_to_lines(words: list[dict]) -> list[_Line]:
     words = sorted(words, key=lambda w: (round(w["top"]), w["x0"]))
     groups: list[list[dict]] = []
@@ -266,9 +269,14 @@ def _words_to_lines(words: list[dict]) -> list[_Line]:
         # wide gap is a section number set off from its heading, or a justified last line.
         wide = [float(w["x0"]) - float(prev["x1"]) > 1.8 * size for prev, w in zip(g, g[1:])]
         columns = sum(wide) >= 2 and not (_SECTION_NO_RE.match(g[0]["text"]) and sum(wide[1:]) < 2)
+        # a form field's value or a checkbox belongs to the label beside it, not a new column
+        joined = [str(w.get("fontname")) == "FormField" or str(prev["text"]).endswith(":") or w["text"] in _BOXES
+                  or prev["text"] in _BOXES for prev, w in zip(g, g[1:])]
+        if columns and sum(1 for k, j in zip(wide, joined) if k and not j) < 2:
+            columns = False
         parts = [g[0]["text"]]
-        for is_wide, w in zip(wide, g[1:]):
-            parts.append((" | " if is_wide and columns else " ") + w["text"])
+        for is_wide, j, w in zip(wide, joined, g[1:]):
+            parts.append((" | " if is_wide and columns and not j else " ") + w["text"])
         styles = [f"{w.get('fontname', '')}|{w.get('non_stroking_color', '')}" for w in g]
         lines.append(
             _Line(
@@ -447,6 +455,14 @@ def _header_above(words: list[dict], bbox, edges: list[float], rows: list[list[s
 
 def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
     cfg = ctx.config["pdf"]
+    from rag.core.ingest import forms
+
+    try:
+        forms.normalize_symbol_chars(page)          # Wingdings boxes and ticks as ☐ ☑ ☒ ✓ ✗
+        if cfg.get("form_fields", True):
+            forms.inject_pdf_fields(page)            # what was typed into a fillable form
+    except Exception:  # noqa: BLE001 - a form we can't read leaves the printed page as it was
+        pass
     try:
         words = page.extract_words(extra_attrs=["size", "fontname", "non_stroking_color"], keep_blank_chars=False)
     except Exception:  # noqa: BLE001 - odd colour spaces: fall back to font only
@@ -939,6 +955,8 @@ _FORM_CELL_RE = re.compile(r"[:#]")
 
 
 def _table_blocks(rows: list[list[str]], page: int | None, caption: str | None) -> list[Block]:
+    from rag.core.ingest.forms import form_lines
+
     """A ruled grid as blocks. Most are one table. A title block (a row of "Label: value" cells,
     then a one-cell row naming what follows, then a real table) comes out as lines of text and a
     captioned table, which is what it is."""
@@ -953,10 +971,11 @@ def _table_blocks(rows: list[list[str]], page: int | None, caption: str | None) 
         first = segment[0]
         filled = [c for c in first if c]
         form = len(first) >= 2 and len(filled) <= len(first) / 2 and any(_FORM_CELL_RE.search(c) for c in filled)
-        if form or len(segment) == 1:
-            lines = [c for r in segment for c in r if c]
+        pairs = form_lines(segment) if len(segment) > 1 or form else None
+        if form or len(segment) == 1 or pairs is not None:
+            lines = pairs if pairs is not None else [c for r in segment for c in r if c]
             text = "\n".join(([pending] if pending else []) + lines)
-            out.append(Block(kind="paragraph", text=text, page=page))
+            out.append(Block(kind="paragraph", text=text, page=page, meta={"form": pairs is not None}))
         else:
             headers, data = segment[0], segment[1:]
             text = (f"**{pending}**\n\n" if pending else "") + markdown_table(headers, data)

@@ -146,7 +146,7 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 | `rag merge DEST SRC... [--on-conflict newer\|keep\|replace] [--keep-copies] [--dry-run]` | Copy compatible packs or workspaces into DEST (created if missing). No re-embedding. |
 | `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |
 | `rag compact WS` | Rewrite `vectors.shammy` without deleted rows. Builds do this on their own when a quarter of the rows are deleted. |
-| `rag search WS\|PACK "question" [-k N] [--type pdf] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8081`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
+| `rag search WS\|PACK "question" [-k N] [--type pdf] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8082`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |
 | `rag sql WS\|PACK "SELECT ..." [--json]` | Read-only SQL over the tables, as the agent runs it. |
@@ -194,3 +194,23 @@ llama-server without editing their `config.toml` files.
   vector sizes; their vectors can't be compared. Rebuild one from its files instead.
 - **`'rag' is not recognized`** (Windows): open a new terminal after turning the command on;
   terminals opened before don't see the change.
+
+## Picture descriptions
+
+Builds can ask a vision model to describe each photo and screenshot, so pictures are found by
+what they show. In the desktop app, turn it on under **Settings → Picture descriptions** (it
+downloads Qwen3-VL-4B, about 3 GB, and runs it beside the embedding model; builds in the app and
+its terminal use it automatically). From the command line, run a vision model yourself and point
+builds at it:
+
+```bash
+llama-server -m Qwen3VL-4B-Instruct-Q4_K_M.gguf --mmproj mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf \
+  -c 8192 -np 1 --port 8083 -ngl 99
+export RAG_DESCRIBE_URL=http://127.0.0.1:8083     # or [figures] describe_url in config.toml
+rag build my-workspace docs/
+```
+
+Any OpenAI-compatible chat endpoint that accepts images works. Documents with pictures that were
+built without descriptions are read again by the next build once descriptions are on; others are
+left alone. If the model stops answering mid-build, the build finishes, the document is flagged,
+and the next build tries again.

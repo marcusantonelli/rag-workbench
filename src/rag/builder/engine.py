@@ -29,7 +29,7 @@ from rag.core.chunk.tokens import TokenCounter
 from rag.core.db.store import DocRecord, RagStore, now_iso
 from rag.core.db.tables import TablesStore, card_text
 from rag.core.ingest.context import ExtractContext
-from rag.core.ingest.router import EXTRACTOR_VERSION, detect_type, extract
+from rag.core.ingest.router import detect_type, extract, is_current, reading_tag
 from rag.core.models.embed import make_embedder
 from rag.core.types import Chunk, TableData
 from rag.core.util import long_path, sha256_file
@@ -185,8 +185,10 @@ class Builder:
             self.emit("file_failed", path=sf.display_path, error=str(exc), index=index, total=total)
             return
         existing = store.find_document(sf.source_key)
-        current = (existing is not None
-                   and str(existing["extractor"] or "").endswith(f"@v{EXTRACTOR_VERSION}"))
+        current = existing is not None and is_current(
+            existing["extractor"], self.cfg,
+            store.conn.execute("SELECT 1 FROM chunks WHERE doc_id = ? AND asset_path IS NOT NULL LIMIT 1",
+                               (existing["doc_id"],)).fetchone() is not None)
         if (existing is not None and existing["sha256"] == digest and existing["status"] in ("ok", "partial")
                 and current):
             stats.unchanged += 1
@@ -220,7 +222,7 @@ class Builder:
             doc, cached = extract(sf.path, ftype, ctx, cache_dir=self.ws.cache_dir,
                                   overrides_file=self.ws.root / "sheets.toml", use_cache=not no_cache)
             # The version suffix lets a later build re-extract files read by an older extractor.
-            rec.title, rec.n_pages, rec.extractor = doc.title, doc.n_pages, f"{doc.extractor}@v{EXTRACTOR_VERSION}"
+            rec.title, rec.n_pages, rec.extractor = doc.title, doc.n_pages, f"{doc.extractor}@{reading_tag(self.cfg, ctx)}"
             rec.warnings = list(doc.warnings)
 
             stage = "tables"

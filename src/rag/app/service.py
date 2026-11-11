@@ -119,6 +119,9 @@ class Service:
         self.settings = settings or Settings()
         self._emit = emit or (lambda name, data: None)
         self.runtime = Runtime(self.settings, emit=self._emit)
+        from rag.app.runtime import VisionRuntime
+
+        self.vision = VisionRuntime(self.runtime, emit=self._vision_changed)
         from rag.app.terminal import Terminal
 
         self.terminal = Terminal(self.emit, self.runtime.url)
@@ -135,6 +138,11 @@ class Service:
             "runtime.start": self.runtime_start,
             "runtime.stop": self.runtime_stop,
             "runtime.configure": self.runtime_configure,
+            "vision.status": self.vision_status,
+            "vision.setup": self.vision_setup,
+            "vision.start": self.vision_start,
+            "vision.stop": self.vision_stop,
+            "vision.configure": self.vision_configure,
             "kb.recent": self.kb_recent,
             "kb.forget": self.kb_forget,
             "kb.open": self.kb_open,
@@ -197,6 +205,23 @@ class Service:
         rt = self.settings.runtime
         if rt.get("mode") == "managed" and rt.get("autostart", True):
             threading.Thread(target=self._autostart, daemon=True).start()
+        if self.settings.vision.get("enabled") and not self.vision.status()["needs_setup"]:
+            threading.Thread(target=self._vision_autostart, daemon=True).start()
+
+    def _vision_autostart(self) -> None:
+        try:
+            self.vision.start()
+        except Exception as exc:  # noqa: BLE001
+            self.emit("log", {"level": "warning", "message": f"picture model autostart failed: {exc}"})
+
+    def _vision_changed(self, name: str, data: dict[str, Any]) -> None:
+        """Builds (here and in the app's terminal) describe pictures while the model is ready."""
+        url = data.get("url") if data.get("ready") else None
+        if url:
+            os.environ["RAG_DESCRIBE_URL"] = url
+        else:
+            os.environ.pop("RAG_DESCRIBE_URL", None)
+        self._emit(name, data)
 
     def _autostart(self) -> None:
         try:
@@ -208,6 +233,7 @@ class Service:
         self.terminal.shutdown()
         for job in list(self.jobs.values()):
             job.cancel.set()
+        self.vision.stop()
         self.runtime.stop()
 
     def _kb(self, kb: str) -> KnowledgeBase:
@@ -323,6 +349,32 @@ class Service:
     def runtime_configure(self, **changes: Any) -> dict[str, Any]:
         try:
             return self.runtime.configure(**changes)
+        except ValueError as exc:
+            raise ServiceError("bad_params", str(exc)) from exc
+
+    # ---------------------------------------------------------------------------- picture model
+    def vision_status(self) -> dict[str, Any]:
+        return self.vision.status()
+
+    def vision_setup(self) -> dict[str, Any]:
+        def work(job: Job) -> Any:
+            def progress(p: dict[str, Any]) -> None:
+                msg = p.get("message") or " ".join(str(x) for x in (p.get("stage"), p.get("label")) if x)
+                job.report(p, log={"message": msg} if p.get("stage") != "download" else None)  # type: ignore[attr-defined]
+
+            return self.vision.setup(progress=progress, should_stop=job.cancel.is_set)
+
+        return self._job("vision_setup", "Set up the picture model", work)
+
+    def vision_start(self) -> dict[str, Any]:
+        return self.vision.start()
+
+    def vision_stop(self) -> dict[str, Any]:
+        return self.vision.stop()
+
+    def vision_configure(self, **changes: Any) -> dict[str, Any]:
+        try:
+            return self.vision.configure(**changes)
         except ValueError as exc:
             raise ServiceError("bad_params", str(exc)) from exc
 
@@ -697,6 +749,13 @@ class Service:
             k.building = True
             self.emit("kb", {"id": k.id, "building": True})
             counters = {"files_total": 0, "files_done": 0, "chunks": 0, "failed": 0}
+            if self.settings.vision.get("enabled") and self.vision.server.state == "starting":
+                # pictures read before the model is up would be read again by the next build
+                job.report({"current": None}, log={"message": "Waiting for the picture model to load"}, force=True)
+                try:
+                    self.vision.server.wait(job.cancel.is_set, timeout=600)
+                except RuntimeErrorWithHint:
+                    job.report(log={"message": "The picture model didn't start; pictures won't be described this time"})
 
             def progress(e: dict[str, Any]) -> None:
                 ev = e.get("event")

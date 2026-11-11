@@ -90,6 +90,9 @@ DEFAULTS: dict[str, Any] = {
         # Flowcharts drawn as vector shapes (Visio, PowerPoint, draw.io exports) are rebuilt as
         # numbered steps with their connections instead of being read as jumbled text.
         "diagrams": True,
+        # Values typed into a fillable PDF form are read from its fields (they aren't in the
+        # page text) and placed where the field is.
+        "form_fields": True,
         "furniture_min_pages": 3,
     },
     "figures": {
@@ -125,7 +128,7 @@ DEFAULTS: dict[str, Any] = {
         # as Qwen3-Reranker-0.6B). Off by default; `rag search --rerank` turns it on for one search.
         # The RAG_RERANK_URL environment variable overrides url.
         "enabled": False,
-        "url": "http://127.0.0.1:8081",
+        "url": "http://127.0.0.1:8082",
         "model": "",
         "candidates": 20,
         "timeout_ms": 15000,

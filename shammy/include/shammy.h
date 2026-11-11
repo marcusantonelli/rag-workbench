@@ -107,7 +107,7 @@ int32_t shammy_verify(const char *path, ShammyReport *out);
  *    "vec_k": 40, "fts_k": 40, "rrf_k": 60,        candidates per side and the fusion constant
  *    "max_result_tokens": 6000, "threads": 0,
  *    "markdown": true,                             also return the compact text form for an agent
- *    "rerank": {"enabled": true, "url": "http://127.0.0.1:8081", "model": "", "candidates": 20,
+ *    "rerank": {"enabled": true, "url": "http://127.0.0.1:8082", "model": "", "candidates": 20,
  *               "timeout_ms": 15000}}              rerank through a /v1/rerank endpoint
  *
  * The response is a JSON object: "results" (tag, chunk_id, kind, score, text, source{...},

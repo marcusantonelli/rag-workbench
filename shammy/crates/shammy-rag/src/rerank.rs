@@ -17,7 +17,7 @@ fn d_max_chars() -> usize { 6000 }
 pub struct RerankOptions {
     #[serde(default)]
     pub enabled: bool,
-    /// The rerank endpoint, e.g. "http://127.0.0.1:8081/v1/rerank". A bare "http://host:port" gets
+    /// The rerank endpoint, e.g. "http://127.0.0.1:8082/v1/rerank". A bare "http://host:port" gets
     /// "/v1/rerank" added. Plain http only (a local model server).
     #[serde(default)]
     pub url: String,
