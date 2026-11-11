@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, X } from "lucide-react";
 
 export function Button({
   children, onClick, kind = "secondary", disabled, title, type = "button", icon,
@@ -17,6 +17,68 @@ export function Button({
       {icon}
       {children && <span>{children}</span>}
     </button>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  /** A second, quieter line saying what the choice does. */
+  detail?: ReactNode;
+  onSelect: () => void;
+  tone?: "danger";
+}
+
+/** A button that opens a short list of choices below it. Escape, a click elsewhere or a choice
+ * closes it; arrow keys move between the choices. */
+export function MenuButton({ label, items, kind = "ghost", disabled }: {
+  label: string;
+  items: MenuItem[];
+  kind?: "primary" | "secondary" | "ghost" | "danger";
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        ref.current?.querySelector<HTMLElement>(".menu-trigger")?.focus();
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const all = Array.from(ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? []);
+        const at = all.indexOf(document.activeElement as HTMLElement);
+        all[(at + (e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length]?.focus();
+      }
+    };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", key);
+    ref.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  return (
+    <div className="menu" ref={ref}>
+      <button type="button" className={`btn btn-${kind} menu-trigger`} disabled={disabled} aria-haspopup="menu"
+        aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span>{label}</span>
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="menu-list" role="menu" aria-label={label}>
+          {items.map((it) => (
+            <button key={it.label} type="button" role="menuitem" className={`menu-item ${it.tone ?? ""}`}
+              onClick={() => { setOpen(false); it.onSelect(); }}>
+              <span className="menu-label">{it.label}</span>
+              {it.detail && <span className="menu-detail">{it.detail}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

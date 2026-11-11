@@ -806,6 +806,8 @@ class Service:
             counters: dict[str, Any] = {
                 "files_total": 0, "files_done": 0, "chunks": 0, "failed": 0, "added": 0, "unchanged": 0,
                 "bytes_total": 0, "bytes_done": 0, "bytes_skipped": 0, "started": time.time(), "work_started": None,
+                # for the time-left estimates: embedding speed, and chunks per byte of the files read
+                "embed_seconds": 0.0, "embed_chunks": 0, "read_bytes": 0, "read_chunks": 0,
             }
             current: dict[str, Any] = {}
             if self.settings.vision.get("enabled") and self.vision.server.state == "starting":
@@ -821,7 +823,8 @@ class Service:
                         "stage_done": current.get("stage_done"), "stage_total": current.get("stage_total"),
                         "page": current.get("page"), "pages": current.get("pages"), "pictures": current.get("pictures"),
                         "file_chunks": current.get("chunks"), "file_embedded": current.get("embedded"),
-                        "file_bytes": current.get("bytes")}
+                        "file_bytes": current.get("bytes"), "file_started": current.get("started"),
+                        "embed_started": current.get("embed_started"), "embed_reused": current.get("embed_reused")}
 
             def progress(e: dict[str, Any]) -> None:
                 ev = e.get("event")
@@ -841,6 +844,11 @@ class Service:
                     if ev == "file_done":
                         counters["chunks"] += int(e.get("chunks", 0))
                         counters["added"] += 1
+                        counters["read_bytes"] += int(e.get("bytes") or 0)
+                        counters["read_chunks"] += int(e.get("chunks", 0))
+                        if current.get("embed_started") and current.get("stage_total"):
+                            counters["embed_seconds"] += time.time() - current["embed_started"]
+                            counters["embed_chunks"] += int(current["stage_total"]) - int(current.get("embed_reused") or 0)
                     if ev == "file_failed":
                         counters["failed"] += 1
                     current.clear()
@@ -851,7 +859,7 @@ class Service:
                     if counters["work_started"] is None:
                         counters["work_started"] = time.time()
                     current.clear()
-                    current.update(path=e.get("path"), stage="extract", bytes=e.get("bytes"))
+                    current.update(path=e.get("path"), stage="extract", bytes=e.get("bytes"), started=time.time())
                     job.report({**counters, **file_state()})
                 elif ev == "stage":
                     st = e.get("stage")
@@ -865,6 +873,8 @@ class Service:
                     elif st == "chunked":
                         current.update(stage="chunk", chunks=e.get("chunks"))
                     elif st == "embed":
+                        if "embed_started" not in current:
+                            current.update(embed_started=time.time(), embed_reused=e.get("reused", 0))
                         current.update(stage="embed", embedded=e.get("done"), chunks=e.get("total"),
                                        stage_done=e.get("done"), stage_total=e.get("total"))
                     else:

@@ -34,20 +34,55 @@ export function fileFraction(p: BuildProgress): number | null {
   return null;
 }
 
-/** Seconds left, from the bytes of files actually processed so far (unchanged files take no time). */
+/** Seconds left on the file being read, by stage. While its pages are read: the pages left at the
+ * pace of those read, plus embedding its likely chunks at the pace of the files before it. While
+ * embedding: the chunks left at this file's pace (or the earlier files'). Null when there is
+ * nothing to go on yet (a file without pages before it is split, the first seconds of a file). */
+export function fileSecondsLeft(p: BuildProgress, now: number): number | null {
+  if (!p.current || !p.file_started) return null;
+  const spent = now - p.file_started;
+  const perChunk = p.embed_chunks > 0 ? p.embed_seconds / p.embed_chunks : null;
+  if (p.stage_total) {
+    const todo = p.stage_total - (p.embed_reused ?? 0);
+    const done = (p.stage_done ?? 0) - (p.embed_reused ?? 0);
+    const pace = done >= 3 && p.embed_started ? (now - p.embed_started) / done : perChunk;
+    return pace == null ? null : Math.max(0, todo - done) * pace;
+  }
+  if (p.file_chunks != null) {
+    return perChunk == null ? null : p.file_chunks * perChunk;
+  }
+  if (p.pages && p.page) {
+    if (spent < 10 || p.page < 2) return null;
+    const read = (spent * (p.pages - p.page)) / p.page;
+    const chunks = p.read_bytes > 0 && p.file_bytes ? (p.read_chunks / p.read_bytes) * p.file_bytes : null;
+    return read + (perChunk != null && chunks != null ? perChunk * chunks : 0);
+  }
+  return null;
+}
+
+/** Seconds left for the whole build: what is left of the current file, plus the files still to
+ * come at the rate of the files already read (by size; unchanged files take no time). Null until
+ * there is enough to go on: 30 seconds of work and either three files read or a tenth of the work
+ * measured (a single large file counts by how far it has got). */
 export function secondsLeft(p: BuildProgress, now: number): number | null {
   if (!p.work_started || !p.bytes_total) return null;
   const elapsed = now - p.work_started;
-  // count how far the current file has got, or a large file being read makes the files finished
-  // before it look like the whole rate
-  const partial = (p.file_bytes ?? 0) * (fileFraction(p) ?? 0);
-  const workBytes = (p.bytes_done ?? 0) - (p.bytes_skipped ?? 0) + partial;
-  const remaining = p.bytes_total - (p.bytes_done ?? 0) - partial;
-  // too little seen yet to say: under 20 seconds, or less than 1% of the work and no file finished
-  const finished = (p.bytes_done ?? 0) - (p.bytes_skipped ?? 0) > 0;
-  if (elapsed < 20 || workBytes <= 0 || remaining <= 0) return null;
-  if (!finished && workBytes < 0.01 * (p.bytes_total - (p.bytes_skipped ?? 0))) return null;
-  return (elapsed / workBytes) * remaining;
+  if (elapsed < 30) return null;
+  const work = p.bytes_total - (p.bytes_skipped ?? 0);
+  const finishedBytes = (p.bytes_done ?? 0) - (p.bytes_skipped ?? 0);
+  const finishedFiles = (p.added ?? 0) + (p.failed ?? 0);
+  const f = fileFraction(p) ?? 0;
+  const curBytes = p.current ? (p.file_bytes ?? 0) : 0;
+  const spentOnFile = p.current && p.file_started ? Math.max(0, now - p.file_started) : 0;
+  const measured = finishedBytes + curBytes * f;
+  if (work <= 0 || measured <= 0 || (finishedFiles < 3 && measured < 0.1 * work)) return null;
+  // seconds per byte: from the finished files when there are any, else from the current file
+  const rate = finishedBytes > 0 ? Math.max(1e-9, elapsed - spentOnFile) / finishedBytes
+    : f > 0 && curBytes > 0 ? spentOnFile / (curBytes * f) : null;
+  if (rate == null) return null;
+  const rest = Math.max(0, p.bytes_total - (p.bytes_done ?? 0) - curBytes);
+  const fileLeft = p.current ? fileSecondsLeft(p, now) ?? rate * curBytes * (1 - f) : 0;
+  return fileLeft + rest * rate;
 }
 
 /** An estimate that moves only when the build does: it is worked out again each time the work done
@@ -59,14 +94,17 @@ export class Estimate {
   private at = 0;
   private mark = "";
 
+  constructor(private readonly measure: (p: BuildProgress, now: number) => number | null) {}
+
   update(p: BuildProgress, now: number): number | null {
     const mark = [p.bytes_done, p.files_done, p.stage, p.page, p.stage_done, p.pictures, p.current].join("|");
     if (mark !== this.mark || this.shown == null) {
+      const fileChanged = this.mark.split("|").pop() !== String(p.current ?? "");
       this.mark = mark;
-      const fresh = secondsLeft(p, now);
+      const fresh = this.measure(p, now);
       const current = this.shown == null ? null : this.shown - (now - this.at);
       // ease toward the new figure unless the two are far apart (then the new one is closer to the truth)
-      this.shown = fresh == null ? null
+      this.shown = fresh == null ? (fileChanged ? null : current != null && current > 0 ? current : null)
         : current != null && current > 0 && fresh < current * 3 && fresh > current / 3 ? 0.6 * current + 0.4 * fresh
         : fresh;
       this.at = now;

@@ -2,9 +2,9 @@ import { FilePlus, FolderPlus, Package, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../api";
 import { useApp, useJob } from "../state";
-import { duration, Estimate, fileFraction, stageText } from "../buildProgress";
+import { duration, Estimate, fileFraction, fileSecondsLeft, secondsLeft, stageText } from "../buildProgress";
 import type { KbSummary } from "../types";
-import { Button, Notice, Progress, Switch } from "../components/ui";
+import { Button, MenuButton, Notice, Progress, Switch } from "../components/ui";
 import { RuntimeGate } from "./KbView";
 import { MergePanel } from "./MergePanel";
 import { basename, bytes, count } from "../format";
@@ -92,18 +92,21 @@ export function BuildView({ kb }: { kb: KbSummary }) {
     const t = window.setInterval(() => setNow(Date.now() / 1000), 1000);
     return () => window.clearInterval(t);
   }, [build?.state]);
-  const estimate = useRef(new Estimate());
-  useEffect(() => estimate.current.reset(), [build?.id]);
+  // two estimates: the whole build (once enough has been read to say), and the file in hand
+  const estimate = useRef(new Estimate(secondsLeft));
+  const fileEstimate = useRef(new Estimate(fileSecondsLeft));
+  useEffect(() => {
+    estimate.current.reset();
+    fileEstimate.current.reset();
+  }, [build?.id]);
   const left = build?.state === "running" ? estimate.current.update(p, now) : null;
-  const [confirmNow, setConfirmNow] = useState(false);
+  const fileLeft = build?.state === "running" && p.current ? fileEstimate.current.update(p, now) : null;
   const [stopping, setStopping] = useState<"after" | "now" | null>(null);
   useEffect(() => {
-    setConfirmNow(false);
     setStopping(null);
   }, [build?.id]);
   const stop = async (now: boolean) => {
     if (!build) return;
-    setConfirmNow(false);
     setStopping(now ? "now" : "after");
     try {
       await call("jobs.cancel", { job: build.id, now });
@@ -171,7 +174,7 @@ export function BuildView({ kb }: { kb: KbSummary }) {
                 <span>{p.files_total ? `${p.files_done ?? 0} of ${count(p.files_total, "file")}` : "Looking for files"}</span>
                 <span className="muted">
                   {p.started ? `${duration(now - p.started)} so far` : ""}
-                  {left != null ? `, about ${duration(left)} left` : running && p.work_started ? ", estimating the time left" : ""}
+                  {left != null ? `, about ${duration(left)} left in all` : running && p.work_started ? ", working out the time left" : ""}
                   {p.unchanged ? ` · ${p.unchanged} unchanged` : ""}
                   {p.chunks ? ` · ${count(p.chunks, "chunk")} added` : ""}
                 </span>
@@ -182,6 +185,7 @@ export function BuildView({ kb }: { kb: KbSummary }) {
                     <strong>{basename(p.current)}</strong>
                     <span className="muted"> {stageText(p)}</span>
                     {p.file_chunks != null && p.stage !== "embed" && p.stage !== "chunk" ? <span className="muted"> · {count(p.file_chunks, "chunk")}</span> : null}
+                    {fileLeft != null && <span className="muted"> · about {duration(fileLeft)} left on this file</span>}
                   </p>
                   {fileFrac != null && <div className="file-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100}
                     aria-valuenow={Math.round(fileFrac * 100)} aria-label={`Progress on ${basename(p.current)}`}>
@@ -191,23 +195,14 @@ export function BuildView({ kb }: { kb: KbSummary }) {
               )}
               {stopping ? (
                 <p className="muted">{stopping === "now" ? "Stopping now…" : "Stopping after this file…"}</p>
-              ) : confirmNow ? (
-                <div className="stop-confirm">
-                  <p>
-                    Stop now and leave {p.current ? <strong>{basename(p.current)}</strong> : "the current file"} out? Nothing read from
-                    it so far is kept, and the next build reads it again. If it is an update, its previous version has already been
-                    replaced, so it is missing until then.
-                  </p>
-                  <div className="row">
-                    <Button kind="danger" onClick={() => stop(true)}>Stop now</Button>
-                    <Button kind="ghost" onClick={() => setConfirmNow(false)}>Keep going</Button>
-                  </div>
-                </div>
               ) : (
-                <div className="row">
-                  <Button kind="ghost" onClick={() => stop(false)}>Stop after this file</Button>
-                  {p.current && <Button kind="ghost" onClick={() => setConfirmNow(true)}>Stop now…</Button>}
-                </div>
+                <MenuButton label="Stop…" items={[
+                  { label: "After the current file", onSelect: () => stop(false),
+                    detail: "Finishes the file being read, then stops. Everything done so far is kept." },
+                  ...(p.current ? [{ label: "Now", tone: "danger" as const, onSelect: () => stop(true),
+                    detail: <>Leaves {basename(p.current)} out (the next build reads it again). If it was an update, its old version
+                      is already gone until then. Finished files are kept.</> }] : []),
+                ]} />
               )}
             </>
           )}

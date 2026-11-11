@@ -578,8 +578,6 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 /* Build: the file being read now, with its own bar */
 .build-file { margin: 6px 0 10px; }
 .build-file p { margin: 0 0 6px; }
-.stop-confirm { background: var(--warn-soft); border: 1px solid var(--amber); border-radius: 8px; padding: 10px 12px; }
-.stop-confirm p { margin: 0 0 8px; }
 .file-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 8%, transparent); overflow: hidden; }
 .file-bar span { display: block; height: 100%; background: var(--primary); transition: width 0.4s ease; }
 .status-building { background: var(--primary-soft); color: var(--primary); }
@@ -589,3 +587,20 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 .update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .update-actions { display: flex; align-items: center; gap: 10px; }
 .update-notes { white-space: pre-wrap; max-height: 260px; overflow: auto; margin: 10px 0 0; font: inherit; font-size: 13px; }
+
+/* menu button: a short list of choices under a button */
+.menu { position: relative; display: inline-block; }
+.menu-trigger svg { margin-left: 2px; }
+.menu-list {
+  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 260px; max-width: min(360px, 90vw);
+  display: grid; padding: 4px; background: var(--panel); border: 1px solid var(--rule-strong);
+  border-radius: var(--r-md); box-shadow: 0 6px 20px rgb(0 0 0 / 0.14);
+}
+.menu-item {
+  display: grid; gap: 2px; text-align: left; padding: 8px 10px; border: 0; border-radius: var(--r-sm);
+  background: none; color: var(--ink); font: inherit; cursor: pointer;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--primary-soft); outline: none; }
+.menu-item.danger .menu-label { color: var(--bad); }
+.menu-label { font-weight: 600; }
+.menu-detail { font-size: 12.5px; color: var(--muted); }
