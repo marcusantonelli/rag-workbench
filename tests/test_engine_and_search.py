@@ -242,3 +242,98 @@ print("ok")
     env = {**__import__("os").environ, "RAG_SQLITE_MODULE": module}
     out = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True)
     assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr[-2000:]
+
+
+@pytest.mark.parametrize("backend", ["sqlite-vec", "shammy"])
+def test_rebuild_from_scratch_while_files_are_open(tmp_path, corpus, monkeypatch, backend):
+    """Windows won't delete or move a file another program has open: "rebuild from scratch" then
+    empties the databases in place and clears the vector file instead."""
+    from rag.core.retrieve.search import Searcher
+
+    ws = Workspace.init(tmp_path / "ws", {**TEST_EMBEDDING, "vectors": {"backend": backend}})
+    Builder(ws).build([corpus / "handoff.txt", corpus / "calibration.csv"])
+    held = {"rag.db", "tables.db", "vectors.shammy"}
+    real_replace, real_unlink = Path.replace, Path.unlink
+
+    def replace(self, target):
+        if self.name in held:
+            raise PermissionError(13, "The process cannot access the file because it is being used", str(self))
+        return real_replace(self, target)
+
+    def unlink(self, missing_ok=False):
+        if self.name in held and self.exists():
+            raise PermissionError(13, "The process cannot access the file because it is being used", str(self))
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "replace", replace)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    reader = RagStore(ws.rag_db, readonly=True)       # another window searching
+    try:
+        stats = Builder(ws).build([corpus / "handoff.txt"], force=True)
+    finally:
+        reader.close()
+    assert stats.added == 1
+    chunks, fts, vec = _consistent(ws)
+    assert chunks == fts > 0 and vec == (chunks if backend == "sqlite-vec" else 0)
+    s = RagStore(ws.rag_db, readonly=True)
+    try:
+        assert s.vector_backend == backend
+        docs = [r[0] for r in s.conn.execute("SELECT display_path FROM documents")]
+        assert len(docs) == 1 and docs[0].endswith("handoff.txt")
+        if backend == "shammy":
+            assert s.vectors.count() == chunks
+    finally:
+        s.close()
+    t = TablesStore(ws.tables_db, readonly=True)
+    try:
+        assert t.catalog() == []                       # the CSV's table went with the reset
+    finally:
+        t.close()
+
+
+def test_stop_now_leaves_the_current_file_out(tmp_path, corpus):
+    """Stopping now drops the file being read (nothing half-made stays) and keeps the ones finished;
+    the next build reads the dropped file again."""
+    ws = Workspace.init(tmp_path / "ws", TEST_EMBEDDING)
+    files = [corpus / "handoff.txt", corpus / "QP-114 Pull Test.pdf", corpus / "calibration.csv"]
+    events = []
+    state = {"stop": False}
+
+    def progress(e):
+        events.append(e)
+        if e["event"] == "stage" and e.get("path", "").endswith("Pull Test.pdf"):
+            state["stop"] = True          # the user presses "Stop now" while the PDF is being read
+
+    b = Builder(ws, progress=progress, should_abandon=lambda: state["stop"])
+    stats = b.build(files)
+    assert b.cancelled and stats.added == 1
+    assert next(e for e in events if e["event"] == "file_abandoned")["path"].endswith("Pull Test.pdf")
+    s = RagStore(ws.rag_db, readonly=True)
+    try:
+        paths = [r[0] for r in s.conn.execute("SELECT display_path FROM documents")]
+        assert len(paths) == 1 and paths[0].endswith("handoff.txt")
+    finally:
+        s.close()
+    t = TablesStore(ws.tables_db, readonly=True)
+    try:
+        assert t.catalog() == []
+    finally:
+        t.close()
+    chunks, fts, vec = _consistent(ws)
+    assert chunks == fts == vec
+    again = Builder(ws).build(files)
+    assert again.added == 2 and again.unchanged == 1
+
+
+def test_stop_now_while_embedding(tmp_path, corpus):
+    ws = Workspace.init(tmp_path / "ws", TEST_EMBEDDING)
+    state = {"n": 0}
+
+    def progress(e):
+        if e["event"] == "stage" and e.get("stage") == "embed":
+            state["n"] += 1
+
+    b = Builder(ws, progress=progress, should_abandon=lambda: state["n"] >= 1)
+    stats = b.build([corpus / "handoff.txt"])
+    assert b.cancelled and stats.added == 0
+    assert _consistent(ws) == (0, 0, 0)

@@ -1,8 +1,8 @@
 import { FilePlus, FolderPlus, Package, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../api";
 import { useApp, useJob } from "../state";
-import { duration, fileFraction, secondsLeft, stageText } from "../buildProgress";
+import { duration, Estimate, fileFraction, stageText } from "../buildProgress";
 import type { KbSummary } from "../types";
 import { Button, Notice, Progress, Switch } from "../components/ui";
 import { RuntimeGate } from "./KbView";
@@ -92,7 +92,26 @@ export function BuildView({ kb }: { kb: KbSummary }) {
     const t = window.setInterval(() => setNow(Date.now() / 1000), 1000);
     return () => window.clearInterval(t);
   }, [build?.state]);
-  const left = secondsLeft(p, now);
+  const estimate = useRef(new Estimate());
+  useEffect(() => estimate.current.reset(), [build?.id]);
+  const left = build?.state === "running" ? estimate.current.update(p, now) : null;
+  const [confirmNow, setConfirmNow] = useState(false);
+  const [stopping, setStopping] = useState<"after" | "now" | null>(null);
+  useEffect(() => {
+    setConfirmNow(false);
+    setStopping(null);
+  }, [build?.id]);
+  const stop = async (now: boolean) => {
+    if (!build) return;
+    setConfirmNow(false);
+    setStopping(now ? "now" : "after");
+    try {
+      await call("jobs.cancel", { job: build.id, now });
+    } catch (e) {
+      setStopping(null);
+      fail(e);
+    }
+  };
   const fileFrac = fileFraction(p);
   const log = useMemo(() => (build?.log ?? []).filter((e) => e.event !== "file_unchanged").slice(-200).reverse(), [build?.log]);
   const running = build?.state === "running";
@@ -152,7 +171,7 @@ export function BuildView({ kb }: { kb: KbSummary }) {
                 <span>{p.files_total ? `${p.files_done ?? 0} of ${count(p.files_total, "file")}` : "Looking for files"}</span>
                 <span className="muted">
                   {p.started ? `${duration(now - p.started)} so far` : ""}
-                  {left != null ? `, about ${duration(left)} left` : ""}
+                  {left != null ? `, about ${duration(left)} left` : running && p.work_started ? ", estimating the time left" : ""}
                   {p.unchanged ? ` · ${p.unchanged} unchanged` : ""}
                   {p.chunks ? ` · ${count(p.chunks, "chunk")} added` : ""}
                 </span>
@@ -170,7 +189,26 @@ export function BuildView({ kb }: { kb: KbSummary }) {
                   </div>}
                 </div>
               )}
-              <Button kind="ghost" onClick={() => call("jobs.cancel", { job: build.id })}>Stop after this file</Button>
+              {stopping ? (
+                <p className="muted">{stopping === "now" ? "Stopping now…" : "Stopping after this file…"}</p>
+              ) : confirmNow ? (
+                <div className="stop-confirm">
+                  <p>
+                    Stop now and leave {p.current ? <strong>{basename(p.current)}</strong> : "the current file"} out? Nothing read from
+                    it so far is kept, and the next build reads it again. If it is an update, its previous version has already been
+                    replaced, so it is missing until then.
+                  </p>
+                  <div className="row">
+                    <Button kind="danger" onClick={() => stop(true)}>Stop now</Button>
+                    <Button kind="ghost" onClick={() => setConfirmNow(false)}>Keep going</Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="row">
+                  <Button kind="ghost" onClick={() => stop(false)}>Stop after this file</Button>
+                  {p.current && <Button kind="ghost" onClick={() => setConfirmNow(true)}>Stop now…</Button>}
+                </div>
+              )}
             </>
           )}
           {build.state === "failed" && <Notice tone="error" title={build.error?.message ?? "Build failed"}>{build.error?.hint}</Notice>}
@@ -186,12 +224,14 @@ export function BuildView({ kb }: { kb: KbSummary }) {
           {log.length > 0 && (
             <ol className="build-log">
               {log.map((e, i) => (
-                <li key={i} className={e.event === "file_failed" ? "bad" : ""}>
+                <li key={i} className={e.event === "file_failed" || e.event === "file_abandoned" ? "bad" : ""}>
                   <span className="log-what">
-                    {e.event === "file_done" ? "Added" : e.event === "file_failed" ? "Failed" : e.event === "file_removed" ? "Removed" : e.event === "skipped" ? "Skipped" : ""}
+                    {e.event === "file_done" ? "Added" : e.event === "file_failed" ? "Failed" : e.event === "file_removed" ? "Removed"
+                      : e.event === "skipped" ? "Skipped" : e.event === "file_abandoned" ? "Left out" : ""}
                   </span>
                   <span className="log-path">{e.path ?? e.message}</span>
-                  <span className="log-extra">{e.event === "file_done" ? count(e.chunks, "chunk") + (e.seconds != null ? ` in ${duration(e.seconds)}` : "") : e.error ?? ""}</span>
+                  <span className="log-extra">{e.event === "file_done" ? count(e.chunks, "chunk") + (e.seconds != null ? ` in ${duration(e.seconds)}` : "")
+                    : e.event === "file_abandoned" ? e.message : e.error ?? ""}</span>
                 </li>
               ))}
             </ol>

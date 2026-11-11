@@ -46,7 +46,8 @@ def _stage_words(e: dict[str, Any]) -> str:
 
 
 def _fraction(e: dict[str, Any], before: float) -> float:
-    """How far into the current file a stage event is (reading counts 60%, embedding the rest)."""
+    """How far into the current file a stage event is (reading counts 60%, embedding the rest).
+    A stage with nothing to measure (describing pictures, tables) keeps the last figure."""
     st = e.get("stage")
     if st in ("page", "ocr") and e.get("pages"):
         return 0.6 * min(1.0, e["page"] / e["pages"])
@@ -72,6 +73,7 @@ class _Printer:
         self.cur_bytes = 0
         self.cur_frac = 0.0
         self.status = False
+        self.eta: tuple[float, float] | None = None     # (seconds left, when worked out)
 
     def _clear(self) -> None:
         if self.status:
@@ -83,17 +85,27 @@ class _Printer:
         print(text, file=self.out, flush=True)
 
     def _left(self) -> str:
+        """Time left, eased between events so one slow step doesn't swing it (see Estimate in
+        the app's buildProgress.ts); nothing until there is enough to go on."""
         if self.work0 is None or not self.bytes_total:
             return ""
-        elapsed = time.monotonic() - self.work0
+        now = time.monotonic()
+        elapsed = now - self.work0
         # count how far the current file has got, or a large file being read makes the files
         # finished before it look like the whole rate
         work = self.bytes_done - self.bytes_skipped + self.cur_bytes * self.cur_frac
         remaining = self.bytes_total - self.bytes_done - self.cur_bytes * self.cur_frac
-        if elapsed < 10 or work <= 0 or remaining <= 0:
+        finished = self.bytes_done - self.bytes_skipped > 0
+        if elapsed < 20 or work <= 0 or remaining <= 0 or \
+                (not finished and work < 0.01 * (self.bytes_total - self.bytes_skipped)):
             return ""
-        secs = elapsed / work * remaining
-        return f" · about {secs / 60:.0f} min left" if secs >= 90 else f" · about {secs:.0f} s left"
+        fresh = elapsed / work * remaining
+        if self.eta is not None:
+            current = self.eta[0] - (now - self.eta[1])
+            if current > 0 and current / 3 < fresh < current * 3:
+                fresh = 0.6 * current + 0.4 * fresh
+        self.eta = (fresh, now)
+        return f" · about {fresh / 60:.0f} min left" if fresh >= 90 else f" · about {fresh:.0f} s left"
 
     def _status(self, words: str) -> None:
         if not self.tty:
@@ -474,14 +486,16 @@ def cmd_spots(args) -> int:
         st = spots.status(ws.root)
         print(json.dumps(st, indent=2) if args.json else
               ("no spots file" if not st["present"] else
-               f"{spots.SPOTS_NAME}: {'current' if st['current'] else 'out of date (run rag spots)'}; "
-               f"{st.get('procedures', 0)} procedures, {st.get('steps', 0)} steps, {st.get('links', 0)} references"))
+               f"{spots.SPOTS_NAME}: {'out of date (run rag spots)' if not st['current'] else 'current, older format without sections (run rag spots)' if st.get('outdated') else 'current'}; "
+               f"{st.get('procedures', 0)} procedures, {st.get('sections', 0)} sections, {st.get('steps', 0)} steps, "
+               f"{st.get('links', 0)} references"))
         return 0 if st.get("current") else 1
     counts = spots.build(ws.rag_db)
     if args.json:
         print(json.dumps(counts))
     else:
-        print(f"{spots.SPOTS_NAME}: {_n(counts['procedures'], 'procedure')}, {_n(counts['steps'], 'step')}, "
+        print(f"{spots.SPOTS_NAME}: {_n(counts['procedures'], 'procedure')}, {_n(counts['sections'], 'section')}, "
+              f"{_n(counts['steps'], 'step')}, "
               f"{_n(counts['links'], 'reference')} in {_n(counts['documents'], 'document')}")
     return 0
 

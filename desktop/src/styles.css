@@ -578,6 +578,8 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 /* Build: the file being read now, with its own bar */
 .build-file { margin: 6px 0 10px; }
 .build-file p { margin: 0 0 6px; }
+.stop-confirm { background: var(--warn-soft); border: 1px solid var(--amber); border-radius: 8px; padding: 10px 12px; }
+.stop-confirm p { margin: 0 0 8px; }
 .file-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 8%, transparent); overflow: hidden; }
 .file-bar span { display: block; height: 100%; background: var(--primary); transition: width 0.4s ease; }
 .status-building { background: var(--primary-soft); color: var(--primary); }

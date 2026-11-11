@@ -76,8 +76,19 @@ class RagStore:
             store.set_meta("created_at", now_iso())
             store.set_meta("vector_backend", vectors)
             if vectors == "shammy":
-                (store.path.with_name(SHAMMY_FILE)).unlink(missing_ok=True)
-                ShammyVectors.create(store.path.with_name(SHAMMY_FILE), int(dims))
+                vf = store.path.with_name(SHAMMY_FILE)
+                try:
+                    vf.unlink(missing_ok=True)
+                    ShammyVectors.create(vf, int(dims))
+                except OSError:
+                    # open in another program (Windows): reuse it when it is empty and the right size
+                    v = ShammyVectors(vf, readonly=True)
+                    try:
+                        info = v.index.info()
+                    finally:
+                        v.close()
+                    if int(info["dims"]) != int(dims) or int(info["live_rows"]):
+                        raise
         store.conn.commit()
         return store
 

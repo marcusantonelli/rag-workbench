@@ -202,7 +202,11 @@ def open_any(path: Path) -> tuple[Workspace, tempfile.TemporaryDirectory | None]
 
 
 def reset_workspace_data(ws: Workspace) -> None:
-    """Delete databases, cache and assets (keeps config and library)."""
+    """Delete databases, cache and assets (keeps config and library).
+
+    On Windows a file can't be deleted while another program has it open (a search in another
+    window, a retrieval server, a virus scanner), so a database that won't go is emptied in place
+    instead, and the vector file is cleared rather than replaced."""
     backend = ws.config["vectors"]["backend"]
     if ws.rag_db.exists():
         try:
@@ -213,16 +217,88 @@ def reset_workspace_data(ws: Workspace) -> None:
                 old.close()
         except Exception:  # noqa: BLE001 - a damaged database is being thrown away anyway
             pass
-    for p in (ws.rag_db, ws.tables_db, ws.root / "vectors.shammy"):
-        for suffix in ("", "-wal", "-shm"):
-            q = Path(str(p) + suffix)
-            if q.exists():
-                q.unlink()
+    dims = int(ws.config["embedding"]["dims"])
+    for p in (ws.rag_db, ws.tables_db):
+        if not _remove_db(p):
+            _empty_db(p)
+    vf = ws.root / "vectors.shammy"
+    try:
+        vf.unlink(missing_ok=True)
+    except OSError:
+        _clear_vectors(vf, dims)
     for d in (ws.cache_dir, ws.assets_dir):
         shutil.rmtree(d, ignore_errors=True)
         d.mkdir(exist_ok=True)
-    RagStore.create(ws.rag_db, int(ws.config["embedding"]["dims"]), vectors=backend).close()
+    RagStore.create(ws.rag_db, dims, vectors=backend).close()
     TablesStore.create(ws.tables_db).close()
+
+
+def _remove_db(path: Path) -> bool:
+    """Delete a SQLite database with its -wal and -shm files. False (and nothing deleted) when
+    another program has it open: it is moved aside first, which fails while it is open."""
+    side = [Path(str(path) + s) for s in ("-wal", "-shm")]
+    if not path.exists():
+        for q in side:
+            try:
+                q.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return True
+    aside = path.with_name(f"{path.name}.reset{os.getpid()}")
+    try:
+        path.replace(aside)
+    except OSError:
+        return False
+    for q in side:          # nobody had the database open, so its journal files go too
+        if q.exists():
+            q.replace(Path(str(aside) + q.name[len(path.name):]))
+    for q in (aside, Path(str(aside) + "-wal"), Path(str(aside) + "-shm")):
+        try:
+            q.unlink(missing_ok=True)
+        except OSError:
+            pass            # left as *.resetNNN: harmless, and removed by the next reset
+    return True
+
+
+def _empty_db(path: Path) -> None:
+    """Drop everything in a database that can't be deleted, so it can be created again in place."""
+    from rag.core.db.connect import connect
+
+    conn = connect(path, load_vec=True)
+    try:
+        conn.execute("PRAGMA busy_timeout = 10000")
+        conn.execute("PRAGMA foreign_keys = OFF")
+        objs = conn.execute("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").fetchall()
+        virtual = [n for t, n, q in objs if t == "table" and (q or "").upper().startswith("CREATE VIRTUAL")]
+        for name in virtual:                   # their shadow tables go with them
+            conn.execute(f'DROP TABLE IF EXISTS "{name}"')
+        left = {(t, n) for t, n in conn.execute("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")}
+        for kind in ("trigger", "view", "table"):
+            for t, n in sorted(left):
+                if t == kind:
+                    conn.execute(f'DROP {kind.upper()} IF EXISTS "{n}"')
+        conn.commit()
+        try:
+            conn.execute("VACUUM")             # give the space back; skipped while a reader is mid-read
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        conn.close()
+
+
+def _clear_vectors(path: Path, dims: int) -> None:
+    """Empty a vectors.shammy that can't be deleted (a search has it open)."""
+    from rag.core.db.vectors import ShammyVectors, VectorStoreError
+
+    v = ShammyVectors(path, readonly=False)
+    try:
+        if int(v.index.info()["dims"]) != dims:
+            raise VectorStoreError(
+                f"{path.name} is open in another program and the new model has a different vector size; "
+                "close other windows or servers using this knowledge base and rebuild again")
+        v.clear()
+    finally:
+        v.close()
 
 
 __all__ = ["Workspace", "open_any", "reset_workspace_data", "DEFAULTS", "MARKER", "NotAWorkspace", "classify",

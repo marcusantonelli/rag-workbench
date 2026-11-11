@@ -122,12 +122,20 @@ def discover(inputs: list[Path], include: list[str], exclude: list[str], max_mb:
     return list(found.values()), skipped
 
 
+class Abandoned(BaseException):
+    """Raised inside a file's reading or embedding when the build is told to stop now. A
+    BaseException, so the readers' own "skip what fails" handlers don't swallow it."""
+
+
 class Builder:
     def __init__(self, ws: Workspace, *, embedder=None, progress: Callable[[Event], None] | None = None,
-                 should_stop: Callable[[], bool] | None = None):
+                 should_stop: Callable[[], bool] | None = None, should_abandon: Callable[[], bool] | None = None):
         self.ws = ws
         # Checked between files: a cancelled build keeps every file finished so far.
         self.should_stop = should_stop or (lambda: False)
+        # Checked while a file is read and embedded: stop now, dropping the file in hand (it is
+        # read again by the next build). Implies should_stop.
+        self.should_abandon = should_abandon or (lambda: False)
         self.cancelled = False
         self.cfg = ws.config
         self.progress = progress or (lambda e: None)
@@ -165,12 +173,17 @@ class Builder:
             chunker = Chunker(settings, self.count, self.embedder)
 
             for i, sf in enumerate(files, start=1):
-                if self.should_stop():
+                if self.should_stop() or self.should_abandon():
                     self.cancelled = True
                     self.emit("cancelled", index=i, total=len(files))
                     break
                 stats.seen += 1
-                self._process(sf, i, len(files), store, tables, chunker, stats, no_cache)
+                try:
+                    self._process(sf, i, len(files), store, tables, chunker, stats, no_cache)
+                except Abandoned:
+                    self.cancelled = True
+                    self.emit("cancelled", index=i, total=len(files), abandoned=sf.display_path)
+                    break
 
             if prune and not self.cancelled:
                 stats.removed = self._prune(files, inputs, store, tables)
@@ -186,7 +199,8 @@ class Builder:
         finally:
             store.close()
             tables.close()
-        if stats.added or stats.updated or stats.removed or not spots.status(self.ws.root)["current"]:
+        st = spots.status(self.ws.root)
+        if stats.added or stats.updated or stats.removed or not st["current"] or st.get("outdated"):
             refresh_spot(self.ws.root, lambda e: self.emit(e.pop("event"), **e))
         stats.seconds = round(time.monotonic() - started, 2)
         self.emit("done", **{k: v for k, v in stats.__dict__.items() if k != "errors"},
@@ -255,9 +269,14 @@ class Builder:
         doc_id = store.reserve_document(rec)
         stage = "extract"
         try:
+            def stage_event(st: str, info: dict[str, Any]) -> None:
+                if self.should_abandon():
+                    raise Abandoned()
+                self.emit("stage", path=sf.display_path, stage=st, **info)
+
             ctx = ExtractContext(
                 config=self.cfg, sha256=digest, display_path=sf.display_path, assets_root=self.ws.assets_dir,
-                progress=lambda st, info: self.emit("stage", path=sf.display_path, stage=st, **info),
+                progress=stage_event,
             )
             doc, cached = extract(sf.path, ftype, ctx, cache_dir=self.ws.cache_dir,
                                   overrides_file=self.ws.root / "sheets.toml", use_cache=not no_cache)
@@ -320,6 +339,14 @@ class Builder:
             self.emit("file_done", path=sf.display_path, chunks=len(chunks), cached_extract=cached,
                       warnings=rec.warnings, seconds=round(time.monotonic() - t0, 2), index=index, total=total,
                       bytes=rec.size_bytes)
+        except Abandoned:
+            # nothing of this file stays: its row and tables go, so the next build reads it again
+            # (an update's previous version was already replaced when the file was started)
+            tables.delete_for_doc(doc_id)
+            store.delete_document(doc_id)
+            self.emit("file_abandoned", path=sf.display_path, stage=stage, index=index, total=total,
+                      replaced=existing is not None, bytes=_size(sf.path))
+            raise
         except Exception as exc:  # noqa: BLE001 - one bad file never stops a build
             msg = f"{type(exc).__name__}: {exc}"
             store.log_error(sf.display_path, stage, msg + "\n" + traceback.format_exc(limit=6))
@@ -349,6 +376,8 @@ class Builder:
         if todo:
             batch = max(1, int(self.cfg["embedding"]["batch_size"]))
             for start in range(0, len(todo), batch):
+                if self.should_abandon():
+                    raise Abandoned()
                 idx = todo[start:start + batch]
                 out[idx] = self.embedder.embed_documents([chunks[i].embed_text for i in idx])
                 self.emit("stage", path=path, stage="embed", done=reused + min(start + batch, len(todo)),

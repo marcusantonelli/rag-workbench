@@ -68,6 +68,8 @@ class Job:
     result: Any = None
     error: dict[str, Any] | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
+    # stop now: a build drops the file it is reading instead of finishing it first
+    abandon: threading.Event = field(default_factory=threading.Event)
 
     def snapshot(self, with_result: bool = False) -> dict[str, Any]:
         out = {"id": self.id, "kind": self.kind, "title": self.title, "kb": self.kb, "state": self.state,
@@ -870,11 +872,19 @@ class Service:
                     job.report(file_state())
                 elif ev == "skipped":
                     job.report(log={"event": "skipped", "message": e.get("reason")})
+                elif ev == "file_abandoned":
+                    current.clear()
+                    msg = ("Stopped. The file was left out and its previous version removed; the next build reads it again."
+                           if e.get("replaced") else "Stopped. The file was left out; the next build reads it.")
+                    job.report({**counters, **file_state()},
+                               log={"event": "file_abandoned", "path": e.get("path"), "message": msg}, force=True)
                 elif ev == "cancelled":
-                    job.report(log={"event": "cancelled", "message": "Stopped after the current file."}, force=True)
+                    if not e.get("abandoned"):
+                        job.report(log={"event": "cancelled", "message": "Stopped after the current file."}, force=True)
 
             try:
-                builder = Builder(k.workspace(), embedder=embedder, progress=progress, should_stop=job.cancel.is_set)
+                builder = Builder(k.workspace(), embedder=embedder, progress=progress, should_stop=job.cancel.is_set,
+                                  should_abandon=job.abandon.is_set)
                 try:
                     stats = builder.build(paths, force=force, prune=prune)
                 except EmbeddingMismatch as exc:
@@ -1116,9 +1126,13 @@ class Service:
         out["log"] = j.log[log_from:]
         return out
 
-    def jobs_cancel(self, job: str) -> dict[str, Any]:
+    def jobs_cancel(self, job: str, now: bool = False) -> dict[str, Any]:
+        """Stop a job. A build stops after the file it is reading; with ``now``, it stops at once
+        and leaves that file out (the next build reads it again)."""
         j = self.jobs.get(job)
         if j is None:
             raise ServiceError("not_found", "No such job.")
+        if now:
+            j.abandon.set()
         j.cancel.set()
         return j.snapshot()
