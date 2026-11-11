@@ -203,6 +203,57 @@ async fn engine_stop(engine: State<'_, Arc<Engine>>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || engine.shutdown()).await.map_err(|e| e.to_string())
 }
 
+// -- updates --------------------------------------------------------------------------------
+// Two feeds, both made by the release workflow. Stable: latest.json of the newest normal release
+// (GitHub's "latest" never points at a pre-release). Pre-release: the newest release of either
+// kind, kept as prerelease.json on the fixed "update-feed" release.
+const STABLE_FEED: &str = "https://github.com/marcusantonelli/rag-workbench/releases/latest/download/latest.json";
+const PRERELEASE_FEED: &str = "https://github.com/marcusantonelli/rag-workbench/releases/download/update-feed/prerelease.json";
+
+#[derive(Default)]
+struct PendingUpdate(Mutex<Option<tauri_plugin_updater::Update>>);
+
+/// Ask for a newer version. With `prerelease`, the pre-release feed first (it also carries
+/// normal releases), then the stable one if that feed can't be read.
+#[tauri::command]
+async fn update_check(app: AppHandle, pending: State<'_, PendingUpdate>, prerelease: bool) -> Result<Option<Value>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let mut feeds = Vec::new();
+    if prerelease {
+        feeds.push(tauri::Url::parse(PRERELEASE_FEED).map_err(|e| e.to_string())?);
+    }
+    feeds.push(tauri::Url::parse(STABLE_FEED).map_err(|e| e.to_string())?);
+    let updater = app.updater_builder().endpoints(feeds).map_err(|e| e.to_string())?.build().map_err(|e| e.to_string())?;
+    let found = updater.check().await.map_err(|e| e.to_string())?;
+    let out = found.as_ref().map(|u| json!({"version": u.version, "notes": u.body, "current": u.current_version}));
+    *pending.0.lock().unwrap() = found;
+    Ok(out)
+}
+
+/// Download the update found by `update_check` (progress as "update-progress" events), stop the
+/// engine and its model servers, and install. The caller restarts the app.
+#[tauri::command]
+async fn update_install(app: AppHandle, pending: State<'_, PendingUpdate>, engine: State<'_, Arc<Engine>>) -> Result<(), String> {
+    let Some(update) = pending.0.lock().unwrap().clone() else {
+        return Err("No update has been found yet; check again.".into());
+    };
+    let progress = app.clone();
+    let mut got: u64 = 0;
+    let bytes = update
+        .download(
+            move |chunk, total| {
+                got += chunk as u64;
+                let _ = progress.emit("update-progress", json!({"got": got, "total": total}));
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    let engine = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || engine.shutdown()).await.map_err(|e| e.to_string())?;
+    update.install(bytes).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn startup_paths() -> Vec<String> {
     std::env::args()
@@ -223,9 +274,10 @@ pub fn run() {
                 eprintln!("{e}");
             }
             app.manage(engine);
+            app.manage(PendingUpdate::default());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, engine_stop, startup_paths])
+        .invoke_handler(tauri::generate_handler![engine_call, engine_stop, startup_paths, update_check, update_install])
         .build(tauri::generate_context!())
         .expect("error while building RAG Workbench");
 

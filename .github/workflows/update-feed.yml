@@ -1,0 +1,53 @@
+# Keeps the pre-release update feed current. When a release is published (normal or pre-release),
+# its latest.json becomes prerelease.json on the fixed "update-feed" release, unless that already
+# holds a newer version. Apps with "Also offer pre-releases" read that file; every other app reads
+# latest.json from GitHub's latest release, which never points at a pre-release.
+#
+# The "update-feed" release is itself marked as a pre-release so it never becomes "latest", and it
+# holds nothing but the feed file.
+name: Update feed
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  feed:
+    if: github.event.release.tag_name != 'update-feed'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make the feed
+        id: feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          if ! gh release download "$TAG" --pattern latest.json --dir new; then
+            echo "This release has no latest.json (no signed installers): the feed is left as it is."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release download update-feed --pattern prerelease.json --dir old 2>/dev/null || true
+          if python3 desktop/scripts/update_feed.py --new new/latest.json --current old/prerelease.json --out prerelease.json; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish the feed
+        if: steps.feed.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if ! gh release view update-feed >/dev/null 2>&1; then
+            gh release create update-feed --prerelease --title "Update feed" \
+              --notes "The pre-release update channel's feed for the app. Not a release; nothing to download here."
+          fi
+          gh release upload update-feed prerelease.json --clobber

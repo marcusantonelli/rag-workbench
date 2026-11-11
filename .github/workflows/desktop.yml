@@ -158,10 +158,13 @@ jobs:
             rm -f latest.json
           fi
 
+      # a tag with a hyphen (v0.4.3-beta.1) is a pre-release: GitHub's "latest" skips it, so only
+      # apps that chose "Also offer pre-releases" are offered it (see update-feed.yml)
       - name: Attach to the release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: false
           files: |
             dist/**/shammy-native-*.zip

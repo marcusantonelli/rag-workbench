@@ -58,8 +58,21 @@ the knowledge base is open elsewhere, a steadier time-left estimate, Stop now. D
   re-read every PDF and Word file with the 0.4.2 layout rules without hours of descriptions.
 - Word: SmartArt (its data part holds the nodes and their connections), and flowcharts kept only
   as VML or as embedded Visio/EMF pictures (EMF needs converting before it can be described).
-- Updates: a pre-release channel (Settings → Updates → "Also offer pre-releases"), which needs a
-  second update feed because `releases/latest` never returns a pre-release.
+- Headings in PDFs, which sections, heading paths and the embedded context all depend on:
+  - use the PDF's own bookmarks (outline) and, in tagged PDFs, its H1–H6 tags as the headings
+    when present, falling back to type size and bold only when neither exists;
+  - a heading report per document (`rag inspect`, Details): how many headings at each level, and a
+    warning for documents that came out flat (no headings across many pages) or with suspicious
+    ones (dozens of one-line "sections", headings longer than the text under them).
+- Charts kept apart from flowcharts: axes with tick marks and numeric labels, bars sharing a
+  baseline, evenly spaced grid lines, legends (swatch and label) and long curves mark a chart. A
+  drawing with those is a chart, described as a picture, never a flowchart, even when it has
+  arrows and boxed labels.
+- `rag eval` measures what the agent reads too: whether the expected text is in the returned
+  passage (section, procedure or neighbours), not only whether the matching chunk ranks. Needed
+  to decide between sections and neighbouring chunks, and to set `section_tokens`.
+- Layout regression set: a folder of real (redacted) documents with their expected reading,
+  checked by one command on every change.
 
 ## 0.5 (editing what was read)
 

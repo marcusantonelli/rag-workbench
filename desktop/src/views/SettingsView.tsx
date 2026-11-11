@@ -6,7 +6,7 @@ import { Button, Notice, Progress, Switch } from "../components/ui";
 import { basename, bytes } from "../format";
 import { GGUF_FILTER, pickPaths } from "../platform";
 import { HelperPanel } from "./HelperPanel";
-import { autoCheck, checkForUpdate, installUpdate, setAutoCheck, useUpdates } from "../updates";
+import { autoCheck, checkForUpdate, installUpdate, isPrerelease, PrereleaseTag, setAutoCheck, setWantPrereleases, useUpdates, wantPrereleases } from "../updates";
 
 const VARIANT_LABEL: Record<string, string> = {
   "cuda-12.4": "CUDA 12.4 (NVIDIA)",
@@ -271,7 +271,7 @@ export function SettingsView() {
       {info && (
         <section className="panel">
           <h2>About</h2>
-          <p>RAG Workbench {info.version}</p>
+          <p>RAG Workbench {info.version} <PrereleaseTag version={info.version} /></p>
           <div className="path-row">
             <code className="path">{info.data_dir}</code>
             <Button icon={<FolderOpen size={16} />} onClick={() => call("app.open_path", { path: info.data_dir }).catch(fail)}>Open data folder</Button>
@@ -285,6 +285,7 @@ export function SettingsView() {
 function UpdatesPanel({ version }: { version?: string }) {
   const u = useUpdates();
   const [auto, setAuto] = useState(autoCheck);
+  const [pre, setPre] = useState(wantPrereleases);
   return (
     <section className="panel">
       <h2>Updates</h2>
@@ -297,6 +298,11 @@ function UpdatesPanel({ version }: { version?: string }) {
             install. Nothing installs without you choosing it, and never during a build.
           </p>
           <Switch checked={auto} onChange={(on) => { setAuto(on); setAutoCheck(on); }} label="Check for updates when the app starts" />
+          <Switch checked={pre} onChange={(on) => { setPre(on); setWantPrereleases(on); }} label="Also offer pre-releases" />
+          <p className="muted small">
+            Pre-releases are test versions published before the next normal release; they may have rough edges. Turning this
+            off doesn't go back to an older version: the next normal release newer than the one installed is offered.
+          </p>
           <div className="row">
             <Button onClick={() => void checkForUpdate(true)} disabled={u.phase === "checking" || u.phase === "downloading" || u.phase === "installing"}>
               {u.phase === "checking" ? "Checking…" : "Check now"}
@@ -305,7 +311,7 @@ function UpdatesPanel({ version }: { version?: string }) {
           </div>
           <p className="muted small">
             {u.phase === "none" && `RAG Workbench ${version ?? ""} is the latest version.`}
-            {u.phase === "available" && `Version ${u.version} is available.`}
+            {u.phase === "available" && `Version ${u.version}${isPrerelease(u.version) ? " (a pre-release)" : ""} is available.`}
             {u.phase === "downloading" && "Downloading…"}
             {u.phase === "installing" && "Installing; the app will restart."}
             {u.phase === "error" && `Couldn't check or install: ${u.error}`}

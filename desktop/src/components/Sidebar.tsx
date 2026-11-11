@@ -5,9 +5,10 @@ import { PACK_FILTER, pickPaths } from "../platform";
 import { NewKbDialog } from "../views/NewKbDialog";
 import { RuntimeBadge } from "./RuntimeBadge";
 import { JobsTray } from "./JobsTray";
+import { PrereleaseTag } from "../updates";
 
 export function Sidebar() {
-  const { kbs, screen, setScreen, openKb, closeKb } = useApp();
+  const { kbs, screen, setScreen, openKb, closeKb, info } = useApp();
   const [creating, setCreating] = useState(false);
 
   const open = async () => {
@@ -24,6 +25,7 @@ export function Sidebar() {
       <button className="brand" onClick={() => setScreen({ kind: "home" })}>
         <span className="brand-mark" aria-hidden="true" />
         <span>RAG Workbench</span>
+        <PrereleaseTag version={info?.version} />
       </button>
 
       <div className="side-actions">

@@ -604,3 +604,10 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 .menu-item.danger .menu-label { color: var(--bad); }
 .menu-label { font-weight: 600; }
 .menu-detail { font-size: 12.5px; color: var(--muted); }
+
+/* a pre-release build: a small amber chip beside the name and versions */
+.prerelease-tag {
+  display: inline-block; margin-left: 2px; padding: 1px 6px; border-radius: 999px; font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.02em; text-transform: uppercase; vertical-align: middle;
+  background: var(--amber-mark); color: var(--amber-ink); border: 1px solid var(--amber);
+}

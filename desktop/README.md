@@ -164,16 +164,31 @@ built on Windows.
 
 ### Releasing with updates
 
-The installed apps check `releases/latest/download/latest.json` on GitHub, so a release is offered
-as an update when:
+The installed apps check `releases/latest/download/latest.json` on GitHub (and, with pre-releases
+on, the `update-feed` release first), so a release is offered as an update when:
 
 1. The repository has the secrets `TAURI_SIGNING_PRIVATE_KEY` (the contents of the private key
    made with `npx tauri signer generate`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The build
    then signs the installers, and the `release` job writes `latest.json` from the signatures and
    `docs/release-notes/<version>.md` and attaches it to the draft release. Without the secrets
    the installers are built as before and no update is published.
-2. The draft is published as a normal release. GitHub's "latest" skips drafts and releases
-   marked as a pre-release, so a pre-release is never offered as an update.
+2. The draft is published. A normal release is offered to everyone. A pre-release is offered only
+   to apps with **Settings → Updates → Also offer pre-releases** on (see below).
+
+When a release is published, the `Update feed` workflow (`.github/workflows/update-feed.yml`)
+copies its `latest.json` to `prerelease.json` on a fixed release tagged `update-feed`, unless that
+already offers a newer version. Apps with pre-releases on read that file first (it carries normal
+releases too) and fall back to the normal feed; every other app reads GitHub's "latest" release,
+which never points at a pre-release or at `update-feed`. The workflow creates `update-feed` (as a
+pre-release, so it never becomes "latest") the first time. Leave it in place.
+
+**Pre-release versions.** Tag them with a numeric suffix: `v0.4.3-1`, `v0.4.3-2`, and so on. The
+Windows `.msi` builder only accepts numbers after the hyphen, so `v0.4.3-beta.1` fails to build.
+The release workflow marks any tag with a hyphen as a pre-release. Put the same version
+(`0.4.3-1`) in `pyproject.toml`, `src/rag/__init__.py`, `package.json`, `tauri.conf.json` and
+`Cargo.toml`, and write `docs/release-notes/0.4.3-1.md`. The app shows a small **Pre-release**
+mark beside its name while a pre-release is installed. `0.4.3-1` counts as older than `0.4.3`,
+so the normal release replaces it.
 
 The public half of the key is in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`); an
 update signed with any other key is refused. Keep a backup of the private key: without it,

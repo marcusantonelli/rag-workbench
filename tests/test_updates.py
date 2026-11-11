@@ -49,3 +49,27 @@ def test_latest_json_names_files_as_github_serves_them(tmp_path):
 def test_no_signed_installers_means_no_update(tmp_path):
     (tmp_path / "d").mkdir()
     assert _script().main(["--dist", str(tmp_path / "d"), "--repo", "o/r", "--tag", "v1.0.0", "--out", str(tmp_path / "l.json")]) == 1
+
+
+def test_pre_releases_order_before_their_release():
+    assert newer("0.4.3-beta.1", "0.4.2") and newer("0.4.3", "0.4.3-beta.2") and newer("0.4.3-beta.2", "0.4.3-beta.1")
+    assert newer("0.4.3-rc.1", "0.4.3-beta.9") and not newer("0.4.3-beta.1", "0.4.3")
+
+
+def test_the_pre_release_feed_never_moves_back(tmp_path):
+    spec = importlib.util.spec_from_file_location("update_feed", ROOT / "desktop" / "scripts" / "update_feed.py")
+    feed = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(feed)
+
+    def run(new, current):
+        (tmp_path / "new.json").write_text(json.dumps({"version": new}))
+        args = ["--new", str(tmp_path / "new.json"), "--out", str(tmp_path / "out.json")]
+        if current:
+            (tmp_path / "cur.json").write_text(json.dumps({"version": current}))
+            args += ["--current", str(tmp_path / "cur.json")]
+        (tmp_path / "out.json").unlink(missing_ok=True)
+        return feed.main(args) == 0 and json.loads((tmp_path / "out.json").read_text())["version"] == new
+
+    assert run("0.4.3-beta.1", None) and run("0.4.3-beta.1", "0.4.2") and run("0.4.3", "0.4.3-beta.1")
+    assert not run("0.4.2", "0.4.3-beta.1")          # a hotfix of the old line after a pre-release
+    assert not run("0.4.3-beta.1", "0.4.3-beta.1")
