@@ -27,8 +27,9 @@ Details in `docs/release-notes/0.4.1.md`. Updater public key (minisign 76327FDFB
 
 ## 0.4.2
 
-Sections for every document with headings (the spots file beyond procedures), general PDF
-layout reading (block-arrow flowcharts, boxed panels, titled tables), rebuild from scratch while
+Sections for every document with headings (the spots file beyond procedures), general PDF and
+Word layout reading (block-arrow and Word-shape flowcharts, boxed panels, text boxes, titled
+tables), rebuild from scratch while
 the knowledge base is open elsewhere, a steadier time-left estimate, Stop now. Details in
 `docs/release-notes/0.4.2.md`.
 
@@ -52,6 +53,11 @@ the knowledge base is open elsewhere, a steadier time-left estimate, Stop now. D
   pairs and checkbox states from OCR); procedures grouped by revision ("latest revision only")
   and bulleted step lists in sections whose title reads as a procedure; the Documents tab listing
   a document's chunks while it is being built.
+- Picture descriptions kept by picture (a hash of the image, the model and the prompt), so a
+  file read again doesn't describe its pictures again. Then the reader version can be bumped to
+  re-read every PDF and Word file with the 0.4.2 layout rules without hours of descriptions.
+- Word: SmartArt (its data part holds the nodes and their connections), and flowcharts kept only
+  as VML or as embedded Visio/EMF pictures (EMF needs converting before it can be described).
 - Updates: a pre-release channel (Settings → Updates → "Also offer pre-releases"), which needs a
   second update feed because `releases/latest` never returns a pre-release.
 
