@@ -10,6 +10,8 @@ run together into one line and the arrows are lost. Here the drawing is rebuilt 
 * lines and polylines are joined into wires (pieces that meet end to end, or a branch that
   starts on another wire), and a wire connects the steps its free ends touch, pointing at the
   ends that carry an arrowhead (a small filled shape);
+* block arrows (a filled polygon with a shaft and a head, straight or bent, as Word, PowerPoint
+  and Visio draw them) connect the step at their tail to the step at their tip;
 * short text lying along a wire is its label ("Yes", "No"); other loose text inside the
   drawing is kept as notes.
 
@@ -224,6 +226,27 @@ def _closed_like(pts: list[Pt], b: Box) -> bool:
 
 
 # -- words ---------------------------------------------------------------------------------
+def _block_arrow(pts: list[Pt], b: Box) -> Pt | None:
+    """The tip of a block arrow, or None. A block arrow drawn upright has horizontal and vertical
+    sides except the two that form its head, which meet at the tip: so exactly one corner has a
+    slanted side on both hands."""
+    if len(pts) < 7 or len(pts) > 14 or max(b[2] - b[0], b[3] - b[1]) < 14.0:
+        return None
+    ring = pts[:-1] if math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 0.5 else list(pts)
+    n = len(ring)
+    if n < 7:
+        return None
+
+    def slanted(a: Pt, c: Pt) -> bool:
+        return abs(a[0] - c[0]) > 1.0 and abs(a[1] - c[1]) > 1.0
+
+    sides = [slanted(ring[i], ring[(i + 1) % n]) for i in range(n)]
+    if sum(sides) != 2:
+        return None
+    tips = [ring[i] for i in range(n) if sides[i - 1] and sides[i]]
+    return tips[0] if len(tips) == 1 else None
+
+
 def _centre(w: dict) -> Pt:
     return (float(w["x0"]) + float(w["x1"])) / 2, (float(w["top"]) + float(w["bottom"])) / 2
 
@@ -294,6 +317,7 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
     plain: set[tuple[int, int, int, int]] = set()   # filled with no outline of their own
     heads: list[Pt] = []
     wires: list[list[Pt]] = []
+    arrows: list[tuple[Pt, list[Pt]]] = []      # block arrows: (tip, outline)
 
     def _key(b: Box) -> tuple[int, int, int, int]:
         return tuple(int(round(v)) for v in b)   # type: ignore[return-value]
@@ -326,8 +350,8 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
                 wires.append([(b[0], (b[1] + b[3]) / 2), (b[2], (b[1] + b[3]) / 2)])
             else:
                 wires.append([((b[0] + b[2]) / 2, b[1]), ((b[0] + b[2]) / 2, b[3])])
-        elif r.get("fill") and not r.get("stroke") and (_black(r) or (h <= 20.0 and _key(b) not in outlined)):
-            continue        # a redaction bar, or the background painted behind a line of text
+        elif r.get("fill") and not r.get("stroke") and (_black(r) or _white(r) or (h <= 20.0 and _key(b) not in outlined)):
+            continue        # a redaction bar, a white mask, or the background painted behind a line of text
         elif max(w, h) <= HEAD_MAX and r.get("fill"):
             if not _white(r):
                 heads.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))
@@ -343,7 +367,13 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
             if (c.get("fill") and not _white(c)) or (not c.get("fill") and len(pts) >= 3):
                 heads.append(((b[0] + b[2]) / 2, (b[1] + b[3]) / 2))
             continue
-        if c.get("fill") and not c.get("stroke") and (_black(c) or min(w, h) < 2.0):
+        if c.get("fill") and not c.get("stroke") and (_black(c) or _white(c) or min(w, h) < 2.0):
+            continue        # a redaction bar, a white mask behind a label, or a hairline
+        if c.get("fill") and len(pts) <= 5 and not c.get("stroke") and h <= 20.0 and _key(b) not in outlined:
+            continue        # a rectangle drawn as a path: the background behind a line of text
+        tip = _block_arrow(pts, b) if c.get("fill") else None
+        if tip is not None:
+            arrows.append((tip, pts))
             continue
         if min(w, h) >= MIN_SHAPE and (c.get("fill") or _closed_like(pts, b)):
             kind = "decision" if _is_diamond(pts, b) else ("terminal" if len(pts) >= 7 else "box")
@@ -364,7 +394,7 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
         if k not in unique or rank[kind] > rank[unique[k][1]]:
             unique[k] = (b, kind)
     shapes = list(unique.values())
-    if len(shapes) < 3 or not wires:
+    if len(shapes) < 3 or not (wires or arrows):
         return []
 
     # Open arrowheads: two short strokes meeting at a point (a "V") mark the tip of an arrow.
@@ -384,7 +414,7 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
                             heads.append(((p[0] + q[0]) / 2, (p[1] + q[1]) / 2))
                             head_strokes.update((a, b))
     wires = [w for i, w in enumerate(wires) if i not in head_strokes]
-    if not wires:
+    if not (wires or arrows):
         return []
 
     # Every word belongs to the smallest shape around it.
@@ -528,6 +558,24 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
         edges.extend(made)
         net_paths.append((paths, made))
 
+    # Block arrows: from the step nearest the tail to the step the tip points at.
+    for tip, outline in arrows:
+        target = min(nodes, key=lambda n: _box_dist(n.bbox, tip))
+        if _box_dist(target.bbox, tip) > ATTACH:
+            continue
+        others = [n for n in nodes if n.id != target.id]
+        if not others:
+            continue
+        reach = lambda n: min(_box_dist(n.bbox, q) for q in outline)  # noqa: E731
+        source = min(others, key=reach)
+        if reach(source) > ATTACH:
+            continue
+        e = Edge(source.id, target.id)
+        e._paths = [outline]                                            # type: ignore[attr-defined]
+        e._branch = outline                                             # type: ignore[attr-defined]
+        edges.append(e)
+        net_paths.append(([outline], [e]))
+
     # Diagrams: groups of steps joined by connections.
     uf_nodes = _UnionFind(len(nodes))
     for e in edges:
@@ -621,6 +669,9 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
                 r = (d, _poly_dist(c, e._branch) if getattr(e, "_branch", None) else math.inf)
                 if d <= LABEL_NEAR and r < rank:
                     best, rank = e, r
+            if not any(ch.isalnum() for ch in text):
+                word_ids.update(ids)      # stray punctuation (a redacted word's leftovers)
+                continue
             if best is not None and len(text) <= 40:
                 best.label = f"{best.label} {text}".strip() if best.label else text
             else:

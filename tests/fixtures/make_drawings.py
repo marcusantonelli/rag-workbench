@@ -574,3 +574,63 @@ def make_documents(root: Path) -> dict[str, Path]:
             "plain2": photo(root / "plain2.png", size=(400, 300))}
     return {"procedure": procedure_pdf(root / "Cabinet Assembly WI.pdf", pics), "visio": visio_pdf(root / "Leak review.pdf"),
             "ruled": ruled_table_pdf(root / "Lot history.pdf")}
+
+
+# -- a page of panels: block-arrow flowchart, a boxed checklist, a titled table -----------------
+def _block_arrow(c, H, x, y1, y2, grey=0.55):
+    """A wide arrow drawn as one filled outline (shaft and head), pointing down from y1 to y2."""
+    p = c.beginPath()
+    for i, (px, py) in enumerate([(x - 5, y1), (x + 5, y1), (x + 5, y2 - 10), (x + 12, y2 - 10), (x, y2),
+                                  (x - 12, y2 - 10), (x - 5, y2 - 10)]):
+        (p.moveTo if i == 0 else p.lineTo)(px, H - py)
+    p.close()
+    c.setFillGray(grey)
+    c.drawPath(p, stroke=0, fill=1)
+    c.setFillGray(0)
+
+
+def _grid(c, H, x0, y0, widths, heights, rows, size=9, bold_first=False):
+    """Ruled cells; a row given as one string spans the whole width."""
+    y = y0
+    for r, (h, row) in enumerate(zip(heights, rows)):
+        if isinstance(row, str):
+            c.rect(x0, H - y - h, sum(widths), h)
+            _text(c, H, x0 + 5, y + h - 6, row, size, "Helvetica-Bold" if bold_first and r == 0 else "Helvetica")
+        else:
+            x = x0
+            for w, t in zip(widths, row):
+                c.rect(x, H - y - h, w, h)
+                if t:
+                    _text(c, H, x + 4, y + h - 6, t, size, "Helvetica-Bold" if bold_first and r == 0 else "Helvetica")
+                x += w
+        y += h
+
+
+def panels_pdf(path: Path) -> Path:
+    """A set-up page: a flowchart joined by block arrows on the left, a checklist in a one-column
+    box on the right, and below both a table whose first row is its title, ending in a blank
+    numbered row."""
+    c, H = _canvas(path)
+    _text(c, H, 40, 50, "5.0 Line Set-up and Recovery", 14, "Helvetica-Bold")
+    _text(c, H, 40, 72, "Follow the flow for every change of recipe on the line.")
+    ys = [100, 175, 250, 325]
+    names = [["Load the recipe"], ["Run a first article"], ["Inspect the first article"], ["Release the line"]]
+    for y, lines in zip(ys, names):
+        _shape(c, H, 60, y, 170, 40, lines)
+    for a, b in zip(ys, ys[1:]):
+        _block_arrow(c, H, 145, a + 40, b)
+    _grid(c, H, 330, 100, [230], [20] * 6,
+          ["Set-up Checklist", "Fixture clean and dry", "Torque driver calibrated",
+           "Recipe revision matches the traveller", "Two operators signed in", "Spare seals at the station"],
+          bold_first=True)
+    _grid(c, H, 40, 420, [150, 170, 210], [20] * 6,
+          ["Troubleshooting",
+           ["Symptom", "Likely cause", "What to do"],
+           ["Seal leaks", "Worn seal seat", "Replace the seat and rerun the article"],
+           ["Torque alarm", "Driver out of calibration", "Swap the driver and tag it"],
+           ["Label misprint", "Ribbon low", "Change the ribbon"],
+           ["4.", "", ""]],
+          bold_first=True)
+    c.showPage()
+    c.save()
+    return path

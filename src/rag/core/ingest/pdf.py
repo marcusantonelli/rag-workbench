@@ -301,7 +301,7 @@ def extract_pdf_native(path: Path, ctx: ExtractContext) -> ExtractedDoc:
                     items.ocr = True
                     _ocr_page(pdoc, i, items, ctx)
                 else:
-                    _digital_page(page, items, ctx)
+                    _digital_page(page, items, ctx, pages[-1] if pages else None)
                 pages.append(items)
                 page.flush_cache()
     except Exception:
@@ -430,7 +430,7 @@ def _header_above(words: list[dict], bbox, edges: list[float], rows: list[list[s
     return labels, {k for k, _ in band}
 
 
-def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
+def _digital_page(page, items: _PageItems, ctx: ExtractContext, prev: _PageItems | None = None) -> None:
     cfg = ctx.config["pdf"]
     from rag.core.ingest import forms
 
@@ -476,7 +476,7 @@ def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
     extracted = {}
     for i, t in enumerate(found):
         try:
-            extracted[i] = lay.clean_rows(t.extract())
+            extracted[i] = lay.drop_blank_rows(lay.clean_rows(t.extract()))
         except Exception:  # noqa: BLE001
             extracted[i] = []
     index_of: dict[int, int] = {}
@@ -489,6 +489,17 @@ def _digital_page(page, items: _PageItems, ctx: ExtractContext) -> None:
             lt = lay.build(items.number, t, words, list(page.images), nested, page_area)
         except Exception:  # noqa: BLE001 - fall back to the plain grid
             lt = None
+        # A grid with one column, or with no row of two filled cells, is boxes around text (a
+        # panel, a checklist, a cover block), not a table: its text stays in the reading flow,
+        # unless it lays out pictures or tables of its own or carries on a table from the
+        # previous page (the last rows of a procedure grid, with text in one column only).
+        grid = len(rows) >= 2 and any(sum(1 for c in r if c) >= 2 for r in rows)
+        has_pictures = any(_overlap((float(im["x0"]), float(im["top"]), float(im["x1"]), float(im["bottom"])), boxes[i]) > 0.5
+                           for im in page.images)
+        carries_on = lt is not None and prev is not None and not prev.ocr and any(
+            lay.same_columns(pl.edges, lt.edges) for pl in prev.layouts.values())
+        if not grid and not nested and not has_pictures and not carries_on:
+            continue
         usable = len(rows) >= 2 and max(len(r) for r in rows) >= 2
         if not usable and not (lt is not None and lt.items):
             continue
@@ -672,6 +683,8 @@ def _is_heading(ln: _Line, body: float, levels: dict[float, int]) -> int:
         return 0
     if _SECTION_NO_RE.match(text):
         return 0   # a section number on its own line (its text is elsewhere or missing)
+    if text[0].islower():
+        return 0   # a sentence carrying on from the line above, however large its type
     level = levels.get(round(ln.size, 1), 0)
     if level:
         return level
@@ -718,6 +731,7 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
         if chain[k] is not None and chain[k].is_layout and chain[k].continues and chain[k - 1] is not None:
             chain[k - 1].is_layout = True
     flow: dict = {"edges": None}
+    heading_region: list = [None]      # (page, region box, level) of the last heading, across pages
 
     for p in pages:
         if p.ocr:
@@ -747,7 +761,7 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             text = " ".join(c for r in rows for c in r if c)
             if _band(p, bbox[1], bbox[3]) and (text in furniture or _PAGE_REF_RE.search(text)):
                 continue                      # a document-control box repeated on every page
-            events.append((_reading_key(p, bbox), "table", rows))
+            events.append((_reading_key(p, bbox), "table", (rows, bbox)))
         for top, bbox in p.figures:
             if any(_overlap(bbox, lb) > 0.5 for lb in layout_boxes):
                 continue                      # placed by the layout table, with its step
@@ -797,6 +811,8 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                     else:
                         blocks.append(Block(kind="heading", text=ln.text.strip(), level=level, page=p.number))
                     last_heading[0] = ln
+                    if 0 <= ln.group < len(p.groups):
+                        heading_region[0] = (p.number, p.groups[ln.group], level)
                     continue
                 last_heading[0] = None
                 if para:
@@ -809,9 +825,20 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
             elif kind == "table":
                 last_heading[0] = None
                 flush()
-                rows: list[list[str]] = obj  # type: ignore[assignment]
+                rows, tbox = obj  # type: ignore[misc]
                 caption = _caption_near(blocks, events, idx, consumed)
-                blocks.extend(_table_blocks(rows, p.number, caption))
+                made = _table_blocks(rows, p.number, caption)
+                if made and made[0].meta.get("title_row") and made[0].meta.get("caption"):
+                    # A table with a title row of its own starts a section: beside the last
+                    # heading's when it reaches past that heading's region (a full-width table
+                    # under side-by-side panels), else inside it.
+                    level = 1
+                    if heading_region[0] is not None:
+                        hp, (gx0, _, gx1, _), hl = heading_region[0]
+                        outside = hp != p.number or tbox[0] < gx0 - 20 or tbox[2] > gx1 + 20
+                        level = hl if outside else min(hl + 1, 6)
+                    blocks.append(Block(kind="heading", text=made[0].meta["caption"], level=level, page=p.number))
+                blocks.extend(made)
             elif kind == "layout":
                 last_heading[0] = None
                 flush()
@@ -940,6 +967,7 @@ def _table_blocks(rows: list[list[str]], page: int | None, caption: str | None) 
     out: list[Block] = []
     segment: list[list[str]] = []
     pending = caption
+    titled = False          # the caption is the table's own first row
 
     def flush() -> None:
         nonlocal pending
@@ -949,20 +977,33 @@ def _table_blocks(rows: list[list[str]], page: int | None, caption: str | None) 
         filled = [c for c in first if c]
         form = len(first) >= 2 and len(filled) <= len(first) / 2 and any(_FORM_CELL_RE.search(c) for c in filled)
         pairs = form_lines(segment) if len(segment) > 1 or form else None
-        if form or len(segment) == 1 or pairs is not None:
+        boxes_only = not any(sum(1 for c in r if c) >= 2 for r in segment)
+        if form or len(segment) == 1 or pairs is not None or boxes_only:
             lines = pairs if pairs is not None else [c for r in segment for c in r if c]
             text = "\n".join(([pending] if pending else []) + lines)
             out.append(Block(kind="paragraph", text=text, page=page, meta={"form": pairs is not None}))
         else:
-            headers, data = segment[0], segment[1:]
+            # each part of the grid on its own: boxes inside cells split columns per table
+            from rag.core.ingest.layout_table import clean_rows, tidy_grid
+
+            tidy = clean_rows(tidy_grid([list(r) for r in segment]))
+            headers, data = tidy[0], tidy[1:]
             text = (f"**{pending}**\n\n" if pending else "") + markdown_table(headers, data)
-            out.append(Block(kind="table", text=text, page=page, meta={"headers": headers, "rows": data, "caption": pending}))
+            out.append(Block(kind="table", text=text, page=page,
+                             meta={"headers": headers, "rows": data, "caption": pending, "title_row": titled and not out}))
         pending = None
         segment.clear()
 
     width = max(len(r) for r in rows)
-    for r in rows:
+    for n, r in enumerate(rows):
         filled = [c for c in r if c]
+        # a one-cell row names the part that follows; at the top, it is the table's title
+        title_row = (len(filled) == 1 and len(filled[0].split()) <= 12 and width >= 2 and n + 1 < len(rows)
+                     and sum(1 for c in rows[n + 1] if c) >= 2)
+        if not segment and title_row and pending is None:
+            pending = filled[0]
+            titled = True
+            continue
         if width >= 3 and len(filled) == 1 and len(filled[0].split()) <= 8 and segment:
             flush()                       # a one-cell row: the name of the part that follows
             pending = filled[0]

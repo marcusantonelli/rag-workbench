@@ -291,6 +291,20 @@ class Chunker:
 
         figures: list[Block] = []     # pictures met inside the section being collected
 
+        # A heading with nothing under it before the next heading of its level or above (a cover
+        # page's title, a label set large) keeps its words as text: a heading alone is only part
+        # of a path, and its words would otherwise not be searchable at all.
+        blocks_in: list[Block] = []
+        is_code = any(b.kind in ("code", "sql") for b in doc.blocks)   # there headings are symbol names
+        own_title = " ".join((doc.title or "").lower().split())
+        for k, block in enumerate(doc.blocks):
+            blocks_in.append(block)
+            if block.kind != "heading" or is_code or " ".join(block.text.lower().split()) == own_title:
+                continue        # the document's own title is its title, not text to search
+            nxt = next((b for b in doc.blocks[k + 1:]), None)
+            if nxt is None or (nxt.kind == "heading" and max(1, nxt.level or 1) <= max(1, block.level or 1)):
+                blocks_in.append(Block(kind="paragraph", text=block.text.strip(), page=block.page))
+
         def flush() -> None:
             prose = self._prose_chunks(section, path())
             # A picture inside a section doesn't cut the section's text in two. One with words of
@@ -308,7 +322,7 @@ class Chunker:
             section.clear()
             figures.clear()
 
-        for block in doc.blocks:
+        for block in blocks_in:
             if block.kind == "heading":
                 flush()
                 level = max(1, block.level or 1)

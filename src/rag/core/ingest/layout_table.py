@@ -90,6 +90,63 @@ def clean_rows(rows: list[list[str | None]]) -> list[list[str]]:
     return [[r[k] for k in keep] for r in rows if any(r[k] for k in keep)]
 
 
+# a blank numbered line of a form ("1.", "2)"): nothing written on it yet
+_MARKER_ONLY = re.compile(r"^\s*(?:\(?\d{1,3}[.)])?\s*$")
+
+
+def _absorb(left: str, extra: str) -> str:
+    """left with extra appended, unless extra (or its words) is already there: the pieces of a cell
+    that a box inside it split up repeat what the whole cell already read."""
+    if not extra:
+        return left
+    if not left:
+        return extra
+    norm = lambda t: " ".join(t.lower().split())  # noqa: E731
+    if norm(extra) in norm(left):
+        return left
+    return f"{left} {extra}"
+
+
+def drop_blank_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Without the rows that hold nothing but blank numbered lines ("1." and nothing written)."""
+    return [r for r in rows if any(c and not _MARKER_ONLY.match(c) for c in r)]
+
+
+def tidy_grid(rows: list[list[str]]) -> list[list[str]]:
+    """General repairs to a ruled grid as pdfplumber reads it.
+
+    * Rows that hold nothing but empty list markers ("1.", "-") are dropped: blank form lines.
+    * A column with no header under a header row, beside a column that has one, is a piece of
+      that column: boxes drawn inside cells (redaction bars, highlights, underlines) split cells
+      into phantom columns. It is folded into the column on its left, without repeating text. A
+      real second header level ("Test" over "Pass | Fail") is left alone: there the row under the
+      header fills both columns.
+    """
+    rows = drop_blank_rows(rows)
+    if len(rows) < 2:
+        return rows
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    # the header row: the first with two or more filled cells (a title row above it stays)
+    h = next((i for i, r in enumerate(rows) if sum(1 for c in r if c) >= 2), None)
+    if h is None or h + 1 >= len(rows):
+        return rows
+    header, below = rows[h], rows[h + 1]
+    keep = list(range(width))
+    k = 1
+    while k < len(keep):
+        col, left = keep[k], keep[k - 1]
+        if not header[col] and (header[left] or any(header[c] for c in keep[:k])) and not (below[col] and below[left]):
+            for r in rows[h + 1:]:
+                r[left] = _absorb(r[left], r[col])
+            for r in rows[:h]:
+                r[left] = _absorb(r[left], r[col])
+            keep.pop(k)
+            continue
+        k += 1
+    return [[r[c] for c in keep] for r in rows]
+
+
 def real_nested(rows: list[list[str]]) -> bool:
     """A table inside a cell, as opposed to boxes that merely overlap some text."""
     return len(rows) >= 2 and sum(1 for r in rows if sum(1 for c in r if c) >= 2) >= 2
