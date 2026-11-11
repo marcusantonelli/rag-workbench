@@ -465,3 +465,82 @@ def test_engines_agree_on_long_procedures(long_ws):
             ref.close()
             nat.close()
             store.close()
+
+
+# -- reading on through a procedure -------------------------------------------------------------
+@pytest.mark.parametrize("max_tokens", [4000, 600, 150])
+def test_pages_cover_a_procedure_once_and_engines_agree(long_ws, max_tokens):
+    store, ref = _searcher(long_ws, "reference")
+    engines = [ref]
+    if native_engine_available():
+        engines.append(_searcher(long_ws, "native")[1])
+    try:
+        pages = []
+        args = {"from_": None, "after_chunk": None}
+        while True:
+            got = [e.procedure(1, max_tokens=max_tokens, **args) for e in engines]
+            assert all(g == got[0] for g in got)
+            pages.append(got[0])
+            if not got[0]["next"]:
+                break
+            args = {"from_": got[0]["next"]["from"], "after_chunk": got[0]["next"].get("after_chunk")}
+        ids = [c for p in pages for c in p["chunk_ids"]]
+        db = sqlite3.connect(spots.spots_path(long_ws.root))
+        try:
+            members = [r[0] for r in db.execute("SELECT chunk_id FROM members WHERE proc_id = 1 ORDER BY step, ordinal")]
+        finally:
+            db.close()
+        assert ids == members                       # every chunk once, in reading order
+        assert pages[-1]["markdown"].endswith("(the procedure ends here)")
+        assert all(p["markdown"].startswith("[P1] ") for p in pages)
+    finally:
+        for e in engines:
+            e.close()
+        store.close()
+
+
+def native_engine_available() -> bool:
+    try:
+        import shammy  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize("engine", ["reference", "native"])
+def test_a_partial_result_says_how_to_read_on(long_ws, engine):
+    if engine == "native":
+        pytest.importorskip("shammy")
+    store, s = _searcher(long_ws, engine)
+    try:
+        res = s.search(_first_text(long_ws, "7.12 "), k=3)
+        r = res.to_dict()["results"][0]
+        more = r["more"]
+        assert more["procedure"] == r["procedure"]["id"] and more["from"]
+        assert f'Read on: get_procedure_steps(procedure={more["procedure"]}, from="{more["from"]}"' in res.to_markdown()
+        # following it continues right after what the result showed
+        page = s.procedure(more["procedure"], from_=more["from"], after_chunk=more.get("after_chunk"))
+        assert not set(page["chunk_ids"]) & set(r.get("chunk_ids", [r["chunk_id"]]))
+        # a whole procedure has nothing more
+        store2, s2 = _searcher(long_ws, engine, procedure_tokens=100000)
+        try:
+            assert all("more" not in x for x in s2.search(_first_text(long_ws, "7.12 "), k=3).to_dict()["results"])
+        finally:
+            s2.close()
+            store2.close()
+    finally:
+        s.close()
+        store.close()
+
+
+def test_reading_on_needs_the_spots_file(long_ws, tmp_path):
+    copy = tmp_path / "copy"
+    shutil.copytree(long_ws.root, copy)
+    spots.spots_path(copy).unlink()
+    store, s = _searcher(Workspace.open(copy))
+    try:
+        with pytest.raises(ValueError, match="spots"):
+            s.procedure(1)
+    finally:
+        s.close()
+        store.close()

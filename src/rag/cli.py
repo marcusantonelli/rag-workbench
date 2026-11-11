@@ -381,6 +381,29 @@ def cmd_spots(args) -> int:
     return 0
 
 
+def cmd_procedure(args) -> int:
+    """A page of a procedure, as `get_procedure_steps` returns it to an agent."""
+    from rag.core.db.store import RagStore
+    from rag.core.retrieve.search import Searcher
+    from rag.core.workspace import open_any
+
+    ws, tmp = open_any(Path(args.workspace))
+    store = RagStore(ws.rag_db, readonly=True)
+    searcher = Searcher(store, None, ws.config["search"])
+    try:
+        page = searcher.procedure(args.id, from_=args.from_step, after_chunk=args.after_chunk, max_tokens=args.max_tokens)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        searcher.close()
+        store.close()
+        if tmp is not None:
+            tmp.cleanup()
+    print(json.dumps(page, indent=2, default=str) if args.json else page.get("markdown", ""))
+    return 0
+
+
 def cmd_tables(args) -> int:
     from rag.core.db.tables import TablesStore
     from rag.core.workspace import open_any
@@ -580,6 +603,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--check", action="store_true", help="only say whether it is there and current")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_spots)
+
+    s = sub.add_parser("procedure", help="read a procedure page by page (the `Read on:` line of a search result names "
+                                         "the procedure and where to continue)")
+    s.add_argument("workspace")
+    s.add_argument("id", type=int, help="the procedure's number")
+    s.add_argument("--from", dest="from_step", metavar="STEP", help="start at this step, e.g. 7.35 (default: the first)")
+    s.add_argument("--after-chunk", type=int, help="continue inside a long step after this chunk")
+    s.add_argument("--max-tokens", type=int, default=4000, help="page size (default 4000)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_procedure)
 
     s = sub.add_parser("tables", help="list tables")
     s.add_argument("workspace")

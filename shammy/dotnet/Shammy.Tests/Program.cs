@@ -113,6 +113,18 @@ if (File.Exists(ragFile))
         Expect(retriever.Procedures is not null, "spots file read");
         var none = retriever.Search(question, qv, new RetrievalOptions { K = 3, Documents = ["no-such-document"] });
         Expect(none.Results.Count == 0, "document filter");
+        if (retriever.Procedures is > 0)
+        {
+            // read a whole procedure page by page: every page names the next, the last says so
+            var page = retriever.ProcedureSteps(1, maxTokens: 200);
+            int pages = 1;
+            while (page.Next is { } next && pages < 500)
+            {
+                page = retriever.ProcedureSteps(next, 200);
+                pages++;
+            }
+            Expect(page.Next is null && page.Markdown.Length > 0 && pages < 500, "procedure pages");
+        }
         var flat = retriever.Search(question, qv, new RetrievalOptions { K = 3, Procedures = false });
         Expect(flat.Results.All(r => r.Procedure is null), "procedures off");
         if (kb.TryGetProperty("rerank_url", out var url))

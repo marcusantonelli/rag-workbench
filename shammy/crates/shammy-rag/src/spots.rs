@@ -15,6 +15,7 @@ const FORMAT: &str = "spots/1";
 
 #[derive(Clone)]
 pub(crate) struct Procedure {
+    pub doc_id: i64,
     pub kind: String,
     pub label: Option<String>,
     pub title: Option<String>,
@@ -98,8 +99,8 @@ impl Spots {
     }
 
     pub(crate) fn procedure(&self, proc_id: i64) -> rusqlite::Result<Option<Procedure>> {
-        self.conn().query_row("SELECT kind, label, title, steps, tokens FROM procedures WHERE proc_id = ?", [proc_id], |r| {
-            Ok(Procedure { kind: r.get(0)?, label: r.get(1)?, title: r.get(2)?, steps: r.get(3)?, tokens: r.get(4)? })
+        self.conn().query_row("SELECT doc_id, kind, label, title, steps, tokens FROM procedures WHERE proc_id = ?", [proc_id], |r| {
+            Ok(Procedure { doc_id: r.get(0)?, kind: r.get(1)?, label: r.get(2)?, title: r.get(3)?, steps: r.get(4)?, tokens: r.get(5)? })
         }).optional()
     }
 

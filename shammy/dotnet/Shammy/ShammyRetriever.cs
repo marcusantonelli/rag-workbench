@@ -87,6 +87,32 @@ public sealed record RetrievalHit(string Tag, long ChunkId, string Kind, double 
 
     /// <summary>For the first result from a long procedure: its steps around this passage (empty otherwise).</summary>
     public IReadOnlyList<RetrievalOutlineStep> Outline { get; init; } = [];
+
+    /// <summary>When the result is only part of a procedure: the request that reads on from it. Pass it to
+    /// <see cref="ShammyRetriever.ProcedureSteps(ProcedurePosition, int?)"/>. Null when there is nothing more.</summary>
+    public ProcedurePosition? More { get; init; }
+}
+
+/// <summary>Where to continue reading a procedure: a step label, and inside a step too long for one page,
+/// the last chunk already read.</summary>
+public sealed record ProcedurePosition(long Procedure, string? From, long? AfterChunk);
+
+/// <summary>One page of a procedure, from <see cref="ShammyRetriever.ProcedureSteps(long, string?, long?, int?)"/>.</summary>
+public sealed class ProcedurePage
+{
+    /// <summary>The whole response as JSON, exactly as the engine wrote it.</summary>
+    public required string Json { get; init; }
+
+    /// <summary>The steps on this page, with a heading per step.</summary>
+    public required string Text { get; init; }
+
+    /// <summary>The compact text for an agent, ending with the call that reads on (or "the procedure ends here").</summary>
+    public required string Markdown { get; init; }
+
+    public RetrievalProcedure? Procedure { get; init; }
+
+    /// <summary>The request for the next page; null at the end of the procedure.</summary>
+    public ProcedurePosition? Next { get; init; }
 }
 
 public sealed record RetrievalTable(string TableName, long ChunkId, double Score, string Summary, string Card);
@@ -232,7 +258,7 @@ public sealed class ShammyRetriever : IDisposable
                                       Str(s, "table_name"), Str(s, "asset_path"))
             {
                 Document = Str(s, "document"), Revision = Str(s, "revision"), Procedure = procedure, Related = related,
-                Outline = outline,
+                Outline = outline, More = Position(h, "more"),
             });
         }
         var tables = new List<RetrievalTable>();
@@ -248,6 +274,57 @@ public sealed class ShammyRetriever : IDisposable
         }
         return new RetrievalResult { Json = json, Results = hits, Tables = tables, Markdown = Str(root, "markdown"),
                                      Reranked = reranked, RerankError = rerankError };
+    }
+
+    private static ProcedurePosition? Position(JsonElement e, string name)
+    {
+        if (!e.TryGetProperty(name, out var m) || m.ValueKind != JsonValueKind.Object) return null;
+        return new ProcedurePosition(m.GetProperty("procedure").GetInt64(),
+                                     m.TryGetProperty("from", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null,
+                                     m.TryGetProperty("after_chunk", out var c) && c.ValueKind == JsonValueKind.Number ? c.GetInt64() : null);
+    }
+
+    /// <summary>Read on through a procedure (needs the knowledge base's spots file): its steps from
+    /// <paramref name="from"/> (the first step when null), as many as fit in <paramref name="maxTokens"/> (4000).
+    /// A step longer than that is paged by its chunks; <paramref name="afterChunk"/> continues inside it.</summary>
+    public ProcedurePage ProcedureSteps(long procedure, string? from = null, long? afterChunk = null, int? maxTokens = null)
+    {
+        var request = new Dictionary<string, object?> { ["procedure"] = procedure, ["markdown"] = true };
+        if (from is not null) request["from"] = from;
+        if (afterChunk is not null) request["after_chunk"] = afterChunk;
+        if (maxTokens is not null) request["max_tokens"] = maxTokens;
+        string json = ProcedureJson(JsonSerializer.Serialize(request));
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        RetrievalProcedure? info = null;
+        if (root.TryGetProperty("procedure", out var p) && p.ValueKind == JsonValueKind.Object)
+            info = new RetrievalProcedure(p.GetProperty("id").GetInt64(), p.GetProperty("kind").GetString() ?? "",
+                                          p.TryGetProperty("title", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null,
+                                          p.TryGetProperty("label", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null,
+                                          p.GetProperty("steps").GetInt32(),
+                                          p.TryGetProperty("from", out var fr) && fr.ValueKind == JsonValueKind.String ? fr.GetString() : null,
+                                          p.TryGetProperty("to", out var to) && to.ValueKind == JsonValueKind.String ? to.GetString() : null,
+                                          p.TryGetProperty("whole", out var w) && w.ValueKind == JsonValueKind.True,
+                                          p.TryGetProperty("level", out var lv) ? lv.GetString() ?? "" : "",
+                                          p.TryGetProperty("step", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() : null);
+        return new ProcedurePage
+        {
+            Json = json, Procedure = info, Next = Position(root, "next"),
+            Text = root.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "",
+            Markdown = root.TryGetProperty("markdown", out var md) ? md.GetString() ?? "" : "",
+        };
+    }
+
+    /// <summary>Continue from a search result's <see cref="RetrievalHit.More"/> or a page's <see cref="ProcedurePage.Next"/>.</summary>
+    public ProcedurePage ProcedureSteps(ProcedurePosition position, int? maxTokens = null)
+        => ProcedureSteps(position.Procedure, position.From, position.AfterChunk, maxTokens);
+
+    /// <summary>Read on through a procedure with a raw JSON request (fields in shammy.h); returns the raw JSON page.</summary>
+    public string ProcedureJson(string requestJson)
+    {
+        ArgumentNullException.ThrowIfNull(requestJson);
+        Check(RagNative.shammy_rag_procedure(_handle, requestJson, out var ptr));
+        return Take(ptr);
     }
 
     /// <summary>Search with a raw JSON request (the fields are listed in shammy.h) and get the raw JSON response.</summary>
@@ -312,6 +389,10 @@ internal static unsafe class RagNative
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int shammy_rag_search(RetrieverHandle retriever, [MarshalAs(UnmanagedType.LPUTF8Str)] string requestJson,
                                                  float* vector, nuint vectorLen, out IntPtr json);
+
+    [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int shammy_rag_procedure(RetrieverHandle retriever, [MarshalAs(UnmanagedType.LPUTF8Str)] string requestJson,
+                                                    out IntPtr json);
 
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void shammy_string_free(IntPtr s);

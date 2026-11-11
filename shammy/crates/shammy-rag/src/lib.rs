@@ -116,6 +116,24 @@ pub struct Request {
     pub documents: Vec<String>,
 }
 
+fn d_page_tokens() -> i64 { 4000 }
+
+/// Reading on through a procedure: a page of its steps from `from` (its first step when absent),
+/// as many as fit in `max_tokens`. A step longer than that is paged by its chunks: pass
+/// `after_chunk` (from the previous page's `next`) to continue inside it.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ProcedureRequest {
+    pub procedure: i64,
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub after_chunk: Option<i64>,
+    #[serde(default = "d_page_tokens")]
+    pub max_tokens: i64,
+    #[serde(default)]
+    pub markdown: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Info {
     pub path: String,
@@ -592,6 +610,15 @@ impl Retriever {
             } else {
                 item["related"] = json!(related);
             }
+            let more = self.more(spots, &wider, &r.span)?;
+            let item = &mut results[prev.index];
+            if more.is_null() {
+                if let Some(m) = item.as_object_mut() {
+                    m.remove("more");
+                }
+            } else {
+                item["more"] = more;
+            }
             included.extend(r.span.iter().copied());
             let grown = used + r.tokens - prev.tokens;
             prev.plan = wider;
@@ -635,6 +662,112 @@ impl Retriever {
                 seen.insert(key);
                 out.push(item);
             }
+        }
+        Ok(out)
+    }
+
+    /// Where to read on after a procedure result: the step after the last one shown, or, inside a
+    /// step too long to return whole, the chunks after the last one shown.
+    fn more(&self, spots: &spots::Spots, plan: &Plan, span: &[i64]) -> Result<Value> {
+        let steps = &plan.steps;
+        let next_step = |i: usize| -> Value {
+            if i < steps.len() { json!({"procedure": plan.pid, "from": steps[i].label}) } else { Value::Null }
+        };
+        Ok(match plan.level {
+            "procedure" => Value::Null,
+            "steps" => next_step(plan.hi + 1),
+            _ => {
+                let st = steps[plan.idx].step;
+                let all: Vec<i64> = spots.members(plan.pid, st, st)?.into_iter().map(|m| m.0).collect();
+                let last = span.iter().filter_map(|c| all.iter().position(|x| x == c)).max();
+                match last {
+                    Some(i) if i + 1 < all.len() => json!({"procedure": plan.pid, "from": steps[plan.idx].label, "after_chunk": all[i]}),
+                    _ => next_step(plan.idx + 1),
+                }
+            }
+        })
+    }
+
+    /// Read on through a procedure with a JSON request (see `ProcedureRequest`).
+    pub fn procedure_json(&self, request: &str) -> Result<String> {
+        let req: ProcedureRequest = serde_json::from_str(request).map_err(|e| Error::Request(format!("bad procedure request: {e}")))?;
+        Ok(self.procedure_page(&req)?.to_string())
+    }
+
+    pub fn procedure_page(&self, req: &ProcedureRequest) -> Result<Value> {
+        let Some(spots) = &self.spots else {
+            return Err(Error::Request("this knowledge base has no current spots file (run `rag spots` on it)".into()));
+        };
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let pid = req.procedure;
+        let Some(proc_) = spots.procedure(pid)? else { return Err(Error::Request(format!("there is no procedure {pid}"))) };
+        let steps = spots.steps(pid)?;
+        if steps.is_empty() {
+            return Err(Error::Request(format!("procedure {pid} has no steps")));
+        }
+        let mut start = match &req.from {
+            None => 0,
+            Some(l) => steps.iter().position(|s| s.label.as_deref() == Some(l.as_str()))
+                .ok_or_else(|| Error::Request(format!("procedure {pid} has no step {l:?}")))?,
+        };
+        let cap = req.max_tokens.max(1);
+        let base = Plan { pid, proc_: proc_.clone(), steps: steps.clone(), idx: start, level: "steps", lo: start, hi: start,
+                          subs: Vec::new(), chunks: Vec::new(), at: None };
+        // inside one step: after a given chunk, or a step too long for one page
+        let mut plan = None;
+        if req.after_chunk.is_some() || steps[start].tokens > cap {
+            let st = steps[start].step;
+            let all: Vec<i64> = spots.members(pid, st, st)?.into_iter().map(|m| m.0).collect();
+            let from = match req.after_chunk {
+                Some(c) => all.iter().position(|x| *x == c).map_or(0, |i| i + 1),
+                None => 0,
+            };
+            if from < all.len() {
+                let rest = all[from..].to_vec();
+                let rows = self.load(&conn, &rest)?;
+                let (mut take, mut total) = (Vec::new(), 0i64);
+                for c in rest.iter().filter(|c| rows.contains_key(c)) {
+                    let t = rows[c].n_tokens.unwrap_or(0);
+                    if !take.is_empty() && total + t > cap {
+                        break;
+                    }
+                    take.push(*c);
+                    total += t;
+                }
+                let at = steps[start].label.clone();
+                plan = Some(Plan { level: "chunks", chunks: take, at, ..base.clone() });
+            } else if start + 1 < steps.len() {
+                start += 1;                    // the step is finished: carry on with the next one
+            } else {
+                return Ok(json!({"procedure": null, "text": "", "chunk_ids": [], "next": null, "markdown": "(the procedure ends here)"}));
+            }
+        }
+        let plan = match plan {
+            Some(p) => p,
+            None => {
+                let (mut hi, mut total) = (start, steps[start].tokens);
+                while hi + 1 < steps.len() && total + steps[hi + 1].tokens <= cap {
+                    hi += 1;
+                    total += steps[hi].tokens;
+                }
+                let level = if start == 0 && hi == steps.len() - 1 { "procedure" } else { "steps" };
+                Plan { level, idx: start, lo: start, hi, ..base }
+            }
+        };
+        let Some(r) = self.render(&conn, spots, &plan, &HashSet::new())? else {
+            return Err(Error::Store(format!("procedure {pid} has no readable chunks")));
+        };
+        let next = self.more(spots, &plan, &r.span)?;
+        let (file, ftype): (String, String) = conn.query_row("SELECT display_path, file_type FROM documents WHERE doc_id = ?",
+                                                             [proc_.doc_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let (number, revision) = spots.document(proc_.doc_id)?;
+        let mut out = json!({"procedure": r.info, "source": {"file": file, "file_type": ftype, "document": number, "revision": revision},
+                             "text": r.text, "chunk_ids": r.span, "tokens": r.tokens, "next": next});
+        if let Some(o) = r.outline {
+            out["outline"] = o;
+        }
+        if req.markdown {
+            out["markdown"] = json!(procedure_markdown(&out));
         }
         Ok(out)
     }
@@ -829,6 +962,12 @@ impl Retriever {
                 if !related.is_empty() {
                     item["related"] = json!(related);
                 }
+                if let Some(p) = &plan {
+                    let more = self.more(spots, p, &span)?;
+                    if !more.is_null() {
+                        item["more"] = more;
+                    }
+                }
             }
             if let Some(p) = plan {
                 *procs_seen.entry(p.pid).or_insert(0) += 1;
@@ -896,6 +1035,39 @@ fn outline_note(p: &Value, o: &Value) -> String {
     format!("Outline of {name}: {}", items.join("; "))
 }
 
+/// `Read on: get_procedure_steps(procedure=12, from="7.35")`: the call that continues a procedure.
+fn more_note(m: &Value) -> String {
+    let mut args = format!("procedure={}, from={}", m["procedure"], serde_json::to_string(&m["from"]).unwrap_or_default());
+    if let Some(c) = m["after_chunk"].as_i64() {
+        args.push_str(&format!(", after_chunk={c}"));
+    }
+    format!("Read on: get_procedure_steps({args})")
+}
+
+/// The compact form of a page of a procedure.
+pub fn procedure_markdown(page: &Value) -> String {
+    if page["procedure"].is_null() {
+        return "(the procedure ends here)".into();
+    }
+    let s = &page["source"];
+    let mut loc: Vec<String> = Vec::new();
+    if let Some(doc) = nonempty(&s["document"]) {
+        loc.push(doc + &nonempty(&s["revision"]).map(|r| format!(" rev {r}")).unwrap_or_default());
+    }
+    loc.push(procedure_note(&page["procedure"]));
+    let mut out = vec![format!("[P{}] {} · {}", page["procedure"]["id"], s["file"].as_str().unwrap_or(""), loc.join(" · ")),
+                       page["text"].as_str().unwrap_or("").to_string()];
+    if page["outline"].is_object() {
+        out.push(outline_note(&page["procedure"], &page["outline"]));
+    }
+    if page["next"].is_object() {
+        out.push(more_note(&page["next"]));
+    } else {
+        out.push("(the procedure ends here)".into());
+    }
+    out.join("\n")
+}
+
 fn related_note(x: &Value) -> String {
     if x["kind"].as_str() == Some("section") {
         return format!("section {}", nonempty(&x["title"]).or_else(|| nonempty(&x["ref"])).unwrap_or_default());
@@ -942,6 +1114,9 @@ pub fn markdown(response: &Value) -> String {
         }
         if let Some(related) = r["related"].as_array().filter(|a| !a.is_empty()) {
             out.push(format!("Related: {}", related.iter().map(related_note).collect::<Vec<_>>().join("; ")));
+        }
+        if r["more"].is_object() {
+            out.push(more_note(&r["more"]));
         }
         out.push(String::new());
     }

@@ -69,12 +69,12 @@ typedef struct ShammyReport {
     uint64_t uncommitted_bytes; /* an interrupted write after the last commit; harmless */
 } ShammyReport;
 
-const char *shammy_version(gap);
-const char *shammy_last_error(gap);
-uint32_t    shammy_default_threads(gap);
+const char *shammy_version(void);
+const char *shammy_last_error(void);
+uint32_t    shammy_default_threads(void);
 
 int32_t shammy_open(const char *path, ShammyReader **out);
-gap    shammy_close(ShammyReader *reader);
+void    shammy_close(ShammyReader *reader);
 int32_t shammy_info(const ShammyReader *reader, ShammyInfo *out);
 int32_t shammy_file_type(const ShammyReader *reader, uint32_t index, char *buf, size_t cap);
 
@@ -124,18 +124,26 @@ int32_t shammy_verify(const char *path, ShammyReport *out);
  * also carry source.document / source.revision, "procedure" ({id, kind, title, label, steps, level,
  * from, to, whole, step}) for a hit inside a procedure, "outline" ({steps: [{label, title, shown}],
  * before, after}) on the first result from a long procedure, and "related" (references to other
- * steps and documents). level is "procedure" (whole), "steps", "substeps" (inside one long step)
+ * steps and documents), and "more" ({procedure, from, after_chunk}) when there is more of the
+ * procedure to read: pass it to shammy_rag_procedure. level is "procedure" (whole), "steps",
+ * "substeps" (inside one long step)
  * or "chunks" (part of one step too long to return). Without a spots file (any older pack),
  * results are exactly as before.
  */
 typedef struct ShammyRetriever ShammyRetriever;
 
 int32_t shammy_rag_open(const char *folder, ShammyRetriever **out);  /* the folder holding rag.db */
-gap    shammy_rag_close(ShammyRetriever *retriever);
+void    shammy_rag_close(ShammyRetriever *retriever);
 int32_t shammy_rag_info(const ShammyRetriever *retriever, char **out_json);
 int32_t shammy_rag_search(const ShammyRetriever *retriever, const char *request_json,
                           const float *vector, size_t vector_len, char **out_json);
-gap    shammy_string_free(char *s);  /* for every char* this library returns through an out pointer */
+/* Read on through a procedure named by a search result's "more" ({"procedure": 12, "from":
+ * "7.35", "after_chunk": 812}). Request: {"procedure", "from", "after_chunk", "max_tokens": 4000,
+ * "markdown": true}; only "procedure" is required. Response: {"procedure", "source", "text",
+ * "chunk_ids", "tokens", "outline", "next" (the request for the next page, or null), "markdown"}.
+ * Needs a current structure.spots; fails with SHAMMY_E_ARGUMENT otherwise. */
+int32_t shammy_rag_procedure(const ShammyRetriever *retriever, const char *request_json, char **out_json);
+void    shammy_string_free(char *s);  /* for every char* this library returns through an out pointer */
 
 #ifdef __cplusplus
 }

@@ -425,6 +425,32 @@ pub unsafe extern "C" fn shammy_rag_search(retriever: *const ShammyRetriever, re
     })
 }
 
+/// Read on through a procedure (needs the knowledge base's spots file). `request_json` is
+/// {"procedure": 12, "from": "7.35", "after_chunk": 812, "max_tokens": 4000, "markdown": true};
+/// only "procedure" is required. Returns the page as JSON in `out_json`, including "next" (the
+/// request for the following page, or null at the end).
+///
+/// # Safety
+/// Every pointer must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn shammy_rag_procedure(retriever: *const ShammyRetriever, request_json: *const c_char,
+                                              out_json: *mut *mut c_char) -> i32 {
+    guard(|| {
+        let (Some(r), false) = (retriever.as_ref(), out_json.is_null()) else {
+            return fail(SHAMMY_E_ARGUMENT, "retriever or out_json is null");
+        };
+        *out_json = std::ptr::null_mut();
+        let request = match text(request_json, "request_json") {
+            Ok(t) => t,
+            Err(code) => return code,
+        };
+        match r.inner.procedure_json(request) {
+            Ok(json) => give_string(json, out_json),
+            Err(e) => from_rag(e),
+        }
+    })
+}
+
 /// Free a string returned by this library. Null is ignored.
 ///
 /// # Safety

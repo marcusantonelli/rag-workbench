@@ -123,6 +123,15 @@ it, with the included ones in bold, and references are listed under the passage.
 `procedure_hits` (3) results come from one procedure while other documents still have results to
 give; hits in the step just next to one already returned widen that result instead.
 
+When a result is only part of a long procedure, its last line names the call that reads on, for
+example `Read on: get_procedure_steps(procedure=12, from="7.35")`. The same pages from the command
+line:
+
+```
+rag procedure docs-kb 12 --from 7.35
+rag procedure docs-kb 12 --max-tokens 100000      # the whole procedure
+```
+
 A knowledge base built before 0.4.1 has no spots file. Make one from its stored chunks; nothing is
 read or embedded again, and it takes seconds:
 
@@ -184,6 +193,7 @@ rag unpack docs-kb.ragpack D:\RAG\docs-kb
 | `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |
 | `rag compact WS` | Rewrite `vectors.shammy` without deleted rows. Builds do this on their own when a quarter of the rows are deleted. |
 | `rag spots WS [--check] [--json]` | Build the spots file (procedures, steps, references) from the stored chunks; `--check` only says whether it's there and current. Builds, merges and exports do this on their own. |
+| `rag procedure WS\|PACK ID [--from STEP] [--after-chunk N] [--max-tokens N] [--json]` | A page of a procedure, as the agent's `get_procedure_steps` gets it, ending with the call for the next page. |
 | `rag search WS\|PACK "question" [-k N] [--type pdf] [--doc DOC-12] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--doc` (repeatable) keeps only those documents, by number or part of the path. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8082`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |

@@ -197,6 +197,8 @@ export interface SearchHit {
     level: "procedure" | "steps" | "substeps" | "chunks";
     step?: string | null;
   };
+  /** When the result is only part of a procedure: where to read on (kb.procedure / get_procedure_steps). */
+  more?: { procedure: number; from: string | null; after_chunk?: number };
   /** The first result from a long procedure: its steps around this passage. */
   outline?: { steps: { label: string | null; title: string; shown: boolean }[]; before: boolean; after: boolean };
   /** References in the result's text: other steps ("see Section 8.4") and other documents. */
@@ -296,4 +298,13 @@ export interface EvalReport {
   unanswerable: { id: string; question: string; retrieved?: EvalChunk[] }[];
   golden?: string;
   kb?: { name: string; path: string };
+}
+
+/** A page of a procedure (kb.procedure). */
+export interface ProcedurePage {
+  procedure: NonNullable<SearchHit["procedure"]> | null;
+  text: string;
+  chunk_ids: number[];
+  next: { procedure: number; from: string | null; after_chunk?: number } | null;
+  markdown: string;
 }

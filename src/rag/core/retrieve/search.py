@@ -12,6 +12,7 @@ installed. Reranking is only in the shared engine.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass, field
@@ -100,6 +101,30 @@ def outline_note(p: dict[str, Any], o: dict[str, Any]) -> str:
     return f"Outline of {p.get('title') or p.get('label') or 'the procedure'}: " + "; ".join(items)
 
 
+def more_note(m: dict[str, Any]) -> str:
+    """`Read on: get_procedure_steps(procedure=12, from="7.35")`: the call that continues a procedure."""
+    args = f"procedure={m['procedure']}, from={json.dumps(m.get('from'), ensure_ascii=False)}"
+    if m.get("after_chunk") is not None:
+        args += f", after_chunk={m['after_chunk']}"
+    return f"Read on: get_procedure_steps({args})"
+
+
+def procedure_markdown(page: dict[str, Any]) -> str:
+    """The compact form of a page of a procedure."""
+    if page.get("procedure") is None:
+        return "(the procedure ends here)"
+    s = page["source"]
+    loc = []
+    if s.get("document"):
+        loc.append(s["document"] + (f" rev {s['revision']}" if s.get("revision") else ""))
+    loc.append(procedure_note(page["procedure"]))
+    out = [f"[P{page['procedure']['id']}] {s['file']} · " + " · ".join(loc), page["text"]]
+    if page.get("outline"):
+        out.append(outline_note(page["procedure"], page["outline"]))
+    out.append(more_note(page["next"]) if page.get("next") else "(the procedure ends here)")
+    return "\n".join(out)
+
+
 def related_note(x: dict[str, Any]) -> str:
     if x.get("kind") == "section":
         return "section " + (x.get("title") or x.get("ref") or "")
@@ -155,6 +180,8 @@ class SearchResult:
                 out.append(outline_note(r["procedure"], r["outline"]))
             if r.get("related"):
                 out.append("Related: " + "; ".join(related_note(x) for x in r["related"]))
+            if r.get("more"):
+                out.append(more_note(r["more"]))
             out.append("")
         if self.tables:
             out.append("Tables that may answer this (use describe_table / query_table):")
@@ -429,6 +456,104 @@ class Searcher:
         tokens = sum(int(rows[c]["n_tokens"] or 0) for c in span)
         return span, "\n\n".join(blocks), info, outline, window, tokens
 
+    @staticmethod
+    def _more(spots: SpotsIndex, plan: dict[str, Any], span: list[int]) -> dict[str, Any] | None:
+        """Where to read on after a procedure result: the step after the last one shown, or, inside
+        a step too long to return whole, the chunks after the last one shown."""
+        steps, pid = plan["steps"], plan["pid"]
+
+        def next_step(i: int) -> dict[str, Any] | None:
+            return {"procedure": pid, "from": steps[i]["label"]} if i < len(steps) else None
+
+        if plan["level"] == "procedure":
+            return None
+        if plan["level"] == "steps":
+            return next_step(plan["hi"] + 1)
+        step = steps[plan["idx"]]["step"]
+        everything = [m[0] for m in spots.members(pid, step, step)]
+        found = [everything.index(c) for c in span if c in everything]
+        last = max(found) if found else None
+        if last is not None and last + 1 < len(everything):
+            return {"procedure": pid, "from": steps[plan["idx"]]["label"], "after_chunk": everything[last]}
+        return next_step(plan["idx"] + 1)
+
+    def procedure(self, procedure: int, from_: str | None = None, after_chunk: int | None = None,
+                  max_tokens: int = 4000) -> dict[str, Any]:
+        """A page of a procedure: its steps from ``from_`` (the first when None), as many as fit in
+        max_tokens; a step longer than that is paged by its chunks (``after_chunk`` continues).
+        Runs in the shared engine when it is installed."""
+        if self.engine != "reference":
+            retriever = self._native()
+            if retriever is not None:
+                return retriever.procedure(procedure, from_=from_, after_chunk=after_chunk, max_tokens=max_tokens,
+                                           markdown=True)
+        spots = SpotsIndex.open(self.store.path.parent, self.store.conn)
+        if spots is None:
+            raise ValueError("this knowledge base has no current spots file (run `rag spots` on it)")
+        try:
+            return self._procedure_page(spots, procedure, from_, after_chunk, max_tokens)
+        finally:
+            spots.close()
+
+    def _procedure_page(self, spots: SpotsIndex, pid: int, from_: str | None, after_chunk: int | None,
+                        max_tokens: int) -> dict[str, Any]:
+        proc = spots.procedure(pid)
+        if proc is None:
+            raise ValueError(f"there is no procedure {pid}")
+        steps = spots.steps(pid)
+        if not steps:
+            raise ValueError(f"procedure {pid} has no steps")
+        if from_ is None:
+            start = 0
+        else:
+            start = next((i for i, st in enumerate(steps) if st["label"] == from_), None)
+            if start is None:
+                raise ValueError(f"procedure {pid} has no step {from_!r}")
+        cap = max(1, int(max_tokens))
+        base = {"pid": pid, "proc": proc, "steps": steps, "idx": start, "level": "steps", "lo": start, "hi": start}
+        plan = None
+        if after_chunk is not None or steps[start]["tokens"] > cap:
+            step = steps[start]["step"]
+            everything = [m[0] for m in spots.members(pid, step, step)]
+            begin = everything.index(after_chunk) + 1 if after_chunk in everything else 0
+            if begin < len(everything):
+                rest = everything[begin:]
+                rows = self._load(rest)
+                take: list[int] = []
+                total = 0
+                for c in [c for c in rest if c in rows]:
+                    t = int(rows[c]["n_tokens"] or 0)
+                    if take and total + t > cap:
+                        break
+                    take.append(c)
+                    total += t
+                plan = {**base, "level": "chunks", "chunks": take, "at": steps[start]["label"]}
+            elif start + 1 < len(steps):
+                start += 1
+            else:
+                return {"procedure": None, "text": "", "chunk_ids": [], "next": None, "markdown": "(the procedure ends here)"}
+        if plan is None:
+            hi, total = start, steps[start]["tokens"]
+            while hi + 1 < len(steps) and total + steps[hi + 1]["tokens"] <= cap:
+                hi += 1
+                total += steps[hi]["tokens"]
+            level = "procedure" if start == 0 and hi == len(steps) - 1 else "steps"
+            plan = {**base, "level": level, "idx": start, "lo": start, "hi": hi}
+        rendered = self._render(spots, plan, set())
+        if rendered is None:
+            raise ValueError(f"procedure {pid} has no readable chunks")
+        span, text, info, outline, _, tokens = rendered
+        file, ftype = self.store.conn.execute("SELECT display_path, file_type FROM documents WHERE doc_id = ?",
+                                              (proc["doc_id"],)).fetchone()
+        number, revision = spots.document(proc["doc_id"])
+        out: dict[str, Any] = {"procedure": info, "source": {"file": file, "file_type": ftype, "document": number,
+                                                             "revision": revision},
+                               "text": text, "chunk_ids": span, "tokens": tokens, "next": self._more(spots, plan, span)}
+        if outline is not None:
+            out["outline"] = outline
+        out["markdown"] = procedure_markdown(out)
+        return out
+
     def _related(self, spots: SpotsIndex, span: list[int], window: tuple[int, int, int] | None) -> list[dict[str, Any]]:
         """References made in a result's chunks ("see Section 8.4", "see FX-100"), except to steps
         the result already holds."""
@@ -569,6 +694,10 @@ class Searcher:
                 related = self._related(spots, span, window)
                 if related:
                     item["related"] = related
+                if plan is not None:
+                    more = self._more(spots, plan, span)
+                    if more:
+                        item["more"] = more
             if plan is not None:
                 procs_seen[plan["pid"]] = procs_seen.get(plan["pid"], 0) + 1
                 procs.append({"index": len(result.results), "plan": plan, "span": span, "tokens": tokens})
@@ -608,6 +737,11 @@ class Searcher:
                 item["related"] = related
             else:
                 item.pop("related", None)
+            more = self._more(spots, wider, span)
+            if more:
+                item["more"] = more
+            else:
+                item.pop("more", None)
             included.update(span)
             grown = used + tokens - prev["tokens"]
             prev.update({"plan": wider, "span": span, "tokens": tokens})

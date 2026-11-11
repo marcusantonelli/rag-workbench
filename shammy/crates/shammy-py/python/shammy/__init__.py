@@ -300,6 +300,17 @@ class Retriever:
         v = np.ascontiguousarray(np.asarray(vector, dtype="<f4").reshape(-1))
         return json.loads(self._native.search(json.dumps(request), v.tobytes()))
 
+    def procedure(self, procedure: int, from_: str | None = None, after_chunk: int | None = None,
+                  max_tokens: int | None = None, markdown: bool = False) -> dict:
+        """A page of a procedure (needs the spots file): its steps from ``from_`` (a step label;
+        the first step when None), as many as fit in ``max_tokens`` (4000). A search result's
+        "more", and each page's "next", hold the request for the following page."""
+        import json
+
+        request = {"procedure": procedure, "from": from_, "after_chunk": after_chunk, "max_tokens": max_tokens,
+                   "markdown": markdown}
+        return json.loads(self._native.procedure(json.dumps({k: v for k, v in request.items() if v is not None})))
+
     def close(self) -> None:
         self._native.close()
 

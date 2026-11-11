@@ -154,6 +154,7 @@ class Service:
             "kb.document": self.kb_document,
             "kb.chunk": self.kb_chunk,
             "kb.search": self.kb_search,
+            "kb.procedure": self.kb_procedure,
             "kb.tables": self.kb_tables,
             "kb.table": self.kb_table,
             "kb.sql": self.kb_sql,
@@ -700,6 +701,22 @@ class Service:
             finally:
                 searcher.close()      # Windows: an open reader keeps vectors.shammy from being replaced
         return out
+
+    def kb_procedure(self, kb: str, procedure: int, from_step: str | None = None, after_chunk: int | None = None,
+                     max_tokens: int = 4000) -> dict[str, Any]:
+        """A page of a procedure (what `get_procedure_steps` gives an agent)."""
+        from rag.core.retrieve.search import Searcher
+
+        kbo = self._kb(kb)
+        with kbo.store() as s:
+            searcher = Searcher(s, None, kbo.workspace().config["search"])
+            try:
+                return searcher.procedure(int(procedure), from_=from_step or None, after_chunk=after_chunk,
+                                          max_tokens=int(max_tokens))
+            except ValueError as exc:
+                raise ServiceError("bad_params", str(exc)) from exc
+            finally:
+                searcher.close()
 
     def kb_tables(self, kb: str) -> list[dict[str, Any]]:
         from rag.core.db.tables import TablesStore

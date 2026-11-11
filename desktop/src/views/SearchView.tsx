@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { call, EngineCallError } from "../api";
 import { useHelper } from "./HelperPanel";
 import { useApp } from "../state";
-import type { KbSummary, SearchHit, SearchResponse } from "../types";
+import type { KbSummary, ProcedurePage, SearchHit, SearchResponse } from "../types";
 import { Button, Empty, Notice, Switch } from "../components/ui";
 import { Passage } from "../components/Passage";
 import { HitFigure } from "../components/FigureImage";
@@ -62,6 +62,8 @@ export function SearchView({ kb }: { kb: KbSummary }) {
   const [error, setError] = useState<EngineCallError | null>(null);
   const [fileType, setFileType] = useState("");
   const [onlyDocs, setOnlyDocs] = useState("");
+  const [whole, setWhole] = useState<{ chunkId: number; page: ProcedurePage } | null>(null);
+  const [wholeBusy, setWholeBusy] = useState(false);
   const [expand, setExpand] = useState(true);
   const [agentView, setAgentView] = useState(false);
   const [showCandidates, setShowCandidates] = useState(false);
@@ -99,6 +101,19 @@ export function SearchView({ kb }: { kb: KbSummary }) {
   };
 
   const hit = res?.results[selected];
+  const shownWhole = whole && hit && whole.chunkId === hit.chunk_id ? whole.page : null;
+  const showWhole = async (h: SearchHit) => {
+    if (!h.procedure) return;
+    setWholeBusy(true);
+    try {
+      const page = await call<ProcedurePage>("kb.procedure", { kb: kb.id, procedure: h.procedure.id, max_tokens: 1000000 });
+      setWhole({ chunkId: h.chunk_id, page });
+    } catch (e) {
+      fail(e);
+    } finally {
+      setWholeBusy(false);
+    }
+  };
 
   return (
     <div className="search-view">
@@ -274,8 +289,16 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                 </header>
                 {hit.procedure && (
                   <p className="evidence-note">
-                    {procedureNote(hit.procedure)} ({hit.chunk_ids?.length ?? 1} chunk{(hit.chunk_ids?.length ?? 1) === 1 ? "" : "s"},
-                    matched in chunk {hit.chunk_id}).
+                    {shownWhole
+                      ? `The whole procedure ${hit.procedure.title || hit.procedure.label || ""}: ${shownWhole.chunk_ids.length} chunks. `
+                      : `${procedureNote(hit.procedure)} (${hit.chunk_ids?.length ?? 1} chunk${(hit.chunk_ids?.length ?? 1) === 1 ? "" : "s"}, matched in chunk ${hit.chunk_id}). `}
+                    {!hit.procedure.whole && (
+                      shownWhole
+                        ? <button className="link-button" onClick={() => setWhole(null)}>Show only what the agent got</button>
+                        : <button className="link-button" onClick={() => showWhole(hit)} disabled={wholeBusy}>
+                            {wholeBusy ? "Loading…" : "Show the whole procedure"}
+                          </button>
+                    )}
                   </p>
                 )}
                 {hit.outline && (
@@ -304,7 +327,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                   </p>
                 )}
                 {hit.kind === "figure" && <HitFigure kb={kb.id} chunkId={hit.chunk_id} />}
-                <Passage text={hit.text} terms={terms} kind={hit.kind} />
+                <Passage text={shownWhole ? shownWhole.text : hit.text} terms={terms} kind={hit.kind} />
               </>
             ) : (
               <Empty title="No passage selected" />

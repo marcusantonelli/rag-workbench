@@ -216,6 +216,13 @@ impl Retriever {
         serde_json::to_string(&info).map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
+    /// Read on through a procedure: a JSON request ({"procedure", "from", "after_chunk", "max_tokens",
+    /// "markdown"}); returns the JSON page.
+    fn procedure(&self, py: Python<'_>, request: &str) -> PyResult<String> {
+        let r = self.inner.as_ref().ok_or_else(closed)?;
+        py.allow_threads(|| r.procedure_json(request)).map_err(rag_err)
+    }
+
     /// Run one search: a JSON request and the query vector (float32 bytes); returns the JSON response.
     fn search(&self, py: Python<'_>, request: &str, vector: &[u8]) -> PyResult<String> {
         let r = self.inner.as_ref().ok_or_else(closed)?;

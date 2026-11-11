@@ -572,3 +572,6 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 .evidence-outline ol { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; border-left: 2px solid var(--rule); }
 .evidence-outline li { padding: 1px 0; color: var(--muted); }
 .evidence-outline li.shown { color: var(--ink); font-weight: 600; }
+/* A button that reads as a link, inside running text */
+.link-button { background: none; border: 0; padding: 0; color: var(--primary); cursor: pointer; font: inherit; text-decoration: underline; }
+.link-button:disabled { color: var(--muted); cursor: default; }

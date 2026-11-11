@@ -91,6 +91,31 @@ return found.Markdown;      // the compact text for the agent; found.Results / f
   `found.Tables` lists the tables whose description ranked.
 - `ShammyIndex` (above) remains for using a `.shammy` file on its own.
 
+### Reading on through a procedure (`get_procedure_steps`)
+
+A search hit inside a long procedure carries only part of it. Its Markdown then ends with a line
+that names the exact call that continues it, for example
+`Read on: get_procedure_steps(procedure=12, from="7.35")`, and `RetrievalHit.More` holds the same
+request. Register one more MCP tool that runs it:
+
+```csharp
+// tool: get_procedure_steps(procedure, from?, after_chunk?)
+ProcedurePage page = kb.ProcedureSteps(procedure, from, afterChunk);   // maxTokens: 4000 by default
+return page.Markdown;   // the steps, then "Read on: ..." for the next page, or "(the procedure ends here)"
+```
+
+A tool description that tells the agent when to use it:
+
+> Returns more of a procedure that a search result belongs to. Call it when a search result ends
+> with a "Read on: get_procedure_steps(...)" line and you need steps it didn't include, or when the
+> user asks for the whole procedure; pass the procedure and from (and after_chunk, when given)
+> exactly as that line shows. Each page ends with the call for the next one. Prefer this to
+> searching again for the next step.
+
+Results that are already complete (a whole procedure, a manual section, a table, a web page)
+never show the line, so the agent only meets the tool when there is more to read. It needs the
+pack's `structure.spots` (packs exported by 0.4.1 carry it).
+
 ## Test
 
 `python -m pytest tests/test_shammy_native.py` (from the repository root) builds a vector file and two
