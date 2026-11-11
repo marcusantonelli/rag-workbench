@@ -5,6 +5,7 @@ import { useApp, useJob } from "../state";
 import { duration, Estimate, fileFraction, fileSecondsLeft, secondsLeft, stageText } from "../buildProgress";
 import type { KbSummary } from "../types";
 import { Button, MenuButton, Notice, Progress, Switch } from "../components/ui";
+import { FigureImage } from "../components/FigureImage";
 import { RuntimeGate } from "./KbView";
 import { MergePanel } from "./MergePanel";
 import { basename, bytes, count } from "../format";
@@ -33,6 +34,7 @@ export function BuildView({ kb }: { kb: KbSummary }) {
   const [inputs, setInputs] = useState<string[]>(() => loadInputs(kb.path));
   const [prune, setPrune] = useState(false);
   const [force, setForce] = useState(false);
+  const [reread, setReread] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [buildId, setBuildId] = useState<string | null>(lastBuild[kb.id] ?? null);
   const [exportId, setExportId] = useState<string | null>(lastExport[kb.id] ?? null);
@@ -60,7 +62,7 @@ export function BuildView({ kb }: { kb: KbSummary }) {
 
   const start = async () => {
     if (force && !window.confirm("Rebuild everything? Every file is read and embedded again.")) return;
-    const j = await startJob("kb.build", { kb: kb.id, inputs, prune, force });
+    const j = await startJob("kb.build", { kb: kb.id, inputs, prune, force, reread_older: reread && !force });
     if (j) {
       setBuildId(j.id);
       lastBuild[kb.id] = j.id;
@@ -156,6 +158,16 @@ export function BuildView({ kb }: { kb: KbSummary }) {
         <div className="row options">
           <Switch checked={prune} onChange={setPrune} label="Remove documents whose files are gone" disabled={running} />
           <Switch checked={force} onChange={setForce} label="Rebuild everything from scratch" disabled={running} />
+          {(kb.older_reads ?? 0) > 0 && !force && (
+            <div>
+              <Switch checked={reread} onChange={setReread} disabled={running}
+                label={`Read again ${kb.older_reads} PDF and Word file${kb.older_reads === 1 ? "" : "s"} read by an older version`} />
+              <p className="muted small">
+                They get this version's reading of headings, tables, panels and flowcharts. Pictures already described aren't
+                described again, but scanned pages are read again, which can take a while.
+              </p>
+            </div>
+          )}
         </div>
         <div className="row end">
           <Button kind="primary" onClick={start} disabled={running || inputs.length === 0 || !kb.runtime.ready && kb.runtime.needs_runtime}>
@@ -186,6 +198,22 @@ export function BuildView({ kb }: { kb: KbSummary }) {
                     <span className="muted"> {stageText(p)}</span>
                     {p.file_chunks != null && p.stage !== "embed" && p.stage !== "chunk" ? <span className="muted"> · {count(p.file_chunks, "chunk")}</span> : null}
                     {fileLeft != null && <span className="muted"> · about {duration(fileLeft)} left on this file</span>}
+                    {(p.recent_pictures?.length ?? 0) > 0 && (
+                      <details className="recent-pictures" open>
+                        <summary>Pictures just described</summary>
+                        <ul>
+                          {(p.recent_pictures as { asset: string; description: string | null; reused: boolean }[]).map((r) => (
+                            <li key={r.asset}>
+                              <FigureImage kb={kb.id} path={r.asset} />
+                              <p className="small">
+                                {r.description ?? <span className="muted">No description (the picture model didn't answer)</span>}
+                                {r.reused && <span className="muted"> (described before)</span>}
+                              </p>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    )}
                   </p>
                   {fileFrac != null && <div className="file-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100}
                     aria-valuenow={Math.round(fileFrac * 100)} aria-label={`Progress on ${basename(p.current)}`}>

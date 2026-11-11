@@ -8,6 +8,7 @@ import { Button, Empty, Notice, Switch } from "../components/ui";
 import { Passage } from "../components/Passage";
 import { HitFigure } from "../components/FigureImage";
 import { RankStrip } from "../components/RankStrip";
+import { DocumentPicker } from "../components/DocumentPicker";
 import { RuntimeGate } from "./KbView";
 import { kindLabel, location, queryTerms } from "../format";
 import { focusChunk } from "../focus";
@@ -74,7 +75,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EngineCallError | null>(null);
   const [fileType, setFileType] = useState("");
-  const [onlyDocs, setOnlyDocs] = useState("");
+  const [onlyDocs, setOnlyDocs] = useState<string[]>([]);
   const [whole, setWhole] = useState<{ chunkId: number; page: ProcedurePage } | null>(null);
   const [wholeBusy, setWholeBusy] = useState(false);
   const [expand, setExpand] = useState(true);
@@ -98,7 +99,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
     try {
       const r = await call<SearchResponse>("kb.search", {
         kb: kb.id, query, file_type: fileType || null, expand, allow_mismatch: allowMismatch,
-        documents: onlyDocs.split(",").map((d) => d.trim()).filter(Boolean),
+        documents: onlyDocs,
         rerank, rerank_url: rerank && !managed ? rerankUrl.trim() : null,
       });
       setRes(r);
@@ -154,15 +155,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
             </option>
           ))}
         </select>
-        <input
-          className="doc-filter"
-          value={onlyDocs}
-          onChange={(e) => setOnlyDocs(e.target.value)}
-          placeholder="Only documents (e.g. DOC-12, WI-1234)"
-          aria-label="Only these documents: document numbers or parts of file names, separated by commas"
-          title="Document numbers (from the structure) or parts of file names, separated by commas"
-          spellCheck={false}
-        />
+        <DocumentPicker kb={kb.id} value={onlyDocs} onChange={setOnlyDocs} />
         <Button kind="primary" type="submit" disabled={busy || !query.trim()}>
           {busy ? "Searching…" : "Search"}
         </Button>

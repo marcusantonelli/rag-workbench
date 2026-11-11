@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from rag.core.db.store import EMBED_META_KEYS, RagStore, now_iso
+from rag.core.db.store import EMBED_META_KEYS, VECTOR_META_KEYS, RagStore, now_iso
 from rag.core.db.tables import TablesStore
 
 ProgressFn = Callable[[dict[str, Any]], None]
@@ -201,9 +201,10 @@ def _merge_one(src_path: Path, root: Path, name: str, store: RagStore | None, ta
                           embed_context=src.get_meta("embed_context") or "1")
         if not src_embedding:
             plan.compatible, plan.reason = False, "it has never been built (no embedding settings)"
-        elif dest_embedding and src_embedding != dest_embedding:
+        elif dest_embedding and any(src_embedding.get(k) != dest_embedding.get(k) for k in VECTOR_META_KEYS):
+            # (a different query template doesn't matter: the destination keeps its own)
             diffs = [f"{k}: {src_embedding.get(k)!r} here, {dest_embedding.get(k)!r} in the destination"
-                     for k in EMBED_META_KEYS if src_embedding.get(k) != dest_embedding.get(k)]
+                     for k in VECTOR_META_KEYS if src_embedding.get(k) != dest_embedding.get(k)]
             plan.compatible = False
             plan.reason = "embedded differently (" + "; ".join(diffs) + ")"
         elif src.vector_backend == "shammy" and not src.vectors.info()["lossless"]:

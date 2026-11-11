@@ -43,7 +43,9 @@ DEFAULTS: dict[str, Any] = {
         "model_path": "",        # llama-cpp: path to the .gguf file
         "native_dims": 4096,     # what the model outputs
         "dims": 4096,            # what gets stored (MRL truncation if smaller, e.g. 2048 or 1024)
-        "query_template": "Instruct: {task}\nQuery:{query}",
+        # ${task} is query_instruction, ${query} the question. A knowledge base keeps the form it
+        # was first built with (Details → Query template changes it; nothing is embedded again).
+        "query_template": "Instruct: ${task}\nQuery:${query}",
         "query_instruction": (
             "Given a question about internal technical documents, "
             "retrieve passages that answer it"

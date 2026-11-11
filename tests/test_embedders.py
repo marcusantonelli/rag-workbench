@@ -77,3 +77,11 @@ def test_unreachable_server_gives_start_command():
 def test_dims_above_native_rejected():
     with pytest.raises(EmbedderError):
         make_embedder(_cfg("http://x", dims=8192))
+
+
+def test_query_templates_with_dollar_placeholders():
+    from rag.core.models.embed import render_template, to_editable, to_stored
+
+    assert render_template("Instruct: ${task}\nQuery:${query}", task="Find {x}", query="a {b}") == "Instruct: Find {x}\nQuery:a {b}"
+    assert render_template("Instruct: {task}\nQuery:{query}", task="T", query="q") == "Instruct: T\nQuery:q"
+    assert to_stored("Q: ${query} (manuals)") == "Q: {query} (manuals)" and to_editable("Q: {query}") == "Q: ${query}"

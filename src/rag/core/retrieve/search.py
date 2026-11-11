@@ -213,6 +213,9 @@ class Searcher:
         ``rerank`` is its callable hook)."""
         self.store = store
         self.embedder = embedder
+        if embedder is not None and hasattr(embedder, "use_recorded"):
+            # questions are embedded as this knowledge base records, not as the config says now
+            embedder.use_recorded(store.get_meta("query_instruction"))
         self.cfg = cfg
         self.rerank = rerank
         self.reranker = reranker

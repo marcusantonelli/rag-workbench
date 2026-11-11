@@ -78,9 +78,15 @@ def run_eval(searcher, golden_path: Path, *, k_values=(5, 20), show: int = 0,
             if any(_matches(rows[cid], e) for e in q["expect"]):
                 first_hit = rank
                 break
+        # what the agent is handed: the top results as passages (sections, procedures or
+        # neighbouring chunks around each hit), and whether the expected answer is in them
+        handed = searcher.search(q["question"], k=5, expand=True).to_dict()["results"]
+        read = _answer_read(searcher, handed, q["expect"])
         item = {
             "id": q.get("id"), "type": q.get("type", "unspecified"), "question": q["question"],
             "first_hit_rank": first_hit,
+            "read@5": read,
+            "tokens@5": sum(len(r.get("text") or "") for r in handed) // 4,
             **{f"hit@{k}": bool(first_hit and first_hit <= k) for k in k_values},
             "rr@10": (1.0 / first_hit) if first_hit and first_hit <= 10 else 0.0,
             "embed_ms": res.timings_ms.get("embed"), "search_ms": res.timings_ms.get("search"),
@@ -101,6 +107,9 @@ def run_eval(searcher, golden_path: Path, *, k_values=(5, 20), show: int = 0,
         for k in k_values:
             out[f"recall@{k}"] = round(sum(i[f"hit@{k}"] for i in items) / n, 3)
         out["mrr@10"] = round(sum(i["rr@10"] for i in items) / n, 3)
+        # the answer is in the text handed to the agent (top 5 passages), and how much text that is
+        out["read@5"] = round(sum(bool(i.get("read@5")) for i in items) / n, 3)
+        out["tokens@5"] = round(sum(i.get("tokens@5", 0) for i in items) / n)
         return out
 
     by_type: dict[str, list] = {}
@@ -122,6 +131,25 @@ def run_eval(searcher, golden_path: Path, *, k_values=(5, 20), show: int = 0,
     }
 
 
+def _answer_read(searcher, results: list[dict[str, Any]], expect: list[dict[str, Any]]) -> bool:
+    """Is an expected answer in what the agent reads? An expectation with ``contains`` needs that
+    text in a returned passage; one without needs a matching chunk among the passage's chunks."""
+    ids = [cid for r in results for cid in (r.get("chunk_ids") or [r["chunk_id"]])]
+    rows = searcher._load(ids) if ids else {}
+    for e in expect:
+        if "contains" in e:
+            needle = str(e["contains"]).lower()
+            rest = {k: v for k, v in e.items() if k != "contains"}
+            for r in results:
+                in_text = needle in (r.get("text") or "").lower()
+                where_ok = not rest or any(_matches(rows[c], rest) for c in (r.get("chunk_ids") or [r["chunk_id"]]) if c in rows)
+                if in_text and where_ok:
+                    return True
+        elif any(_matches(rows[c], e) for c in ids if c in rows):
+            return True
+    return False
+
+
 def _unanswerable(searcher, q: dict[str, Any], show: int) -> dict[str, Any]:
     out: dict[str, Any] = {"id": q.get("id"), "question": q["question"]}
     if show:
@@ -137,6 +165,8 @@ def report_markdown(report: dict[str, Any], max_chars: int = 1200) -> str:
     o = report["overall"]
     out = [f"# Retrieval report", "",
            f"{o['n']} questions: recall@5 {o['recall@5']}, recall@20 {o['recall@20']}, MRR@10 {o['mrr@10']}", "",
+           f"Answer in what the agent reads (top 5 passages): {o.get('read@5', 0)}, "
+           f"about {o.get('tokens@5', 0):,} tokens per question.", "",
            "✅ = chunk matches an expected answer location. Ranks are before neighbour expansion.", ""]
 
     def chunk_lines(ch: dict[str, Any]) -> list[str]:

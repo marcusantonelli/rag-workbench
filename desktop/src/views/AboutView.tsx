@@ -6,6 +6,61 @@ import type { KbSummary } from "../types";
 import { Button, Notice, Progress } from "../components/ui";
 import { bytes, kindLabel, when } from "../format";
 
+/** How questions are embedded for this knowledge base, editable in a workspace. Only questions
+ * change (nothing is embedded again), so trying a different instruction is cheap: edit, then
+ * compare with an evaluation. */
+function QueryTemplate({ kb }: { kb: KbSummary }) {
+  const { fail, notify, refreshKb } = useApp();
+  const stored = kb.embedding.query_instruction ?? "";
+  const editable = stored.replaceAll("{query}", "${query}");
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(editable);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setText(editable), [editable]);
+  const count = text.split("${query}").length - 1;
+  const problem = count === 0 ? "Put ${query} where the question goes." : count > 1 ? "Use ${query} only once." : null;
+  const save = async () => {
+    setSaving(true);
+    try {
+      await call("kb.query_template", { kb: kb.id, template: text });
+      await refreshKb(kb.id);
+      notify({ tone: "success", title: "Query template saved: searches use it from now on" });
+      setEditing(false);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (!editing) {
+    return (
+      <span className="query-template">
+        {stored ? <code>{editable}</code> : "None (questions are embedded as typed)"}
+        {kb.kind === "workspace" && !kb.building && (
+          <Button kind="ghost" onClick={() => setEditing(true)}>Edit</Button>
+        )}
+      </span>
+    );
+  }
+  return (
+    <div className="query-template editing">
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} spellCheck={false}
+        aria-label="Query template" aria-invalid={!!problem} />
+      <p className={problem ? "bad small" : "muted small"}>
+        {problem ?? <>A question is embedded as: <code>{text.replace("${query}", "how do I replace the seal?")}</code></>}
+      </p>
+      <p className="muted small">
+        For experienced users. Only questions are embedded this way, so nothing is embedded again, but results change:
+        compare with an evaluation before and after. Exported packs carry it to the retrieval server.
+      </p>
+      <div className="row">
+        <Button kind="primary" disabled={!!problem || saving || text === editable} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
+        <Button kind="ghost" onClick={() => { setText(editable); setEditing(false); }}>Cancel</Button>
+      </div>
+    </div>
+  );
+}
+
 export function AboutView({ kb }: { kb: KbSummary }) {
   const { startJob, fail, info, refreshKb, notify } = useApp();
   const [verifyId, setVerifyId] = useState<string | null>(null);
@@ -61,7 +116,7 @@ export function AboutView({ kb }: { kb: KbSummary }) {
     ["Vector size", `${kb.embedding.dims} dimensions`],
     ["Vector store", onShammy ? "Shammy (vectors.shammy)" : "sqlite-vec (inside rag.db)"],
     ["Embedding backend", kb.embedding.backend],
-    ["Query instruction", kb.embedding.query_instruction ? <code key="q">{kb.embedding.query_instruction}</code> : "None"],
+    ["Query template", <QueryTemplate key="q" kb={kb} />],
     ["Last built", kb.last_build_at ? `${when(kb.last_build_at)} (${new Date(kb.last_build_at).toLocaleString()})` : "Not built yet"],
     ["Built with", kb.built_with ? `rag-builder ${kb.built_with}` : ""],
     ["Embedded text", kb.embed_context === 2 ? "Document name, number and revision, file and headings" :

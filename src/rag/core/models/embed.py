@@ -52,6 +52,24 @@ def _finish(rows: list[list[float]] | np.ndarray, dims: int) -> np.ndarray:
     return arr / norms
 
 
+def render_template(template: str, *, task: str, query: str) -> str:
+    """Fill a query template: ``${task}`` and ``${query}``, or the older ``{task}`` and ``{query}``
+    (used when the template has no ``${``). Text is inserted as it is, so braces in it are safe."""
+    if "${" in template:
+        return template.replace("${task}", task).replace("${query}", query)
+    return template.replace("{task}", task).replace("{query}", query)
+
+
+def to_stored(template: str) -> str:
+    """A template as a knowledge base stores it: ``{query}`` where the question goes (what the
+    retrieval server substitutes), from the ``${query}`` form people edit."""
+    return template.replace("${query}", "{query}")
+
+
+def to_editable(stored: str) -> str:
+    return stored.replace("{query}", "${query}")
+
+
 class _Base:
     backend = "base"
 
@@ -60,13 +78,21 @@ class _Base:
         self.model = str(cfg["model"])
         self.dims = int(cfg["dims"])
         self.batch_size = max(1, int(cfg.get("batch_size", 8)))
-        self.template = str(cfg.get("query_template", "Instruct: {task}\nQuery:{query}"))
+        self.template = str(cfg.get("query_template", "Instruct: ${task}\nQuery:${query}"))
         self.instruction = str(cfg.get("query_instruction", ""))
+        self.recorded: str | None = None     # the knowledge base's own template, when it has one
+
+    def use_recorded(self, recorded: str | None) -> None:
+        """Embed questions exactly as the knowledge base records (its ``query_instruction`` meta,
+        with ``{query}`` where the question goes), whatever the config says now."""
+        self.recorded = recorded if recorded and "{query}" in recorded else None
 
     def query_text(self, text: str) -> str:
+        if self.recorded is not None:
+            return self.recorded.replace("{query}", text)
         if not self.instruction:
             return text
-        return self.template.format(task=self.instruction, query=text)
+        return render_template(self.template, task=self.instruction, query=text)
 
     def info(self) -> dict[str, str]:
         return {

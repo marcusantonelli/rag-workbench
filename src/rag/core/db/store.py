@@ -26,6 +26,8 @@ class EmbeddingMismatch(RuntimeError):
 
 
 EMBED_META_KEYS = ("embed_backend", "embed_model", "embed_dims", "query_instruction")
+# what the stored vectors depend on; the query template only changes how questions are embedded
+VECTOR_META_KEYS = ("embed_backend", "embed_model", "embed_dims")
 
 
 @dataclass
@@ -143,7 +145,11 @@ class RagStore:
                 self.set_meta(key, str(info[key]))
             self.conn.commit()
             return
-        diffs = {k: (current[k], str(info[k])) for k in EMBED_META_KEYS if current[k] != str(info[k])}
+        if current["query_instruction"] is None:
+            self.set_meta("query_instruction", str(info["query_instruction"]))
+            self.conn.commit()
+        # a different query template is no reason to refuse: the knowledge base keeps its own
+        diffs = {k: (current[k], str(info[k])) for k in VECTOR_META_KEYS if current[k] != str(info[k])}
         if diffs:
             detail = "; ".join(f"{k}: pack={a!r} config={b!r}" for k, (a, b) in diffs.items())
             raise EmbeddingMismatch(

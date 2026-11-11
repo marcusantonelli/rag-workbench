@@ -67,6 +67,8 @@ export interface RuntimeCheck {
 }
 
 export interface KbSummary {
+  /** PDF and Word files read by an older reader; a build with reread_older reads them again. */
+  older_reads?: number;
   id: string;
   kind: "pack" | "workspace";
   name: string;
@@ -293,8 +295,9 @@ export interface EvalQuestion {
 }
 
 export interface EvalReport {
-  overall: { n: number; "recall@5": number; "recall@20": number; "mrr@10": number };
-  by_type: Record<string, { n: number; "recall@5": number; "recall@20": number; "mrr@10": number }>;
+  /** read@5: the expected answer is in the passages handed to the agent; tokens@5: their size */
+  overall: { n: number; "recall@5": number; "recall@20": number; "mrr@10": number; "read@5"?: number; "tokens@5"?: number };
+  by_type: Record<string, { n: number; "recall@5": number; "recall@20": number; "mrr@10": number; "read@5"?: number }>;
   latency_ms: Record<string, number>;
   questions: EvalQuestion[];
   unanswerable: { id: string; question: string; retrieved?: EvalChunk[] }[];

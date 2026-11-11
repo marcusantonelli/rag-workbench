@@ -103,10 +103,10 @@ class KnowledgeBase:
         return Workspace.open(self.root)
 
     @contextmanager
-    def store(self):
+    def store(self, write: bool = False):
         from rag.core.db.store import RagStore
 
-        s = RagStore(self.root / "rag.db", readonly=True)
+        s = RagStore(self.root / "rag.db", readonly=not write)
         try:
             yield s
         finally:
@@ -152,6 +152,8 @@ class Service:
             "kb.list": self.kb_list,
             "kb.summary": self.kb_summary,
             "kb.spots": self.kb_spots,
+            "kb.review": self.kb_review,
+            "kb.query_template": self.kb_query_template,
             "kb.documents": self.kb_documents,
             "kb.document": self.kb_document,
             "kb.chunk": self.kb_chunk,
@@ -551,11 +553,15 @@ class Service:
     def kb_summary(self, kb: str) -> dict[str, Any]:
         from rag.core.db.tables import TablesStore
 
+        from rag.core.ingest.router import is_older_reader
+
         k = self._kb(kb)
         with k.store() as s:
             meta = s.meta()
             counts = s.counts()
             library = s.conn.execute("SELECT COUNT(*) FROM documents WHERE library_path IS NOT NULL").fetchone()[0]
+            older = sum(1 for ext, ft in s.conn.execute("SELECT extractor, file_type FROM documents WHERE status IN ('ok', 'partial')")
+                        if is_older_reader(ext, ft))
         ts = TablesStore(k.root / "tables.db", readonly=True)
         try:
             n_tables = len(ts.catalog())
@@ -579,7 +585,39 @@ class Service:
             # 1: file › headings in each embedded chunk; 2: also the document's title, number, revision
             "embed_context": int(meta.get("embed_context") or (1 if counts.get("chunks") else 0)) or None,
             "structure": spots.status(k.root),
+            # PDF and Word files read by an older reader: a build with reread_older reads them again
+            "older_reads": older,
         }
+
+    def kb_query_template(self, kb: str, template: str) -> dict[str, Any]:
+        """Change how questions are embedded for this knowledge base: a template with ``${query}``
+        where the question goes. Only questions change, so nothing is embedded again; exported
+        packs carry it to the retrieval server."""
+        from rag.core.models.embed import to_stored
+
+        k = self._kb(kb)
+        if k.readonly:
+            raise ServiceError("readonly", "Packs are read-only snapshots.",
+                               "Change it in the workspace, then export a new pack.")
+        if k.building:
+            raise ServiceError("busy", "A build is running here; change it when it ends.")
+        text = str(template or "")
+        if text.count("${query}") != 1:
+            raise ServiceError("bad_params", "The template needs ${query} exactly once, where the question goes.")
+        if len(text) > 2000:
+            raise ServiceError("bad_params", "The template is too long (2,000 characters at most).")
+        with k.store(write=True) as s:
+            s.set_meta("query_instruction", to_stored(text))
+            s.conn.commit()
+        return self.kb_summary(kb)
+
+    def kb_review(self, kb: str, limit: int = 200) -> dict[str, Any]:
+        """Chunks read with OCR at unusually low confidence, worst first (see rag.core.review)."""
+        from rag.core.review import review
+
+        k = self._kb(kb)
+        with k.store() as s:
+            return review(s.conn, limit=int(limit))
 
     def kb_spots(self, kb: str) -> dict[str, Any]:
         """(Re)build a knowledge base's spots file from its stored chunks. Nothing is read or embedded."""
@@ -781,7 +819,7 @@ class Service:
 
     # ---------------------------------------------------------------------------- building
     def kb_build(self, kb: str, inputs: list[str], force: bool = False, prune: bool = False,
-                 allow_mismatch: bool = False) -> dict[str, Any]:
+                 allow_mismatch: bool = False, reread_older: bool = False) -> dict[str, Any]:
         from rag.builder.engine import Builder
         from rag.core.db.store import EmbeddingMismatch
 
@@ -824,7 +862,8 @@ class Service:
                         "page": current.get("page"), "pages": current.get("pages"), "pictures": current.get("pictures"),
                         "file_chunks": current.get("chunks"), "file_embedded": current.get("embedded"),
                         "file_bytes": current.get("bytes"), "file_started": current.get("started"),
-                        "embed_started": current.get("embed_started"), "embed_reused": current.get("embed_reused")}
+                        "embed_started": current.get("embed_started"), "embed_reused": current.get("embed_reused"),
+                        "recent_pictures": current.get("recent") or []}
 
             def progress(e: dict[str, Any]) -> None:
                 ev = e.get("event")
@@ -870,6 +909,11 @@ class Service:
                         current.update(stage="ocr", page=e.get("page"))
                     elif st == "describe":
                         current.update(stage="describe", pictures=e.get("done"))
+                        if e.get("asset"):
+                            # the latest pictures with their descriptions, for the Build tab to show
+                            recent = [{"asset": e["asset"], "description": e.get("description"),
+                                       "reused": bool(e.get("reused"))}] + list(current.get("recent") or [])
+                            current["recent"] = recent[:6]
                     elif st == "chunked":
                         current.update(stage="chunk", chunks=e.get("chunks"))
                     elif st == "embed":
@@ -896,7 +940,7 @@ class Service:
                 builder = Builder(k.workspace(), embedder=embedder, progress=progress, should_stop=job.cancel.is_set,
                                   should_abandon=job.abandon.is_set)
                 try:
-                    stats = builder.build(paths, force=force, prune=prune)
+                    stats = builder.build(paths, force=force, prune=prune, reread_older=reread_older)
                 except EmbeddingMismatch as exc:
                     raise ServiceError("model_mismatch", str(exc)) from exc
                 out = {key: v for key, v in stats.__dict__.items()}

@@ -218,7 +218,7 @@ def cmd_build(args) -> int:
     builder = Builder(ws, progress=_json_event if args.json else _Printer())
     try:
         stats = builder.build([Path(p) for p in args.paths], force=args.force, prune=args.prune,
-                              no_cache=args.no_cache)
+                              no_cache=args.no_cache, reread_older=args.reread_older)
     except (EmbeddingMismatch, EmbedderError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -545,6 +545,34 @@ def cmd_update(args) -> int:
     return 0
 
 
+def cmd_review(args) -> int:
+    """List chunks read with OCR at low confidence, worst first."""
+    from rag.core.db.store import RagStore
+    from rag.core.review import review
+    from rag.core.workspace import open_any
+
+    ws, tmp = open_any(Path(args.workspace))
+    s = RagStore(ws.rag_db, readonly=True)
+    try:
+        r = review(s.conn, limit=args.limit)
+    finally:
+        s.close()
+        if tmp is not None:
+            tmp.cleanup()
+    if args.json:
+        print(json.dumps(r, indent=2, ensure_ascii=False))
+        return 0
+    how = (f"below {r['threshold']} (mean {r['mean']}, {r['std']} standard deviation, {r['sample']} OCR'd chunks)"
+           if r["method"] == "spread" else
+           f"below {r['threshold']} (a fixed threshold until there are 30 OCR'd chunks; {r['sample']} so far)")
+    print(f"{r['count']} chunks to review: OCR confidence {how}")
+    for c in r["chunks"]:
+        where = " · ".join(str(x) for x in (c["file"], f"p.{c['page']}" if c["page"] else None, c["kind"]) if x)
+        preview = " ".join(c["text"].split())[:140]
+        print(f"  {c['ocr_conf']:.2f}  #{c['chunk_id']}  {where}\n        {preview}")
+    return 0
+
+
 def cmd_tables(args) -> int:
     from rag.core.db.tables import TablesStore
     from rag.core.workspace import open_any
@@ -682,6 +710,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--json", action="store_true", help="JSON-lines progress (for the desktop app)")
     s.add_argument("--force", action="store_true", help="drop everything and rebuild (cache kept)")
     s.add_argument("--no-cache", action="store_true", help="re-extract even when cached")
+    s.add_argument("--reread-older", action="store_true",
+                   help="also read again PDF and Word files read by an older version of their reader")
     s.add_argument("--prune", action="store_true", help="remove documents deleted from the given folders")
     s.add_argument("--allow-failures", action="store_true", help="exit 0 even if some files failed")
     s.set_defaults(fn=cmd_build)
@@ -760,6 +790,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--pre", action="store_true", help="also count pre-releases")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_update)
+
+    s = sub.add_parser("review", help="list chunks read with OCR at low confidence, worst first")
+    s.add_argument("workspace")
+    s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_review)
 
     s = sub.add_parser("tables", help="list tables")
     s.add_argument("workspace")

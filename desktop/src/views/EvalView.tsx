@@ -105,6 +105,10 @@ export function EvalView({ kb }: { kb: KbSummary }) {
             <Stat value={pct(report.overall["recall@5"])} label="answer in the top 5" />
             <Stat value={pct(report.overall["recall@20"])} label="answer in the top 20" />
             <Stat value={report.overall["mrr@10"].toFixed(2)} label="mean reciprocal rank" />
+            {report.overall["read@5"] != null && (
+              <Stat value={pct(report.overall["read@5"])}
+                label={`answer in what the agent reads (about ${(report.overall["tokens@5"] ?? 0).toLocaleString()} tokens)`} />
+            )}
             <Stat value={`${Math.round(report.latency_ms.embed_p50 + report.latency_ms.search_p50)} ms`} label="typical query time" />
             <div className="eval-save">
               <Button kind="ghost" icon={<FileText size={16} />} onClick={() => save("md")}>Save report</Button>
@@ -113,10 +117,10 @@ export function EvalView({ kb }: { kb: KbSummary }) {
           </section>
           {Object.keys(report.by_type).length > 1 && (
             <table className="grid by-type">
-              <thead><tr><th>Question type</th><th>Questions</th><th>Top 5</th><th>Top 20</th><th>MRR</th></tr></thead>
+              <thead><tr><th>Question type</th><th>Questions</th><th>Top 5</th><th>Top 20</th><th>MRR</th><th>Read</th></tr></thead>
               <tbody>
                 {Object.entries(report.by_type).map(([t, s]) => (
-                  <tr key={t}><td>{t}</td><td>{s.n}</td><td>{pct(s["recall@5"])}</td><td>{pct(s["recall@20"])}</td><td>{s["mrr@10"].toFixed(2)}</td></tr>
+                  <tr key={t}><td>{t}</td><td>{s.n}</td><td>{pct(s["recall@5"])}</td><td>{pct(s["recall@20"])}</td><td>{s["mrr@10"].toFixed(2)}</td><td>{s["read@5"] != null ? pct(s["read@5"]) : ""}</td></tr>
                 ))}
               </tbody>
             </table>

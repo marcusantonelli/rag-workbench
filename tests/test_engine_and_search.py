@@ -337,3 +337,29 @@ def test_stop_now_while_embedding(tmp_path, corpus):
     stats = b.build([corpus / "handoff.txt"])
     assert b.cancelled and stats.added == 0
     assert _consistent(ws) == (0, 0, 0)
+
+
+def test_a_knowledge_base_keeps_its_query_template(tmp_path, corpus):
+    """Changing the query template changes only how questions are embedded: builds go on, and
+    searches use the knowledge base's own template."""
+    from rag.core.models.embed import make_embedder
+    from rag.core.retrieve.search import Searcher
+
+    ws = Workspace.init(tmp_path / "ws", TEST_EMBEDDING)
+    Builder(ws).build([corpus / "handoff.txt"])
+    s = RagStore(ws.rag_db)
+    s.set_meta("query_instruction", "Find manual passages for: {query}")
+    s.conn.commit()
+    s.close()
+    assert Builder(ws).build([corpus / "handoff.txt", corpus / "calibration.csv"]).added == 1   # not refused
+    s = RagStore(ws.rag_db, readonly=True)
+    try:
+        assert s.get_meta("query_instruction") == "Find manual passages for: {query}"
+        emb = make_embedder(ws.config["embedding"])
+        Searcher(s, emb, ws.config["search"])
+        from rag.core.models.embed import _Base
+
+        # (the test embedder ignores templates to keep its lexical matching; the real ones use it)
+        assert _Base.query_text(emb, "torque ${x} {y}") == "Find manual passages for: torque ${x} {y}"
+    finally:
+        s.close()

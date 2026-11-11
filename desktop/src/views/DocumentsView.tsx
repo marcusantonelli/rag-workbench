@@ -10,6 +10,16 @@ import { bytes, count, kindLabel, location } from "../format";
 import { takeFocus, type ChunkFocus } from "../focus";
 import { stageText } from "../buildProgress";
 
+interface ReviewList {
+  method: "threshold" | "spread";
+  threshold: number;
+  mean: number | null;
+  std: number | null;
+  sample: number;
+  count: number;
+  chunks: { chunk_id: number; doc_id: number; file: string; page: number | null; kind: string; ocr_conf: number; text: string }[];
+}
+
 export function DocumentsView({ kb }: { kb: KbSummary }) {
   const { fail, notify, refreshKb, jobs } = useApp();
   // the build running on this knowledge base, if any: its current file shows live counts
@@ -22,6 +32,12 @@ export function DocumentsView({ kb }: { kb: KbSummary }) {
   const [detail, setDetail] = useState<{ document: any; chunks: Chunk[] } | null>(null);
   const [focusId, setFocusId] = useState<number | null>(null);
   const chunkRefs = useRef<Record<number, HTMLElement | null>>({});
+  // chunks read with OCR at unusually low confidence (see rag review)
+  const [review, setReview] = useState<ReviewList | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  useEffect(() => {
+    call<ReviewList>("kb.review", { kb: kb.id }).then(setReview).catch(() => setReview(null));
+  }, [kb.id, kb.counts.chunks]);
 
   const load = useCallback(async () => {
     try {
@@ -114,8 +130,38 @@ export function DocumentsView({ kb }: { kb: KbSummary }) {
               Failed only ({kb.counts.failed})
             </label>
           )}
+          {(review?.count ?? 0) > 0 && (
+            <label className="check" title="Text read with OCR at unusually low confidence: worth a look">
+              <input type="checkbox" checked={reviewing} onChange={(e) => setReviewing(e.target.checked)} />
+              To review ({review!.count})
+            </label>
+          )}
         </div>
-        <ul className="doc-list">
+        {reviewing && review && (
+          <div className="review-list">
+            <p className="muted small">
+              {review.method === "spread"
+                ? `OCR confidence below ${review.threshold}: unusually low for this knowledge base (mean ${review.mean}, spread ${review.std}).`
+                : `OCR confidence below ${review.threshold}: a fixed threshold until there are 30 chunks read with OCR (${review.sample} so far).`}
+              {" "}Editing a chunk's text comes in 0.5; for now, check the source, or read it again with a better scan.
+            </p>
+            <ul className="doc-list">
+              {review.chunks.map((c) => (
+                <li key={c.chunk_id}>
+                  <button className={`doc-row ${c.chunk_id === focusId ? "selected" : ""}`}
+                    onClick={() => { setDocId(c.doc_id); setFocusId(c.chunk_id); }}>
+                    <span className="review-conf">{Math.round(c.ocr_conf * 100)}%</span>
+                    <span className="doc-name">
+                      {c.file.split(/[\\/]/).pop()}{c.page ? ` · p.${c.page}` : ""}
+                      <span className="muted small review-text">{c.text.replace(/\s+/g, " ").slice(0, 120)}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <ul className="doc-list" hidden={reviewing}>
           {docs.length === 0 && <li className="muted pad">No documents{filter || type ? " match" : " yet"}.</li>}
           {docs.map((d) => {
             const parts = d.display_path.split(/[\\/]/);

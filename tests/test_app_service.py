@@ -128,6 +128,17 @@ def test_create_build_browse_search_export_and_reopen_as_pack(svc, corpus, tmp_p
     assert ev["state"] == "done", ev["error"]
     assert ev["result"]["overall"]["n"] == 1 and ev["result"]["questions"][0]["retrieved"]
     assert "# Retrieval report" in svc.call("eval.markdown", {"report": ev["result"]})
+    assert "read@5" in ev["result"]["overall"] and "tokens@5" in ev["result"]["overall"]
+
+    # 0.4.3: the review list, the query template, nothing read by an older reader
+    review = svc.call("kb.review", {"kb": kb["id"]})
+    assert review["method"] in ("threshold", "spread") and review["count"] == len(review["chunks"])
+    with pytest.raises(ServiceError) as err:
+        svc.call("kb.query_template", {"kb": kb["id"], "template": "no placeholder"})
+    assert err.value.code == "bad_params"
+    after = svc.call("kb.query_template", {"kb": kb["id"], "template": "Find passages for: ${query}"})
+    assert after["embedding"]["query_instruction"] == "Find passages for: {query}" and after["older_reads"] == 0
+    assert svc.call("kb.search", {"kb": kb["id"], "query": "minimum pull strength 5 mil aluminum"})["results"]
 
     out = tmp_path / "out" / "plant"
     ex = wait_job(svc, svc.call("kb.export", {"kb": kb["id"], "out": str(out)}))
