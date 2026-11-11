@@ -153,7 +153,10 @@ class Builder:
 
     # ------------------------------------------------------------------------------
     def build(self, inputs: list[Path], *, force: bool = False, prune: bool = False,
-              no_cache: bool = False) -> BuildStats:
+              no_cache: bool = False, reread_older: bool = False) -> BuildStats:
+        """``reread_older``: also read again PDF and Word files read by an older reader of their
+        type (they otherwise stay as they are; reading again can take long)."""
+        self.reread_older = reread_older
         started = time.monotonic()
         stats = BuildStats()
         if force:
@@ -199,6 +202,9 @@ class Builder:
         finally:
             store.close()
             tables.close()
+            from rag.core.ingest.figures import DescriptionCache
+
+            DescriptionCache.close_all()     # don't hold descriptions.db open between builds
         st = spots.status(self.ws.root)
         if stats.added or stats.updated or stats.removed or not st["current"] or st.get("outdated"):
             refresh_spot(self.ws.root, lambda e: self.emit(e.pop("event"), **e))
@@ -242,7 +248,8 @@ class Builder:
         current = existing is not None and is_current(
             existing["extractor"], self.cfg,
             store.conn.execute("SELECT 1 FROM chunks WHERE doc_id = ? AND asset_path IS NOT NULL LIMIT 1",
-                               (existing["doc_id"],)).fetchone() is not None)
+                               (existing["doc_id"],)).fetchone() is not None,
+            existing["file_type"], getattr(self, "reread_older", False))
         if (existing is not None and existing["sha256"] == digest and existing["status"] in ("ok", "partial")
                 and current):
             stats.unchanged += 1
@@ -265,6 +272,10 @@ class Builder:
             library_path=self._copy_to_library(sf.path, digest),
         )
         if existing is not None:
+            # its pictures' descriptions are kept, so reading it again doesn't describe them again
+            from rag.core.ingest.figures import remember_descriptions
+
+            remember_descriptions(store.conn, existing["doc_id"], self.ws.root, self.cfg)
             tables.delete_for_doc(existing["doc_id"])
         doc_id = store.reserve_document(rec)
         stage = "extract"
@@ -281,7 +292,7 @@ class Builder:
             doc, cached = extract(sf.path, ftype, ctx, cache_dir=self.ws.cache_dir,
                                   overrides_file=self.ws.root / "sheets.toml", use_cache=not no_cache)
             # The version suffix lets a later build re-extract files read by an older extractor.
-            rec.title, rec.n_pages, rec.extractor = doc.title, doc.n_pages, f"{doc.extractor}@{reading_tag(self.cfg, ctx)}"
+            rec.title, rec.n_pages, rec.extractor = doc.title, doc.n_pages, f"{doc.extractor}@{reading_tag(self.cfg, ctx, ftype)}"
             rec.warnings = list(doc.warnings)
 
             stage = "tables"

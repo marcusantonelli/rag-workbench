@@ -58,35 +58,141 @@ def _blank(img: Image.Image) -> bool:
     return max(ImageStat.Stat(img.convert("L").resize((64, 64))).stddev) < 6
 
 
-def describe_image(img: Image.Image, ctx: ExtractContext, *, context: str | None = None,
-                   caption: str | None = None) -> str | None:
-    """Ask the vision model (any OpenAI-compatible chat endpoint) to describe a picture. Optional:
-    a failure never fails the build, but it is counted, so the document is read again next time."""
-    settings = describe_settings(ctx.config)
-    if settings is None or _blank(img):
-        return None
-    stats = ctx.describe_stats
-    if stats.get("down"):
-        stats["failed"] += 1          # the model stopped answering earlier in this document
-        return None
+class DescriptionCache:
+    """Descriptions already made, by picture, model and prompt, in ``descriptions.db`` next to the
+    workspace's databases. Reading a file again (a new version, new reading rules, a rebuild from
+    scratch) then describes only pictures not seen before. Best effort: if the file can't be
+    opened or written, pictures are simply described again."""
+
+    _open: dict[Path, "DescriptionCache"] = {}
+
+    def __init__(self, path: Path):
+        import sqlite3
+
+        self.path = path
+        self.conn = sqlite3.connect(str(path), timeout=10, check_same_thread=False)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS descriptions (key TEXT PRIMARY KEY, text TEXT NOT NULL, "
+                          "model TEXT, made_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+        self.conn.commit()
+
+    @classmethod
+    def for_workspace(cls, root: Path) -> "DescriptionCache | None":
+        path = root / "descriptions.db"
+        if path not in cls._open:
+            try:
+                cls._open[path] = cls(path)
+            except Exception:  # noqa: BLE001 - a read-only pack, a locked file: just don't cache
+                return None
+        return cls._open[path]
+
+    def get(self, key: str) -> str | None:
+        try:
+            row = self.conn.execute("SELECT text FROM descriptions WHERE key = ?", (key,)).fetchone()
+        except Exception:  # noqa: BLE001
+            return None
+        return row[0] if row else None
+
+    def put(self, key: str, text: str, model: str) -> None:
+        try:
+            self.conn.execute("INSERT OR REPLACE INTO descriptions (key, text, model) VALUES (?, ?, ?)", (key, text, model))
+            self.conn.commit()
+        except Exception:  # noqa: BLE001
+            pass
+
+    @classmethod
+    def close_all(cls) -> None:
+        for c in cls._open.values():
+            try:
+                c.conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+        cls._open.clear()
+
+
+def _model_png(img: Image.Image) -> bytes:
+    """The picture as the vision model gets it: RGB, at most 1280 pixels on its long side."""
     im = img.convert("RGB")
     if max(im.size) > 1280:           # more pixels cost time and memory, not accuracy
         f = 1280 / max(im.size)
         im = im.resize((max(1, int(im.width * f)), max(1, int(im.height * f))), Image.LANCZOS)
     buf = io.BytesIO()
     im.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _describe_key(png: bytes, model: str) -> str:
+    """A description is reused for the same picture, model and prompt wording. What the picture
+    goes with (its step or caption) only steers the wording a little, so it isn't part of the key:
+    the same photo in a new version of a document keeps its description."""
+    import hashlib
+
+    return hashlib.sha256(json.dumps([model, PROMPT]).encode() + png).hexdigest()
+
+
+def remember_descriptions(conn, doc_id: int, ws_root: Path, config) -> int:
+    """Put a document's stored picture descriptions into the cache before the document is read
+    again, so a knowledge base built before the cache existed doesn't describe its pictures twice.
+    Returns how many were added."""
+    settings = describe_settings(config)
+    if settings is None:
+        return 0
+    cache = DescriptionCache.for_workspace(ws_root)
+    if cache is None:
+        return 0
+    added = 0
+    rows = conn.execute("SELECT text, asset_path FROM chunks WHERE doc_id = ? AND kind = 'figure' "
+                        "AND asset_path IS NOT NULL AND text LIKE '%Description: %'", (doc_id,)).fetchall()
+    for text, asset in rows:
+        description = text.rsplit("Description: ", 1)[1].strip()
+        path = ws_root / asset
+        if not description or not path.is_file():
+            continue
+        try:
+            with Image.open(path) as im:
+                key = _describe_key(_model_png(im), settings["model"])
+        except Exception:  # noqa: BLE001
+            continue
+        if cache.get(key) is None:
+            cache.put(key, description, settings["model"])
+            added += 1
+    return added
+
+
+def describe_image(img: Image.Image, ctx: ExtractContext, *, context: str | None = None,
+                   caption: str | None = None, asset: str | None = None) -> str | None:
+    """Ask the vision model (any OpenAI-compatible chat endpoint) to describe a picture. Optional:
+    a failure never fails the build, but it is counted, so the document is read again next time.
+    A picture described before with the same model and prompt reuses that description.
+    ``asset`` (the saved picture) goes with the progress event, so the app can show it."""
+    settings = describe_settings(ctx.config)
+    if settings is None or _blank(img):
+        return None
+    stats = ctx.describe_stats
+    png = _model_png(img)
     where = ""
     if context:
         where = f", illustrating: {context}"
     elif caption:
         where = f", captioned: {caption}"
+    key = _describe_key(png, settings["model"])
+    cache = DescriptionCache.for_workspace(ctx.assets_root.parent)
+    known = cache.get(key) if cache is not None else None
+    if known is not None:
+        stats["reused"] = stats.get("reused", 0) + 1
+        ctx.progress("describe", {"done": stats["done"] + stats["failed"] + stats["reused"], "asset": asset,
+                                  "description": known, "reused": True})
+        return known
+    if stats.get("down"):
+        stats["failed"] += 1          # the model stopped answering earlier in this document
+        return None
     payload = {
         "model": settings["model"],
         "messages": [{
             "role": "user",
             "content": [
                 {"type": "image_url", "image_url": {
-                    "url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()}},
+                    "url": "data:image/png;base64," + base64.b64encode(png).decode()}},
                 {"type": "text", "text": PROMPT.format(where=where)},
             ],
         }],
@@ -105,9 +211,13 @@ def describe_image(img: Image.Image, ctx: ExtractContext, *, context: str | None
             stats["down"] = True      # don't wait out a timeout for every picture
         return None
     stats["done"] += 1
-    ctx.progress("describe", {"done": stats["done"] + stats["failed"]})
     text = re.sub(r"^(this|the) (picture|image|photo|figure) (shows|is|depicts)\s*", "", text, flags=re.I).strip()
-    return (text[:1].upper() + text[1:]) if text else None
+    text = (text[:1].upper() + text[1:]) if text else ""
+    if text and cache is not None:
+        cache.put(key, text, settings["model"])
+    ctx.progress("describe", {"done": stats["done"] + stats["failed"] + stats.get("reused", 0), "asset": asset,
+                              "description": text or None})
+    return text or None
 
 
 _WORDLIKE = re.compile(r"[A-Za-z]{3,}")
@@ -170,7 +280,7 @@ def make_figure_block(
         ocr, conf = found.text, found.conf
         if found.table is not None:
             return _table_block(found.table, ctx, path, img, page=page, caption=caption)
-    description = describe_image(img, ctx, context=context, caption=caption)
+    description = describe_image(img, ctx, context=context, caption=caption, asset=ctx.asset_rel(path))
     parts = [f"**Figure**{f' (page {page})' if page else ''}" + (f": {caption}" if caption else "")]
     if context:
         parts.append("Shown with: " + context)

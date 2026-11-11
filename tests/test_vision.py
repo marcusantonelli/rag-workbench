@@ -94,14 +94,14 @@ def test_build_describes_pictures_and_rereads_only_when_needed(files, tmp_path, 
         finally:
             s.close()
 
-    assert all(e.endswith("@v6") for e in extractors().values())
+    assert all(e.endswith("@v7") for e in extractors().values())
 
     # the picture model is down: the build still finishes, nothing is marked described
     monkeypatch.setenv("RAG_DESCRIBE_URL", "http://127.0.0.1:9")
     stats = Builder(ws).build([src])
     assert stats.failed == 0 and stats.unchanged == 1          # only the document with pictures was read again
     ex = extractors()
-    assert ex["Yield pictures.pdf"].endswith("@v6") and ex["Not flowcharts.pdf"].endswith("@v6")
+    assert ex["Yield pictures.pdf"].endswith("@v7") and ex["Not flowcharts.pdf"].endswith("@v7")
 
     # it's up: the document with pictures is read again and described, the other is left alone
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Vision)
@@ -110,7 +110,7 @@ def test_build_describes_pictures_and_rereads_only_when_needed(files, tmp_path, 
         monkeypatch.setenv("RAG_DESCRIBE_URL", f"http://127.0.0.1:{server.server_port}")
         stats = Builder(ws).build([src])
         assert stats.unchanged == 1 and stats.failed == 0
-        assert extractors()["Yield pictures.pdf"].endswith("@v6+vis")
+        assert extractors()["Yield pictures.pdf"].endswith("@v7+vis")
         s = RagStore(ws.rag_db, readonly=True)
         try:
             described = s.conn.execute("SELECT COUNT(*) FROM chunks WHERE text LIKE '%Description: A bench press%'").fetchone()[0]
@@ -124,6 +124,47 @@ def test_build_describes_pictures_and_rereads_only_when_needed(files, tmp_path, 
     # turning descriptions off doesn't throw them away
     monkeypatch.delenv("RAG_DESCRIBE_URL")
     assert Builder(ws).build([src]).unchanged == 2
+
+
+def test_pictures_are_not_described_twice(files, tmp_path, vision):
+    """Descriptions are kept by picture: a rebuild from scratch, or reading a document again with a
+    newer reader, doesn't ask the picture model again; a knowledge base made before the cache
+    existed fills it from its stored descriptions first."""
+    from rag.builder.engine import Builder
+    from rag.core.db.store import RagStore
+    from rag.core.ingest.figures import DescriptionCache
+    from rag.core.workspace import Workspace
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / files["pictures"].name).write_bytes(files["pictures"].read_bytes())
+    ws = Workspace.init(tmp_path / "ws", TEST_EMBEDDING)
+    assert Builder(ws).build([src]).failed == 0
+    asked = len(_Vision.seen)
+    assert asked >= 1 and (ws.root / "descriptions.db").exists()
+
+    def described() -> int:
+        s = RagStore(ws.rag_db, readonly=True)
+        try:
+            return s.conn.execute("SELECT COUNT(*) FROM chunks WHERE text LIKE '%Description: A bench press%'").fetchone()[0]
+        finally:
+            s.close()
+
+    n = described()
+    assert Builder(ws).build([src], force=True).added == 1
+    assert len(_Vision.seen) == asked and described() == n
+
+    # as if built by 0.4.1: no cache, and read by an older reader of its type
+    DescriptionCache.close_all()
+    (ws.root / "descriptions.db").unlink()
+    s = RagStore(ws.rag_db)
+    s.conn.execute("UPDATE documents SET extractor = replace(extractor, '@v7', '@v6')")
+    s.conn.commit()
+    s.close()
+    assert Builder(ws).build([src]).unchanged == 1                # left alone unless asked
+    stats = Builder(ws).build([src], reread_older=True)
+    assert stats.updated + stats.added == 1
+    assert len(_Vision.seen) == asked and described() == n           # filled from the stored descriptions
 
 
 FAKE_SERVER = r"""

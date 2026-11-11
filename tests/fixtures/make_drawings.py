@@ -746,3 +746,82 @@ def word_shapes_docx(path: Path) -> Path:
         panel.cell(r, 0).text = val
     d.save(path)
     return path
+
+
+def bookmarked_pdf(path: Path, bookmarks: bool = True) -> Path:
+    """Headings in plain body type (no size or weight to go on), found only through the PDF's
+    bookmarks; one heading wraps onto a second line; one bold sub-heading has no bookmark."""
+    c, H = _canvas(path)
+    body = ("The pump is serviced by trained staff only and the steps below are followed in order "
+            "every time the unit is opened for any reason at all.")
+
+    def para(y, n=3):
+        for k in range(n):
+            _text(c, H, 60, y + 14 * k, body[:95])
+        return y + 14 * n + 10
+
+    entries = []
+    y = 60
+    _text(c, H, 60, y, "Pump service manual")
+    entries.append(("Pump service manual", 0, y))
+    y = para(y + 24)
+    for title, level in (("Safety before opening the pump", 1), ("Draining the housing", 1)):
+        _text(c, H, 60, y, title)
+        entries.append((title, level, y))
+        y = para(y + 20)
+    _text(c, H, 60, y, "Replacing the impeller and the shaft seal on units built")
+    _text(c, H, 60, y + 14, "after 2020")
+    entries.append(("Replacing the impeller and the shaft seal on units built after 2020", 1, y))
+    y = para(y + 34)
+    _text(c, H, 60, y, "Torque values", 10, "Helvetica-Bold")
+    y = para(y + 20)
+    if bookmarks:
+        for i, (title, level, yy) in enumerate(entries):
+            key = f"b{i}"
+            c.bookmarkHorizontal(key, 0, H - yy + 12)
+            c.addOutlineEntry(title, key, level=level)
+    else:
+        for i in range(4):                       # bookmarks that match nothing
+            c.bookmarkPage(f"p{i}")
+            c.addOutlineEntry(f"Page {i + 1}", f"p{i}", level=0)
+    c.showPage()
+    c.save()
+    return path
+
+
+def chart_with_arrows_pdf(path: Path) -> Path:
+    """A bar chart with an axis, grid lines, numbers, a legend and three callout boxes joined by
+    arrows (which alone would pass for a small flowchart), then a real flowchart whose filled
+    boxes are aligned and whose steps are numbered."""
+    c, H = _canvas(path)
+    _text(c, H, 72, 60, "Yield by week", 12, "Helvetica-Bold")
+    c.line(100, H - 330, 420, H - 330)               # x axis
+    c.line(100, H - 330, 100, H - 110)               # y axis
+    for k, v in enumerate((0, 25, 50, 75, 100)):
+        y = 330 - v * 2
+        _text(c, H, 76, y + 3, str(v), 8)
+        if v:
+            c.setStrokeGray(0.8)
+            c.line(100, H - y, 420, H - y)
+            c.setStrokeGray(0)
+    for i, v in enumerate((60, 85, 40, 95, 70)):
+        c.setFillGray(0.5)
+        c.rect(120 + i * 58, H - 330, 30, v * 2, stroke=0, fill=1)
+        c.setFillGray(0)
+        _text(c, H, 124 + i * 58, 345, f"W{i + 10}", 8)
+    for i, t in enumerate(["Low week", "New tooling", "Back to plan"]):     # callouts on the plot
+        _shape(c, H, 300 + i * 40, 115 + i * 55, 90, 22, [t])
+    _arrow(c, H, [(345, 137), (385, 170)])
+    _arrow(c, H, [(385, 192), (425, 225)])
+    # a real flowchart: filled, left-aligned, numbered boxes
+    ys = [420, 480, 540, 600]
+    for n, y in enumerate(ys, start=1):
+        c.setFillGray(0.9)
+        c.rect(100, H - y - 30, 180, 30, stroke=1, fill=1)
+        c.setFillGray(0)
+        _text(c, H, 108, y + 19, f"{n}  Step {['Load', 'Run', 'Inspect', 'Release'][n - 1]} the lot", 9)
+    for a, b in zip(ys, ys[1:]):
+        _arrow(c, H, [(190, a + 30), (190, b)])
+    c.showPage()
+    c.save()
+    return path

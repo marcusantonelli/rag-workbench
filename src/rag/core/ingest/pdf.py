@@ -315,6 +315,7 @@ def extract_pdf_native(path: Path, ctx: ExtractContext) -> ExtractedDoc:
         if pb - pa == 1 and any(n.kind == "offpage" for n in a.nodes) and any(n.kind == "offpage" for n in b.nodes):
             a.next_page, b.prev_page = pb, pa
     blocks = _assemble(pages, pdoc, ctx, warnings)
+    warnings.extend(heading_report(blocks, len(pages)))
     pdoc.close()
     for b in blocks[:12]:               # a title block's "Title:" field names the document
         m = re.match(r"^Title:\s*(\S.{3,})$", b.text.split("\n")[0]) if b.kind == "paragraph" else None
@@ -676,6 +677,98 @@ def _heading_levels(pages: list[_PageItems]) -> tuple[float, dict[float, int]]:
     return body, {s: min(i + 1, 4) for i, s in enumerate(bigger)}
 
 
+# -- headings from the PDF's own bookmarks ---------------------------------------------------------
+def _norm_title(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+class _Outline:
+    """The PDF's bookmarks (its outline), used as the headings when they match the text: Word and
+    most authoring tools write one bookmark per heading, which is a better guide than type size.
+    Lines that look like headings but have no bookmark still count, one level under the bookmark
+    before them, so a deeper level the bookmarks leave out isn't lost."""
+
+    def __init__(self, items: list[tuple[int, str, int]], first_level: int):
+        # (page number, normalised title, heading level); each used once
+        self.items = items
+        self.first_level = first_level
+        self.used: set[int] = set()
+        self.level = 0               # the last bookmarked heading's level
+
+    def match(self, page: int, text: str) -> tuple[int, str] | None:
+        """(level, the rest of the title when the line holds only its start) for a line that
+        starts or is a bookmarked heading on this page (or the next: bookmarks often point at the
+        top of the page before)."""
+        line = _norm_title(text)
+        if len(line) < 3:
+            return None
+        for i, (pg, title, level) in enumerate(self.items):
+            if i in self.used or pg not in (page, page - 1):
+                continue
+            if line == title:
+                rest = ""
+            elif title.startswith(line + " ") and len(line) >= 8:
+                rest = title[len(line):].strip()
+            else:
+                continue
+            self.used.add(i)
+            self.level = level
+            return level, rest
+        return None
+
+
+def _outline(pdoc, pages: list["_PageItems"]) -> _Outline | None:
+    """The bookmarks as headings, when there are at least three and most match a line of text on
+    their page (bookmarks such as "Page 1" or ones that point nowhere are ignored)."""
+    try:
+        toc = list(pdoc.get_toc(max_depth=8))
+    except Exception:  # noqa: BLE001 - a damaged outline is no outline
+        return None
+    items: list[tuple[int, str, int]] = []
+    for t in toc:
+        # pypdfium2 4 has attributes; 5 has getters
+        title = t.get_title() if hasattr(t, "get_title") else getattr(t, "title", "")
+        if hasattr(t, "get_dest"):
+            dest = t.get_dest()
+            index = dest.get_index() if dest is not None else None
+        else:
+            index = getattr(t, "page_index", None)
+        if index is not None and index >= 0 and (title or "").strip():
+            items.append((int(index) + 1, _norm_title(title), int(getattr(t, "level", 0))))
+    if len(items) < 3:
+        return None
+    lines: dict[int, list[str]] = {}
+    for p in pages:
+        lines[p.number] = [_norm_title(ln.text) for ln in p.lines]
+    hits = 0
+    for pg, title, _ in items:
+        cands = lines.get(pg, []) + lines.get(pg + 1, [])
+        if any(c and (c == title or (len(c) >= 8 and title.startswith(c + " "))) for c in cands):
+            hits += 1
+    if hits < max(3, 0.6 * len(items)):
+        return None
+    top = [it for it in items if it[2] == 0]
+    # one top bookmark (the document's title) is level 1; otherwise level 1 is left for the title
+    first = 1 if len(top) == 1 else 2
+    return _Outline([(pg, title, min(lv + first, 6)) for pg, title, lv in items], first)
+
+
+def heading_report(blocks: list[Block], n_pages: int) -> list[str]:
+    """Warnings about headings that look wrong. Headings decide the section path every chunk is
+    embedded with, so a document read flat, or broken into dozens of one-line "sections", searches
+    worse; the warning says so in the Documents tab and the build log."""
+    heads = [b for b in blocks if b.kind == "heading"]
+    paras = [b for b in blocks if b.kind == "paragraph"]
+    out: list[str] = []
+    if n_pages >= 5 and not heads:
+        out.append(f"note: no headings found in {n_pages} pages; sections and context in search will be "
+                   "missing for this document (its headings may be plain bold text)")
+    elif len(heads) >= 20 and len(heads) > len(paras):
+        out.append(f"note: {len(heads)} headings for {len(paras)} paragraphs; some headings are probably "
+                   "labels or table titles, which splits sections too finely")
+    return out
+
+
 def _is_heading(ln: _Line, body: float, levels: dict[float, int]) -> int:
     text = ln.text.strip()
     if " | " in text:
@@ -705,6 +798,8 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
     cfg = ctx.config["pdf"]
     furniture = _furniture(pages, int(cfg["furniture_min_pages"]))
     body, levels = _heading_levels(pages)
+    outline = _outline(pdoc, pages)
+    rest_of_title = [""]          # the part of a bookmarked heading still to come on the next line
     blocks: list[Block] = []
     figure_index = 0
 
@@ -798,11 +893,24 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
                 continue
             if kind == "line":
                 ln: _Line = obj  # type: ignore[assignment]
-                level = _is_heading(ln, body, levels)
+                if rest_of_title[0] and blocks and blocks[-1].kind == "heading":
+                    piece = _norm_title(ln.text)
+                    if piece and rest_of_title[0].startswith(piece):
+                        blocks[-1].text = f"{blocks[-1].text} {ln.text.strip()}"   # a bookmarked heading, wrapped
+                        rest_of_title[0] = rest_of_title[0][len(piece):].strip()
+                        continue
+                rest_of_title[0] = ""
+                found = outline.match(p.number, ln.text) if outline is not None and len(ln.text) <= 200 else None
+                if found is not None:
+                    level, rest_of_title[0] = found
+                else:
+                    level = _is_heading(ln, body, levels)
+                    if level and outline is not None and outline.level:
+                        level = max(level, min(outline.level + 1, 6))   # nests under the bookmark before it
                 if level:
                     flush()
                     prev_h = last_heading[0]
-                    if (prev_h is not None and blocks and blocks[-1].kind == "heading"
+                    if (found is None and prev_h is not None and blocks and blocks[-1].kind == "heading"
                             and blocks[-1].level == level and prev_h.group == ln.group
                             and 0 <= ln.top - prev_h.bottom <= 0.6 * max(prev_h.bottom - prev_h.top, 1)
                             and abs(ln.size - prev_h.size) < 0.5 and ln.style == prev_h.style

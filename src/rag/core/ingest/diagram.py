@@ -172,6 +172,12 @@ def _bbox_of(pts: list[Pt]) -> Box:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _clip(a: Box, b: Box) -> Box:
+    """The part of a inside b (empty when they don't overlap)."""
+    x0, y0, x1, y1 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
+    return (x0, y0, max(x0, x1), max(y0, y1))
+
+
 def _union(boxes: list[Box]) -> Box:
     return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
 
@@ -304,6 +310,101 @@ class _UnionFind:
 
     def union(self, a: int, b: int) -> None:
         self.parent[self.find(a)] = self.find(b)
+
+
+_NUMBER_WORD = re.compile(r"^[-+(]?[$€£]?\d[\d,.]*%?[)]?$|^\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?$|^(19|20)\d\d$")
+
+
+def chart_signals(region: Box, words: list[dict], rects: list, lines: list, curves: list) -> list[str]:
+    """What marks the drawing in ``region`` as a chart rather than a flowchart: number labels
+    lined up along an axis, bars sharing a baseline, evenly spaced grid lines, long curves, and
+    mostly numeric text. Two or more and the drawing is a chart (described as a picture)."""
+    x0, y0, x1, y1 = region
+    pad = 30.0
+
+    def inside(b) -> bool:          # overlaps the region (with room for axis labels around it)
+        return b[2] >= x0 - pad and b[0] <= x1 + pad and b[3] >= y0 - pad and b[1] <= y1 + pad
+
+    ws = [w for w in words if inside((float(w["x0"]), float(w["top"]), float(w["x1"]), float(w["bottom"])))]
+    nums = [w for w in ws if _NUMBER_WORD.match(w["text"])]
+    found: list[str] = []
+    segs = [(float(ln["x0"]), float(ln["top"]), float(ln["x1"]), float(ln["bottom"])) for ln in lines]
+    # numbers stacked in a column beside a vertical axis, or spaced along a row under a horizontal one
+    by_right = defaultdict(list)
+    by_row = defaultdict(list)
+    for w in nums:
+        by_right[round(float(w["x1"]) / 3)].append(w)
+        by_row[round(float(w["bottom"]) / 3)].append(w)
+    for col in (v for v in by_right.values() if len(v) >= 3):
+        right = max(float(w["x1"]) for w in col)
+        top, bottom = min(float(w["top"]) for w in col), max(float(w["bottom"]) for w in col)
+        if any(abs(s[2] - s[0]) < 1.5 and right - 2 <= s[0] <= right + 25 and s[3] - s[1] >= 0.7 * (bottom - top)
+               for s in segs):
+            found.append("axis labels")
+            break
+    else:
+        for row in (v for v in by_row.values() if len(v) >= 4):
+            top = min(float(w["top"]) for w in row)
+            left, right = min(float(w["x0"]) for w in row), max(float(w["x1"]) for w in row)
+            if any(abs(s[3] - s[1]) < 1.5 and top - 25 <= s[1] <= top + 2 and s[2] - s[0] >= 0.7 * (right - left)
+                   for s in segs):
+                found.append("axis labels")
+                break
+    # bars: three or more filled boxes with no text in them, on one baseline, of different lengths
+    # (a flowchart's boxes are filled too, but hold their labels and are mostly one size)
+    centres = [((float(w["x0"]) + float(w["x1"])) / 2, (float(w["top"]) + float(w["bottom"])) / 2) for w in ws]
+    bars = [r for r in rects if r.get("fill")
+            and inside((float(r["x0"]), float(r["top"]), float(r["x1"]), float(r["bottom"])))
+            and not any(float(r["x0"]) <= cx <= float(r["x1"]) and float(r["top"]) <= cy <= float(r["bottom"])
+                        for cx, cy in centres)]
+    for key, size in ((lambda r: round(float(r["bottom"])), lambda r: float(r["bottom"]) - float(r["top"])),
+                      (lambda r: round(float(r["x0"])), lambda r: float(r["x1"]) - float(r["x0"]))):
+        same = defaultdict(list)
+        for r in bars:
+            same[key(r)].append(size(r))
+        if any(len(v) >= 3 and max(v) - min(v) > 4 for v in same.values()):
+            found.append("bars")
+            break
+    # grid lines: four or more parallel lines of one length, evenly spaced
+    hs = defaultdict(list)
+    vs = defaultdict(list)
+    for ln in lines:
+        b = (float(ln["x0"]), float(ln["top"]), float(ln["x1"]), float(ln["bottom"]))
+        if not inside(b):
+            continue
+        if abs(b[3] - b[1]) < 1 and b[2] - b[0] > 40:
+            hs[round((b[2] - b[0]) / 4)].append(b[1])
+        elif abs(b[2] - b[0]) < 1 and b[3] - b[1] > 40:
+            vs[round((b[3] - b[1]) / 4)].append(b[0])
+    for group in list(hs.values()) + list(vs.values()):
+        pos = sorted(set(round(p) for p in group))
+        gaps = [b - a for a, b in zip(pos, pos[1:])]
+        if len(pos) >= 4 and max(gaps) - min(gaps) <= 2:
+            found.append("grid lines")
+            break
+    # data lines: curves through many points
+    if any(len(c.get("pts") or []) >= 12 for c in curves
+           if inside((float(c["x0"]), float(c["top"]), float(c["x1"]), float(c["bottom"])))):
+        found.append("curves")
+    if len(nums) >= 6 and len(nums) >= 0.4 * len(ws):
+        found.append("numbers")
+    return found
+
+
+def find_charts(words: list[dict], rects: list, lines: list, curves: list) -> list[Box]:
+    """Chart areas: two axes (a vertical and a horizontal line meeting at a corner) with at least
+    one more sign of a chart around them (number labels, bars, grid lines, curves)."""
+    segs = [(float(ln["x0"]), float(ln["top"]), float(ln["x1"]), float(ln["bottom"])) for ln in lines]
+    vert = [s for s in segs if abs(s[2] - s[0]) < 1.5 and s[3] - s[1] >= 60]
+    horiz = [s for s in segs if abs(s[3] - s[1]) < 1.5 and s[2] - s[0] >= 60]
+    out: list[Box] = []
+    for v in vert:
+        for h in horiz:
+            if abs(v[3] - h[1]) <= 3 and abs(v[0] - h[0]) <= 3:
+                box = (v[0], v[1], h[2], h[1])
+                if chart_signals(box, words, rects, lines, curves):
+                    out.append(box)
+    return out
 
 
 def find_diagrams(page, words: list[dict]) -> list[Diagram]:
@@ -590,6 +691,7 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
             comps.append(set(members))
     if not comps:
         return []
+    charts = find_charts(words, rects, lines, curves)
     # parts of one drawing that aren't connected to each other (or sit close) are one diagram
     merged: list[set[int]] = []
     for comp in comps:
@@ -604,6 +706,10 @@ def find_diagrams(page, words: list[dict]) -> list[Diagram]:
     out: list[Diagram] = []
     for comp in merged:
         comp_nodes = [nodes[i] for i in sorted(comp)]
+        # callouts joined by arrows on a chart are part of the chart, not a flowchart
+        node_area = sum(_area(n.bbox) for n in comp_nodes) or 1.0
+        if any(sum(_area(_clip(n.bbox, ch)) for n in comp_nodes) >= 0.6 * node_area for ch in charts):
+            continue
         # boxes that touch are table cells, not steps
         touching = sum(1 for a in comp_nodes if any(b is not a and _gap(a.bbox, b.bbox) < 2.0 for b in comp_nodes))
         if touching > 0.3 * len(comp_nodes):

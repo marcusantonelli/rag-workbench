@@ -102,3 +102,48 @@ def test_word_tables_follow_the_same_rules(wblocks):
     panel = [b for b in wblocks if b.kind == "paragraph" and b.text.startswith("Set-up Checklist")]
     assert panel and panel[0].text.split("\n") == ["Set-up Checklist", "Fixture clean and dry", "Torque driver calibrated",
                                                   "Two operators signed in"]
+
+
+# -- headings from bookmarks -----------------------------------------------------------------------
+def test_bookmarks_give_the_headings(tmp_path, ctx):
+    from make_drawings import bookmarked_pdf
+
+    doc, _ = extract(bookmarked_pdf(tmp_path / "Pump service.pdf"), "pdf", ctx, cache_dir=None, use_cache=False)
+    heads = [(b.level, b.text) for b in doc.blocks if b.kind == "heading"]
+    assert heads == [
+        (1, "Pump service manual"),
+        (2, "Safety before opening the pump"),
+        (2, "Draining the housing"),
+        (2, "Replacing the impeller and the shaft seal on units built after 2020"),
+        (3, "Torque values"),                     # bold, no bookmark: under the bookmark before it
+    ]
+
+
+def test_bookmarks_that_match_nothing_are_ignored(tmp_path, ctx):
+    from make_drawings import bookmarked_pdf
+
+    doc, _ = extract(bookmarked_pdf(tmp_path / "Pump service.pdf", bookmarks=False), "pdf", ctx,
+                     cache_dir=None, use_cache=False)
+    heads = [b.text for b in doc.blocks if b.kind == "heading"]
+    assert "Safety before opening the pump" not in heads and "Page 1" not in heads
+
+
+def test_heading_report():
+    from rag.core.ingest.pdf import heading_report
+    from rag.core.types import Block
+
+    flat = [Block(kind="paragraph", text="x")] * 30
+    assert "no headings found in 12 pages" in heading_report(flat, 12)[0]
+    choppy = [Block(kind="heading", text="h", level=2)] * 25 + [Block(kind="paragraph", text="x")] * 10
+    assert "25 headings for 10 paragraphs" in heading_report(choppy, 3)[0]
+    assert heading_report([Block(kind="heading", text="h", level=2), *flat], 12) == []
+
+
+def test_a_chart_with_arrows_is_not_a_flowchart(tmp_path, ctx):
+    from make_drawings import chart_with_arrows_pdf
+
+    doc, _ = extract(chart_with_arrows_pdf(tmp_path / "Yield.pdf"), "pdf", ctx, cache_dir=None, use_cache=False)
+    figs = [b for b in doc.blocks if b.kind == "figure" and b.meta.get("diagram")]
+    assert len(figs) == 1, [f.text[:80] for f in figs]
+    assert "Step Load the lot" in figs[0].text and "Low week" not in figs[0].text
+    assert figs[0].meta["diagram"]["steps"] == 4

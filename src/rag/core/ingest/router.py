@@ -18,6 +18,9 @@ EXTENSION_TYPES = {
 
 # Bump when an extractor's output changes, so cached extractions are redone.
 EXTRACTOR_VERSION = "6"   # 4: flowcharts, tables from images; 5: procedure tables, page frames
+# Newer readers of single types. A document read by an older one still counts as current (reading
+# again can take hours: scanned pages, pictures), until a build is asked to read older ones again.
+TYPE_VERSIONS = {"pdf": "7", "docx": "7", "doc": "7"}   # 7: shared layout rules (0.4.2), headings (0.4.3)
 
 
 def detect_type(path: Path) -> str | None:
@@ -76,24 +79,45 @@ def _extractor(ftype: str) -> Callable[..., ExtractedDoc]:
     raise UnsupportedFile(f"no extractor for {ftype}")
 
 
-def reading_tag(config, ctx: ExtractContext | None = None) -> str:
-    """The reader version a document was read with: "v6", or "v6+vis" when its pictures were
+def reader_version(ftype: str | None) -> str:
+    return TYPE_VERSIONS.get(ftype or "", EXTRACTOR_VERSION)
+
+
+def reading_tag(config, ctx: ExtractContext | None = None, ftype: str | None = None) -> str:
+    """The reader version a document was read with: "v7", or "v7+vis" when its pictures were
     described (every one that was asked for)."""
     from rag.core.ingest.figures import describe_settings
 
-    tag = f"v{EXTRACTOR_VERSION}"
+    tag = f"v{reader_version(ftype)}"
     if describe_settings(config) is not None and not (ctx is not None and ctx.describe_stats["failed"]):
         tag += "+vis"
     return tag
 
 
-def is_current(extractor: str | None, config, has_pictures: bool) -> bool:
-    """Was a document read by this reader, with descriptions if they are on now and it has pictures?
-    (Turning descriptions off doesn't make described documents stale.)"""
+def is_older_reader(extractor: str | None, ftype: str | None) -> bool:
+    """Was a document read by an older reader of its type than this one? (Not yet read: no.)"""
+    if not extractor or "@" not in str(extractor):
+        return False
+    version = str(extractor).rsplit("@", 1)[-1].split("+")[0].lstrip("v")
+    try:
+        return int(version) < int(reader_version(ftype))
+    except ValueError:
+        return True
+
+
+def is_current(extractor: str | None, config, has_pictures: bool, ftype: str | None = None,
+               reread_older: bool = False) -> bool:
+    """Was a document read by this reader (or, unless ``reread_older``, an older reader of its type
+    from the same generation), with descriptions if they are on now and it has pictures? (Turning
+    descriptions off doesn't make described documents stale.)"""
     from rag.core.ingest.figures import describe_settings
 
     version = str(extractor or "").rsplit("@", 1)[-1]
-    if version.split("+")[0] != f"v{EXTRACTOR_VERSION}":
+    try:
+        number = int(version.split("+")[0].lstrip("v"))
+    except ValueError:
+        return False
+    if number < int(EXTRACTOR_VERSION) or (reread_older and is_older_reader(extractor, ftype)):
         return False
     return not (has_pictures and describe_settings(config) is not None and "+vis" not in version)
 
@@ -104,7 +128,7 @@ def extract(path: Path, ftype: str, ctx: ExtractContext, *, cache_dir: Path | No
 
     Returns (doc, from_cache).
     """
-    cache_file = cache_dir / f"{ctx.sha256}.{ftype}.{reading_tag(ctx.config)}.json" if cache_dir else None
+    cache_file = cache_dir / f"{ctx.sha256}.{ftype}.{reading_tag(ctx.config, ftype=ftype)}.json" if cache_dir else None
     if use_cache and cache_file is not None and cache_file.exists():
         try:
             return ExtractedDoc.from_dict(json.loads(cache_file.read_text(encoding="utf-8"))), True
