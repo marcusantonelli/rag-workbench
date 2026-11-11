@@ -21,6 +21,15 @@ ones, and sets up the embedding model on the best hardware it finds. See
 [desktop/README.md](desktop/README.md). The app's installers include the `rag` command too;
 the command-line guide is [docs/cli.md](docs/cli.md). Reranking is deliberately left out of v1.
 
+## Versions
+
+RAG Workbench is in **alpha**: every 0.x version adds features, and settings, file formats and
+behaviour can still change between versions. Knowledge bases keep opening across versions, and
+anything that needs a rebuild says so in its release notes. 1.0 betas come once the feature set is
+complete. Tags with a hyphen (`v0.4.3-1`) are test builds, offered only to apps that chose
+**Settings → Updates → Also offer pre-releases**. What changed in each version:
+[CHANGELOG.md](CHANGELOG.md).
+
 ## Install
 
 Python 3.11+ (python.org builds on Windows support SQLite extension loading).

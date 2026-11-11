@@ -81,9 +81,20 @@ export function isPrerelease(version?: string | null): boolean {
   return !!version && /^\d+\.\d+\.\d+-/.test(version.replace(/^v/, ""));
 }
 
-/** A small "Pre-release" mark beside a version. */
+/** 0.x versions are the alpha. */
+export function isAlpha(version?: string | null): boolean {
+  return !!version && /^0\./.test(version.replace(/^v/, ""));
+}
+
+/** A small mark beside a version: "Pre-release" for a test build, else "Alpha" for any 0.x. */
 export function PrereleaseTag({ version }: { version?: string | null }) {
-  return isPrerelease(version) ? <span className="prerelease-tag" title="A test version, published before the next normal release">Pre-release</span> : null;
+  if (isPrerelease(version)) {
+    return <span className="prerelease-tag" title="A test version, published before the next normal release">Pre-release</span>;
+  }
+  if (isAlpha(version)) {
+    return <span className="prerelease-tag alpha" title="Alpha: features are still being added, and things can change between versions">Alpha</span>;
+  }
+  return null;
 }
 
 /** Ask GitHub for a newer version. A check made at start-up stays quiet when it fails. */

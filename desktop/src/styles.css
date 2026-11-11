@@ -611,3 +611,4 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
   letter-spacing: 0.02em; text-transform: uppercase; vertical-align: middle;
   background: var(--amber-mark); color: var(--amber-ink); border: 1px solid var(--amber);
 }
+.prerelease-tag.alpha { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
