@@ -28,7 +28,7 @@ export function AboutView({ kb }: { kb: KbSummary }) {
   const rows: [string, React.ReactNode][] = [
     ["Location", <code key="p">{kb.path}</code>],
     ["Kind", kb.kind === "pack" ? "Pack (read-only snapshot)" : "Workspace (can be rebuilt and exported)"],
-    ["Size", bytes(kb.size_bytes)],
+    ["Size", bytes(kb.size_bytes) + (kb.building ? " (building…)" : "")],
     ["Embedding model", <code key="m">{kb.embedding.model}</code>],
     ["Vector size", `${kb.embedding.dims} dimensions`],
     ["Vector store", onShammy ? "Shammy (vectors.shammy)" : "sqlite-vec (inside rag.db)"],
@@ -56,6 +56,7 @@ export function AboutView({ kb }: { kb: KbSummary }) {
 
       <section className="panel">
         <h2>Contents</h2>
+        {kb.building && <p className="muted small">A build is running: these numbers and the size update as files are added.</p>}
         <div className="breakdown">
           <div>
             <h3>Documents by type</h3>

@@ -1,6 +1,7 @@
 import { Search as SearchIcon, FileText, ExternalLink } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call, EngineCallError } from "../api";
+import { useHelper } from "./HelperPanel";
 import { useApp } from "../state";
 import type { KbSummary, SearchHit, SearchResponse } from "../types";
 import { Button, Empty, Notice, Switch } from "../components/ui";
@@ -52,7 +53,10 @@ export function SearchView({ kb }: { kb: KbSummary }) {
   const [expand, setExpand] = useState(true);
   const [agentView, setAgentView] = useState(false);
   const [showCandidates, setShowCandidates] = useState(false);
-  const [rerank, setRerank] = useState(() => stored("rag.rerank") === "1");
+  const [reranker] = useHelper("rerank");
+  const managed = !!reranker && !reranker.needs_setup && reranker.enabled;     // the app runs one
+  const [rerankChoice, setRerank] = useState<boolean | null>(null);           // null = follow Settings
+  const rerank = rerankChoice ?? (managed || stored("rag.rerank") === "1");
   const [rerankUrl, setRerankUrl] = useState(() => stored("rag.rerankUrl") || "http://127.0.0.1:8082");
   const input = useRef<HTMLInputElement>(null);
 
@@ -67,7 +71,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
     try {
       const r = await call<SearchResponse>("kb.search", {
         kb: kb.id, query, file_type: fileType || null, expand, allow_mismatch: allowMismatch,
-        rerank, rerank_url: rerank ? rerankUrl.trim() : null,
+        rerank, rerank_url: rerank && !managed ? rerankUrl.trim() : null,
       });
       setRes(r);
       setSelected(0);
@@ -121,11 +125,11 @@ export function SearchView({ kb }: { kb: KbSummary }) {
           checked={rerank}
           onChange={(on) => {
             setRerank(on);
-            remember("rag.rerank", on ? "1" : "0");
+            if (!managed) remember("rag.rerank", on ? "1" : "0");
           }}
-          label="Rerank the best 20 with a reranker model"
+          label={managed ? "Rerank the best 20" : "Rerank the best 20 with my own reranker server"}
         />
-        {rerank && (
+        {rerank && !managed && (
           <label className="rerank-url">
             <span className="muted small">Reranker address</span>
             <input
@@ -149,8 +153,9 @@ export function SearchView({ kb }: { kb: KbSummary }) {
       </div>
       {res?.rerank && !res.rerank.applied && (
         <Notice tone="warn" title="Not reranked: these results are in the usual order">
-          {res.rerank.error} Start a reranker with <code>llama-server -m Qwen3-Reranker-0.6B-Q8_0.gguf --reranking --port 8082</code>,
-          or turn reranking off.
+          {res.rerank.error}{" "}
+          {managed ? "The reranker may still be loading; see Settings → Reranker." :
+            "Download one in Settings → Reranker, or turn reranking off."}
         </Notice>
       )}
 

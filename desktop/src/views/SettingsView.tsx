@@ -5,7 +5,7 @@ import { useApp, useJob } from "../state";
 import { Button, Notice, Progress, Switch } from "../components/ui";
 import { basename, bytes } from "../format";
 import { GGUF_FILTER, pickPaths } from "../platform";
-import { PicturesPanel } from "./PicturesPanel";
+import { HelperPanel } from "./HelperPanel";
 
 const VARIANT_LABEL: Record<string, string> = {
   "cuda-12.4": "CUDA 12.4 (NVIDIA)",
@@ -116,7 +116,17 @@ export function SettingsView() {
         {showLog && <pre className="log">{runtime.log_tail.join("\n") || "(nothing yet)"}</pre>}
       </section>
 
-      <PicturesPanel />
+      <HelperPanel kind="rerank" title="Reranker" toggle="Rerank search results">
+        A small reranker model reads the question together with each of the best 20 results and puts them in a
+        better order before the top ones are kept. It makes search slower by a fraction of a second and usually more
+        accurate. Turn it off to search without it; the Search tab can also turn it off for one search.
+      </HelperPanel>
+
+      <HelperPanel kind="vision" title="Picture descriptions" toggle="Describe pictures when building">
+        A small vision model looks at each photo and screenshot while a knowledge base is built and writes a sentence
+        or two about what it shows, so pictures can be found by what's in them. It runs only during builds.
+        Documents with pictures are read again the next time you build.
+      </HelperPanel>
 
       <section className="panel">
         <h2>Hardware</h2>

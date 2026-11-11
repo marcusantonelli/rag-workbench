@@ -81,7 +81,6 @@ DEFAULTS: dict[str, Any] = {
         "row_chunk_max_rows": 200,
     },
     "pdf": {
-        "backend": "auto",           # auto | docling | native
         "min_text_chars": 100,
         "min_printable_ratio": 0.85,
         "ocr_scale": 2.5,            # render scale for OCR (72 dpi * scale)

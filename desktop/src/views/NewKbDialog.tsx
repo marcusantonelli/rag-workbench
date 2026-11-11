@@ -85,7 +85,7 @@ export function NewKbDialog({ onClose }: { onClose: () => void }) {
                 </label>
               ))}
             </div>
-            <span className="field-help">Can be changed later without embedding anything again (About tab).</span>
+            <span className="field-help">Can be changed later without embedding anything again (Details tab).</span>
           </fieldset>
         )}
 

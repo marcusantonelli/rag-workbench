@@ -1,12 +1,8 @@
 """PDF extraction.
 
-Backends:
-  * docling  - layout model, TableFormer tables, reading order, figures (best quality;
-               needs `pip install rag-builder[docling]` and its models downloaded once).
-  * native   - pdfplumber for digital pages (text lines, font-size headings, ruled
-               tables, embedded images, flowcharts drawn as vector shapes) and RapidOCR
-               for scanned pages. No PyTorch.
-  * auto     - docling when installed and working, otherwise native.
+pdfplumber for digital pages (text lines, font-size headings, ruled tables, procedure
+tables, form fields, embedded images, flowcharts drawn as vector shapes) and RapidOCR for
+scanned pages and pictures. No PyTorch.
 
 OCR is decided per page, not per file: a page with too little extractable text,
 or mostly garbage characters, is rendered and OCR'd.
@@ -30,28 +26,9 @@ _PAGE_REF_RE = re.compile(r"\bpage\s+\d{1,4}(\s*(of|/)\s*\d{1,4})?\b", re.I)
 _CAPTION_RE = re.compile(r"^(figure|fig\.|table)\s*\d", re.I)
 
 
-class DoclingUnavailable(RuntimeError):
-    pass
-
-
 def extract_pdf(path: Path, ctx: ExtractContext) -> ExtractedDoc:
-    backend = ctx.config["pdf"]["backend"]
-    warnings: list[str] = []
-    if backend in ("auto", "docling"):
-        try:
-            from rag.core.ingest.pdf_docling import extract_pdf_docling
-
-            return extract_pdf_docling(path, ctx)
-        except ImportError as exc:
-            if backend == "docling":
-                raise DoclingUnavailable("pdf.backend = docling, but docling is not installed") from exc
-        except Exception as exc:  # noqa: BLE001 - fall back, but say why
-            if backend == "docling":
-                raise
-            warnings.append(f"docling failed ({type(exc).__name__}: {exc}); used native extractor")
-    doc = extract_pdf_native(path, ctx)
-    doc.warnings = warnings + doc.warnings
-    return doc
+    # (pdf.backend from older config files is ignored: there is one PDF reader since 0.4.0)
+    return extract_pdf_native(path, ctx)
 
 
 # ---------------------------------------------------------------------------

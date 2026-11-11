@@ -33,7 +33,7 @@ pip install -e ".[dev]"
 
 If `rag` reports that Python's sqlite3 cannot load extensions (common with
 pyenv or other from-source Python builds), run `pip install sqlean.py`; it is
-picked up automatically. Optional extras: `[sqlite]` (that same package), `[docling]` (higher-quality PDF layout and tables), `[llamacpp]`
+picked up automatically. Optional extras: `[sqlite]` (that same package), `[llamacpp]`
 (in-process GGUF embedding), `[onnx]` (Qwen3-Embedding-0.6B on CPU).
 
 ## Embedding model: Qwen3-Embedding-8B, Q4_K_M
@@ -143,11 +143,6 @@ a short description. Logos repeated across pages are dropped.
 Document tables over 30 rows also go to `tables.db`; the document keeps a
 pointer chunk. Spreadsheet quirks can be overridden per workbook in
 `<workspace>/sheets.toml` (see `examples/sheets.example.toml`).
-
-PDF backend: `pdf.backend = "auto"` uses Docling when `[docling]` is installed and
-working, otherwise the native extractor. **The Docling path was not exercised in
-development** (its models download from Hugging Face, which was unreachable); set
-`pdf.backend = "docling"` on first real use to see any errors instead of falling back.
 
 ## Chunking
 

@@ -61,6 +61,8 @@ pub struct Writer {
     dirty: bool,
     /// Rows buffered in memory before they are written out as a segment.
     pub segment_rows: u64,
+    /// An interrupted write's leftover bytes past `end` that couldn't be cut off yet (Windows).
+    tail_left: bool,
 }
 
 impl Writer {
@@ -103,11 +105,14 @@ impl Writer {
         let (footer, end) = format::find_last_commit(&data)?;
         let len = data.len() as u64;
         drop(data);
-        if end != len {
-            file.set_len(end)?; // drop an interrupted write
-        }
+        // Drop an interrupted write. Windows refuses to shorten a file another process has mapped
+        // (a search); then the tail stays until a later commit can cut it. It is harmless meanwhile:
+        // new data overwrites it, and readers take the last commit whose checksum matches.
+        let tail_left = end != len && file.set_len(end).is_err();
         let rot = Rotation::new(header.dims as usize, header.rotation_seed)?;
-        Ok(Self::assemble(path, file, header, footer, rot, end))
+        let mut w = Self::assemble(path, file, header, footer, rot, end);
+        w.tail_left = tail_left;
+        Ok(w)
     }
 
     fn assemble(path: PathBuf, file: File, header: Header, footer: Footer, rot: Rotation, end: u64) -> Self {
@@ -115,7 +120,8 @@ impl Writer {
         // about 256 MB of buffered rows per segment
         let per_row = 21 + dims / 8 + dims + if header.lossless() { dims * 2 } else { 0 } + 16;
         Self { path, file, header, footer, rot, pending: Pending::default(), scratch: Vec::new(),
-               unit: Vec::new(), end, dirty: false, segment_rows: ((256u64 << 20) / per_row).max(1024) }
+               unit: Vec::new(), end, dirty: false, segment_rows: ((256u64 << 20) / per_row).max(1024),
+               tail_left: false }
     }
 
     pub fn header(&self) -> &Header {
@@ -307,6 +313,9 @@ impl Writer {
         self.file.sync_all()?;
         self.end += (body.len() + format::TRAILER_LEN) as u64;
         self.dirty = false;
+        if self.tail_left && self.file.set_len(self.end).is_ok() {
+            self.tail_left = false;
+        }
         Ok(self.footer.generation)
     }
 }

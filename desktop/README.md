@@ -28,10 +28,10 @@ The crawler stays a separate tool (`rag-crawl`).
 
 Download the installer from the GitHub Actions run or release (see "Building the installers"):
 
-- **Windows**: `RAG Workbench_0.3.3_x64-setup.exe` installs for the current user without admin
+- **Windows**: `RAG Workbench_0.4.0_x64-setup.exe` installs for the current user without admin
   rights. The `.msi` is for machine-wide or managed installs. The installers are not code
   signed yet, so SmartScreen will warn; choose More info, then Run anyway.
-- **Linux**: `.deb` for Debian/Ubuntu (`sudo apt install ./RAG.Workbench_0.3.3_amd64.deb`), or the
+- **Linux**: `.deb` for Debian/Ubuntu (`sudo apt install ./RAG.Workbench_0.4.0_amd64.deb`), or the
   `.AppImage` for anything else (`chmod +x` and run it).
 
 On first start, Settings shows the hardware it found. **Download and start** fetches llama.cpp

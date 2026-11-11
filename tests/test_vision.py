@@ -126,21 +126,28 @@ def test_build_describes_pictures_and_rereads_only_when_needed(files, tmp_path, 
     assert Builder(ws).build([src]).unchanged == 2
 
 
-FAKE_SERVER = r'''
-import sys, time
+FAKE_SERVER = r"""
+import json, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 args = sys.argv[1:]
 port = int(args[args.index("--port") + 1])
-if "99" in args and "--fail-on-gpu" in open(__file__).read() and "-ngl" in args and args[args.index("-ngl") + 1] == "99":
+if "--fail-on-gpu" in open(__file__).read() and "-ngl" in args and args[args.index("-ngl") + 1] == "99":
     print("ggml: out of memory on the GPU", flush=True)
     sys.exit(3)
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         self.send_response(200); self.end_headers(); self.wfile.write(b"{}")
+    def do_POST(self):          # /v1/rerank: passages mentioning "calibration" first
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        res = [{"index": i, "relevance_score": float(d.lower().count("calibration")) - i * 1e-6}
+               for i, d in enumerate(body.get("documents", []))]
+        data = json.dumps({"results": res}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
 print("listening", flush=True)
 HTTPServer(("127.0.0.1", port), H).serve_forever()
-'''
+"""
 
 
 def test_managed_server_starts_falls_back_and_stops(tmp_path):
@@ -156,7 +163,7 @@ def test_managed_server_starts_falls_back_and_stops(tmp_path):
     srv.launch(Path(sys.executable), gpu, port, fallback=cpu)
     srv.wait(timeout=30)
     assert srv.state == "ready" and srv.url == f"http://127.0.0.1:{port}"
-    assert any("out of memory" in line for line in srv.log) or any("retrying" in line for line in srv.log)
+    assert any("out of memory" in line for line in srv.log) and any("retrying without the GPU" in line for line in srv.log)
     assert (tmp_path / "v.pid").exists()
     srv.stop()
     assert srv.state == "stopped" and not (tmp_path / "v.pid").exists() and "ready" in changes
@@ -168,41 +175,105 @@ def test_managed_server_starts_falls_back_and_stops(tmp_path):
     assert srv.state == "failed" and "out of memory" in srv.error
 
 
-def test_vision_runtime_and_service(tmp_path, monkeypatch):
+def fake_build(home: Path, settings) -> None:
+    """A fake llama.cpp build: 'llama-server' is a small Python HTTP server."""
+    exe = home / "runtime" / "llama-bfake-cpu" / "llama-server"
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    script = home / "fake_llama_server.py"
+    script.write_text(FAKE_SERVER)
+    exe.write_text(f"#!/bin/sh\nexec {sys.executable} {script} \"$@\"\n")
+    exe.chmod(0o755)
+    settings.update_runtime(variant="cpu", llama_build="bfake", accel="cpu")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake llama-server is a shell script")
+def test_helper_models_in_the_service(tmp_path, monkeypatch):
+    import os
+
     from rag.app.paths import Settings
-    from rag.app.runtime import VisionRuntime
     from rag.app.service import Service
 
+    monkeypatch.delenv("RAG_DESCRIBE_URL", raising=False)
+    monkeypatch.delenv("RAG_RERANK_URL", raising=False)
     settings = Settings(tmp_path / "data")
     svc = Service(settings)
     try:
-        st = svc.call("vision.status", {})
-        assert st["needs_setup"] and not st["enabled"] and st["default_model"]["file"] == "Qwen3VL-4B-Instruct-Q4_K_M.gguf"
-        # pretend it was set up: a fake llama-server build and two model files
-        exe = tmp_path / "data" / "runtime" / "llama-bfake-cpu" / ("llama-server.exe" if sys.platform == "win32" else "llama-server")
-        exe.parent.mkdir(parents=True)
-        script = tmp_path / "fake.py"
-        script.write_text(FAKE_SERVER)
-        exe.write_text(f"#!/bin/sh\nexec {sys.executable} {script} \"$@\"\n")
-        exe.chmod(0o755)
-        for f in ("m.gguf", "mm.gguf"):
-            (tmp_path / f).write_bytes(b"x" * 1024)
-        settings.update_runtime(variant="cpu", llama_build="bfake", accel="cpu")
-        settings.update_vision(model_path=str(tmp_path / "m.gguf"), mmproj_path=str(tmp_path / "mm.gguf"), port=0)
-        if sys.platform == "win32":
-            pytest.skip("the fake llama-server is a shell script")
-        st = svc.call("vision.configure", {"enabled": True})
-        svc.vision.server.wait(timeout=30)
-        st = svc.call("vision.status", {})
-        assert st["ready"] and st["enabled"]
-        import os
+        for kind in ("vision", "rerank"):
+            st = svc.call(f"{kind}.status", {})
+            assert st["needs_setup"] and not st["enabled"] and st["choices"]
+        assert [c["id"] for c in svc.call("vision.status", {})["choices"]] == [
+            "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M", "Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M"]
+        assert svc.call("rerank.status", {})["own_file"] and not svc.call("vision.status", {})["own_file"]
 
-        assert os.environ.get("RAG_DESCRIBE_URL") == st["url"]           # builds find it
+        fake_build(tmp_path / "data", settings)
+        models = tmp_path / "data" / "models"
+        models.mkdir(parents=True, exist_ok=True)
+        for f in ("Qwen3VL-4B-Instruct-Q4_K_M.gguf", "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
+                  "Qwen3VL-2B-Instruct-Q4_K_M.gguf", "mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf"):
+            (models / f).write_bytes(b"x" * 1024)          # "downloaded": setup won't fetch them
+
+        # picture model: set up the 4B, then switch to the 2B, then off
+        from test_app_service import wait_job
+
+        job = wait_job(svc, svc.call("vision.setup", {"choice": "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M"}))
+        assert job["state"] == "done", job["error"]
+        st = svc.call("vision.status", {})
+        assert st["ready"] and st["enabled"] and os.environ["RAG_DESCRIBE_URL"] == st["url"]
         assert "--mmproj" in svc.vision.server.log[0] and "--device none" in svc.vision.server.log[0]
+        svc.call("vision.configure", {"choice": "Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M"})
+        svc.vision.server.wait(timeout=30)
+        assert "Qwen3VL-2B" in svc.vision.server.log[0] and svc.call("vision.status", {})["model_id"].startswith("Qwen/Qwen3-VL-2B")
         svc.call("vision.configure", {"enabled": False})
         assert not svc.call("vision.status", {})["ready"] and "RAG_DESCRIBE_URL" not in os.environ
+
+        # reranker: a .gguf of the user's own
+        own = tmp_path / "Qwen3-Reranker-4B-Q4_K_M.gguf"
+        own.write_bytes(b"x" * 2048)
+        job = wait_job(svc, svc.call("rerank.setup", {"model_path": str(own)}))
+        assert job["state"] == "done", job["error"]
+        st = svc.call("rerank.status", {})
+        assert st["ready"] and st["model_id"] == own.stem and os.environ["RAG_RERANK_URL"] == st["url"]
+        assert "--reranking" in svc.reranker.server.log[0]
+        with pytest.raises(Exception, match="isn't downloaded"):
+            svc.call("rerank.configure", {"choice": "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF"})
+        with pytest.raises(Exception):
+            svc.call("vision.setup", {"model_path": str(own)})     # own files are for the reranker only
+        svc.call("rerank.configure", {"enabled": False})
+        assert "RAG_RERANK_URL" not in os.environ
         with pytest.raises(Exception):
             svc.call("vision.configure", {"model_path": "x"})
     finally:
         svc.shutdown()
-        monkeypatch.delenv("RAG_DESCRIBE_URL", raising=False)
+
+
+@pytest.fixture()
+def svc(tmp_path, monkeypatch):
+    from rag.app.paths import Settings
+    from rag.app.service import Service
+
+    monkeypatch.setenv("RAG_WORKBENCH_HOME", str(tmp_path / "home"))
+    s = Service(Settings(tmp_path / "home"))
+    yield s
+    s.shutdown()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake llama-server is a shell script")
+def test_app_search_uses_the_managed_reranker(svc, corpus, tmp_path, monkeypatch):
+    from test_app_service import wait_job
+
+    monkeypatch.delenv("RAG_RERANK_URL", raising=False)
+    kb = svc.call("kb.create", {"name": "R", "dims": 256, "backend": "hash-test"})
+    assert wait_job(svc, svc.call("kb.build", {"kb": kb["id"], "inputs": [str(corpus)]}))["state"] == "done"
+    q = {"kb": kb["id"], "query": "leak tester seal"}
+    assert "rerank" not in svc.call("kb.search", q)                       # no reranker: plain search
+
+    fake_build(svc.settings.root, svc.settings)
+    own = tmp_path / "rr.gguf"
+    own.write_bytes(b"x" * 2048)
+    assert wait_job(svc, svc.call("rerank.setup", {"model_path": str(own)}))["state"] == "done"
+    on = svc.call("kb.search", q)
+    assert on["rerank"]["applied"] and "calibration" in on["results"][0]["text"].lower()
+    off = svc.call("kb.search", {**q, "rerank": False})                   # the Search tab's switch
+    assert "rerank" not in off
+    svc.call("rerank.stop", {})
+    assert "rerank" not in svc.call("kb.search", q)                       # stopped: plain search again

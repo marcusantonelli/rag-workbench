@@ -164,7 +164,10 @@ class Builder:
             store.set_meta("config_fingerprint", self.cfg.fingerprint())
             store.conn.commit()
             if hasattr(store.vectors, "compact"):
-                store.vectors.compact()   # only when many rows are deleted or the file is in many pieces
+                try:              # only when many rows are deleted or the file is in many pieces
+                    store.vectors.compact()
+                except Exception as exc:  # noqa: BLE001 - e.g. a search holds the file (Windows): next time
+                    self.emit("warning", message=f"vectors.shammy wasn't compacted this time: {exc}")
         finally:
             store.close()
             tables.close()

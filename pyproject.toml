@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rag-builder"
-version = "0.3.3"
+version = "0.4.0"
 description = "Builds SQLite + sqlite-vec RAG packs from mixed documents, with a small Python retrieval path for testing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,7 +28,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-docling = ["docling>=2.100"]
 llamacpp = ["llama-cpp-python>=0.3"]
 onnx = ["qwen3-embed>=1.14"]
 sqlite = ["sqlean.py>=3.45"]   # for Pythons built without SQLite extension loading

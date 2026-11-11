@@ -119,9 +119,10 @@ class Service:
         self.settings = settings or Settings()
         self._emit = emit or (lambda name, data: None)
         self.runtime = Runtime(self.settings, emit=self._emit)
-        from rag.app.runtime import VisionRuntime
+        from rag.app.runtime import HELPERS, HelperModel
 
-        self.vision = VisionRuntime(self.runtime, emit=self._vision_changed)
+        self.helpers = {kind: HelperModel(kind, self.runtime, emit=self._helper_changed) for kind in HELPERS}
+        self.vision, self.reranker = self.helpers["vision"], self.helpers["rerank"]
         from rag.app.terminal import Terminal
 
         self.terminal = Terminal(self.emit, self.runtime.url)
@@ -138,11 +139,8 @@ class Service:
             "runtime.start": self.runtime_start,
             "runtime.stop": self.runtime_stop,
             "runtime.configure": self.runtime_configure,
-            "vision.status": self.vision_status,
-            "vision.setup": self.vision_setup,
-            "vision.start": self.vision_start,
-            "vision.stop": self.vision_stop,
-            "vision.configure": self.vision_configure,
+            **{f"{kind}.{verb}": (lambda kind, verb: lambda **p: self._helper_call(kind, verb, **p))(kind, verb)
+               for kind in ("vision", "rerank") for verb in ("status", "setup", "start", "stop", "configure")},
             "kb.recent": self.kb_recent,
             "kb.forget": self.kb_forget,
             "kb.open": self.kb_open,
@@ -205,22 +203,27 @@ class Service:
         rt = self.settings.runtime
         if rt.get("mode") == "managed" and rt.get("autostart", True):
             threading.Thread(target=self._autostart, daemon=True).start()
-        if self.settings.vision.get("enabled") and not self.vision.status()["needs_setup"]:
-            threading.Thread(target=self._vision_autostart, daemon=True).start()
+        for helper in self.helpers.values():
+            if helper.cfg.get("enabled") and not helper.status()["needs_setup"]:
+                threading.Thread(target=self._helper_autostart, args=(helper,), daemon=True).start()
 
-    def _vision_autostart(self) -> None:
+    def _helper_autostart(self, helper) -> None:
         try:
-            self.vision.start()
+            helper.start()
         except Exception as exc:  # noqa: BLE001
-            self.emit("log", {"level": "warning", "message": f"picture model autostart failed: {exc}"})
+            self.emit("log", {"level": "warning", "message": f"{helper.spec['label']} autostart failed: {exc}"})
 
-    def _vision_changed(self, name: str, data: dict[str, Any]) -> None:
-        """Builds (here and in the app's terminal) describe pictures while the model is ready."""
+    def _helper_changed(self, name: str, data: dict[str, Any]) -> None:
+        """Builds describe pictures, and searches rerank, while the helper model is ready (here and
+        in the app's terminal): its address goes in RAG_DESCRIBE_URL / RAG_RERANK_URL."""
+        from rag.app.runtime import HELPERS
+
+        var = HELPERS[name]["env"]
         url = data.get("url") if data.get("ready") else None
         if url:
-            os.environ["RAG_DESCRIBE_URL"] = url
+            os.environ[var] = url
         else:
-            os.environ.pop("RAG_DESCRIBE_URL", None)
+            os.environ.pop(var, None)
         self._emit(name, data)
 
     def _autostart(self) -> None:
@@ -233,7 +236,8 @@ class Service:
         self.terminal.shutdown()
         for job in list(self.jobs.values()):
             job.cancel.set()
-        self.vision.stop()
+        for helper in self.helpers.values():
+            helper.stop()
         self.runtime.stop()
 
     def _kb(self, kb: str) -> KnowledgeBase:
@@ -352,31 +356,40 @@ class Service:
         except ValueError as exc:
             raise ServiceError("bad_params", str(exc)) from exc
 
-    # ---------------------------------------------------------------------------- picture model
-    def vision_status(self) -> dict[str, Any]:
-        return self.vision.status()
+    # ---------------------------------------------------------------------------- helper models
+    def _helper_call(self, kind: str, verb: str, **params: Any) -> dict[str, Any]:
+        """vision.* and rerank.*: status, setup (a job: download a listed model or use your own
+        file, then start it), start, stop, configure (enabled, choice of a downloaded model)."""
+        helper = self.helpers[kind]
+        if verb == "status":
+            return helper.status()
+        if verb == "start":
+            return helper.start()
+        if verb == "stop":
+            return helper.stop()
+        if verb == "configure":
+            try:
+                return helper.configure(**params)
+            except ValueError as exc:
+                raise ServiceError("bad_params", str(exc)) from exc
+        choice, model_path = params.get("choice"), params.get("model_path")
+        unknown = set(params) - {"choice", "model_path"}
+        if unknown:
+            raise ServiceError("bad_params", f"{kind}.setup: unknown {', '.join(sorted(unknown))}")
+        if model_path and not helper.spec["own_file"]:
+            raise ServiceError("bad_params", "Choose one of the listed picture models.",
+                               "A picture model needs its matching image encoder, so only listed models are offered.")
+        if model_path and not (Path(model_path).is_file() and model_path.lower().endswith(".gguf")):
+            raise ServiceError("bad_params", f"{model_path} is not a .gguf file.")
 
-    def vision_setup(self) -> dict[str, Any]:
         def work(job: Job) -> Any:
             def progress(p: dict[str, Any]) -> None:
                 msg = p.get("message") or " ".join(str(x) for x in (p.get("stage"), p.get("label")) if x)
                 job.report(p, log={"message": msg} if p.get("stage") != "download" else None)  # type: ignore[attr-defined]
 
-            return self.vision.setup(progress=progress, should_stop=job.cancel.is_set)
+            return helper.setup(choice=choice, model_path=model_path, progress=progress, should_stop=job.cancel.is_set)
 
-        return self._job("vision_setup", "Set up the picture model", work)
-
-    def vision_start(self) -> dict[str, Any]:
-        return self.vision.start()
-
-    def vision_stop(self) -> dict[str, Any]:
-        return self.vision.stop()
-
-    def vision_configure(self, **changes: Any) -> dict[str, Any]:
-        try:
-            return self.vision.configure(**changes)
-        except ValueError as exc:
-            raise ServiceError("bad_params", str(exc)) from exc
+        return self._job(f"{kind}_setup", f"Set up the {helper.spec['label']}", work)
 
     # ---------------------------------------------------------------------------- knowledge bases
     def kb_recent(self) -> list[dict[str, Any]]:
@@ -643,27 +656,31 @@ class Service:
         embedder = self._embedder(kbo, allow_mismatch=allow_mismatch)
         config = kbo.workspace().config
         cfg = config["search"]
+        if rerank is None and self.reranker.cfg.get("enabled") and self.reranker.url():
+            rerank = True             # the app's reranker is on: every search uses it unless asked not to
         with kbo.store() as s:
             searcher = Searcher(s, embedder, cfg, reranker=rerank_settings(config.data, rerank, rerank_url or None))
             try:
-                res = searcher.search(query, k=k, file_type=file_type or None, expand=expand)
-            except Exception as exc:
-                from rag.core.models.embed import EmbedderError
+                try:
+                    res = searcher.search(query, k=k, file_type=file_type or None, expand=expand)
+                except Exception as exc:
+                    from rag.core.models.embed import EmbedderError
 
-                if isinstance(exc, EmbedderError):
-                    raise ServiceError("embed_failed", str(exc), "Check the model status in Settings.") from exc
-                raise
-            out = res.to_dict()
-            for r in out["results"]:
-                r["ranks"] = res.ranks.get(r["chunk_id"])
-            for t in out["tables"]:
-                t["ranks"] = res.ranks.get(t["chunk_id"])
-            top = res.candidates[:candidates]
-            rows = searcher._load(top)
-            out["candidates"] = [{**self._chunk_out(rows[c]), "ranks": res.ranks.get(c)} for c in top if c in rows]
-            out["markdown"] = res.to_markdown()
-            out["engine"] = res.engine
-            searcher.close()
+                    if isinstance(exc, EmbedderError):
+                        raise ServiceError("embed_failed", str(exc), "Check the model status in Settings.") from exc
+                    raise
+                out = res.to_dict()
+                for r in out["results"]:
+                    r["ranks"] = res.ranks.get(r["chunk_id"])
+                for t in out["tables"]:
+                    t["ranks"] = res.ranks.get(t["chunk_id"])
+                top = res.candidates[:candidates]
+                rows = searcher._load(top)
+                out["candidates"] = [{**self._chunk_out(rows[c]), "ranks": res.ranks.get(c)} for c in top if c in rows]
+                out["markdown"] = res.to_markdown()
+                out["engine"] = res.engine
+            finally:
+                searcher.close()      # Windows: an open reader keeps vectors.shammy from being replaced
         return out
 
     def kb_tables(self, kb: str) -> list[dict[str, Any]]:

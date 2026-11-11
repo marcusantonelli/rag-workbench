@@ -738,101 +738,162 @@ class Runtime:
 
 
 # ----------------------------------------------------------------------------------------------
-# The managed vision model (picture descriptions)
+# Helper models: picture descriptions and reranking
 # ----------------------------------------------------------------------------------------------
-VISION_MODEL = {
-    "id": "Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M",
-    "file": "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
-    "url": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3VL-4B-Instruct-Q4_K_M.gguf",
-    "approx_bytes": 2_497_281_664,
-    "mmproj_file": "mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
-    "mmproj_url": "https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf",
-    "mmproj_bytes": 453_974_304,
+_HF = "https://huggingface.co/{repo}/resolve/main/{file}"
+
+
+def _choice(cid: str, label: str, repo: str, files: list[tuple[str, int]], note: str = "") -> dict[str, Any]:
+    return {"id": cid, "label": label, "note": note, "repo": repo,
+            "files": [{"file": f, "url": _HF.format(repo=repo, file=f), "bytes": b} for f, b in files],
+            "bytes": sum(b for _, b in files)}
+
+
+HELPERS: dict[str, dict[str, Any]] = {
+    "vision": {
+        "label": "picture model",
+        "port": 8083,
+        "env": "RAG_DESCRIBE_URL",
+        "choices": [
+            _choice("Qwen/Qwen3-VL-4B-Instruct-GGUF:Q4_K_M", "Qwen3-VL 4B (recommended)", "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+                    [("Qwen3VL-4B-Instruct-Q4_K_M.gguf", 2_497_281_664), ("mmproj-Qwen3VL-4B-Instruct-Q8_0.gguf", 453_974_304)],
+                    "Reads labels and screens more reliably."),
+            _choice("Qwen/Qwen3-VL-2B-Instruct-GGUF:Q4_K_M", "Qwen3-VL 2B (smaller, faster)", "Qwen/Qwen3-VL-2B-Instruct-GGUF",
+                    [("Qwen3VL-2B-Instruct-Q4_K_M.gguf", 1_107_409_952), ("mmproj-Qwen3VL-2B-Instruct-Q8_0.gguf", 445_053_216)],
+                    "About half the memory; shorter, plainer descriptions."),
+        ],
+        "own_file": False,          # a vision model needs its matching image encoder: catalogue only
+    },
+    "rerank": {
+        "label": "reranker",
+        "port": 8082,
+        "env": "RAG_RERANK_URL",
+        "choices": [
+            _choice("ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF", "Qwen3-Reranker 0.6B (recommended)",
+                    "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF", [("qwen3-reranker-0.6b-q8_0.gguf", 639_153_184)],
+                    "Small and fast; reorders the best 20 results in well under a second on a GPU."),
+        ],
+        "own_file": True,           # e.g. a 4B or 8B Qwen3-Reranker GGUF the user trusts
+    },
 }
-VISION_PORT = 8083    # embedding 8081, the reranker's usual 8082
+
+# kept for callers of 0.4 previews
+VISION_MODEL = HELPERS["vision"]["choices"][0]
 
 
-class VisionRuntime:
-    """A second llama-server, running a small vision-language model, that describes the pictures
-    in documents during a build. It shares the embedding server's llama.cpp build and Force CPU
-    setting. Builds find it through RAG_DESCRIBE_URL (set by the app while it is ready)."""
+class HelperModel:
+    """A second (or third) llama-server next to the embedding model: the picture model that
+    describes pictures during builds, or the reranker that reorders search results. It shares the
+    embedding server's llama.cpp build and Force CPU setting, offers a short list of models to
+    download (or, for the reranker, a .gguf of your own), and is switched on and off in Settings.
+    While it is ready its address is published in an environment variable (RAG_DESCRIBE_URL /
+    RAG_RERANK_URL), which is how builds, searches and the app's terminal find it."""
 
-    def __init__(self, runtime: Runtime, emit: Callable[[str, dict[str, Any]], None] | None = None):
+    def __init__(self, kind: str, runtime: Runtime, emit: Callable[[str, dict[str, Any]], None] | None = None):
+        self.kind = kind
+        self.spec = HELPERS[kind]
         self.rt = runtime
         self.settings = runtime.settings
         self.emit = emit or (lambda name, data: None)
         self._device_note = ""
-        self.server = ManagedServer("picture model", runtime.root / "llama-server-vision.pid",
-                                    lambda: self.emit("vision", self.status()))
+        self.server = ManagedServer(self.spec["label"], runtime.root / f"llama-server-{kind}.pid",
+                                    lambda: self.emit(kind, self.status()))
 
     @property
     def cfg(self) -> dict[str, Any]:
-        return self.settings.vision
+        return self.settings.helper(self.kind)
 
-    def files(self) -> tuple[Path | None, Path | None]:
-        m, p = self.cfg.get("model_path"), self.cfg.get("mmproj_path")
-        return (Path(m) if m and Path(m).is_file() else None, Path(p) if p and Path(p).is_file() else None)
+    def _choice(self, cid: str | None) -> dict[str, Any] | None:
+        return next((c for c in self.spec["choices"] if c["id"] == cid), None)
+
+    def files(self) -> list[Path] | None:
+        """The model files in use (model first), or None when they aren't all there."""
+        paths = [Path(p) for p in (self.cfg.get("files") or [])]
+        return paths if paths and all(p.is_file() for p in paths) else None
 
     def url(self) -> str | None:
         return self.server.url if self.server.state == "ready" else None
 
     def status(self) -> dict[str, Any]:
-        model, mmproj = self.files()
+        files = self.files()
+        choices = []
+        for c in self.spec["choices"]:
+            have = all((self.rt.models_dir / f["file"]).is_file() for f in c["files"])
+            choices.append({k: c[k] for k in ("id", "label", "note", "bytes")} | {"downloaded": have})
         return {
+            "kind": self.kind,
             "enabled": bool(self.cfg.get("enabled")),
             "state": self.server.state,
             "ready": self.url() is not None,
             "url": self.url(),
             "error": self.server.error,
             "model_id": self.cfg.get("model_id"),
-            "model_path": str(model) if model else None,
-            "mmproj_path": str(mmproj) if mmproj else None,
-            "size_bytes": sum(p.stat().st_size for p in (model, mmproj) if p) or None,
-            "needs_setup": model is None or mmproj is None or self.rt.server_exe() is None,
-            "default_model": VISION_MODEL,
+            "files": [str(p) for p in files] if files else [],
+            "size_bytes": sum(p.stat().st_size for p in files) if files else None,
+            "needs_setup": files is None or self.rt.server_exe() is None,
+            "choices": choices,
+            "own_file": self.spec["own_file"],
             "device_note": self._device_note,
             "log_tail": list(self.server.log)[-60:],
         }
 
-    def setup(self, *, progress: ProgressFn, should_stop: Callable[[], bool]) -> dict[str, Any]:
+    def setup(self, *, choice: str | None = None, model_path: str | None = None,
+              progress: ProgressFn, should_stop: Callable[[], bool]) -> dict[str, Any]:
+        """Download a listed model (or use a .gguf file of your own, for the reranker), switch to
+        it, and start it."""
         if self.rt.server_exe() is None:
             self.rt.ensure_build(progress, should_stop)
-        model = self.rt.models_dir / VISION_MODEL["file"]
-        mmproj = self.rt.models_dir / VISION_MODEL["mmproj_file"]
-        if not model.exists():
-            download(VISION_MODEL["url"], model, progress=progress, should_stop=should_stop,
-                     label=VISION_MODEL["file"], expected_bytes=VISION_MODEL["approx_bytes"])
-        if not mmproj.exists():
-            download(VISION_MODEL["mmproj_url"], mmproj, progress=progress, should_stop=should_stop,
-                     label=VISION_MODEL["mmproj_file"], expected_bytes=VISION_MODEL["mmproj_bytes"])
-        self.settings.update_vision(model_path=str(model), mmproj_path=str(mmproj), model_id=VISION_MODEL["id"],
-                                    enabled=True)
-        progress({"stage": "start", "message": "Starting the picture model"})
+        if model_path:
+            if not self.spec["own_file"]:
+                raise RuntimeErrorWithHint("Choose one of the listed picture models.")
+            p = Path(model_path)
+            if not p.is_file() or p.suffix.lower() != ".gguf":
+                raise RuntimeErrorWithHint(f"{model_path} is not a .gguf file.")
+            files, model_id = [p], p.stem
+        else:
+            c = self._choice(choice) or self.spec["choices"][0]
+            files = []
+            for f in c["files"]:
+                dest = self.rt.models_dir / f["file"]
+                if not dest.exists():
+                    download(f["url"], dest, progress=progress, should_stop=should_stop, label=f["file"],
+                             expected_bytes=f["bytes"])
+                files.append(dest)
+            model_id = c["id"]
+        self.server.stop()
+        self.settings.update_helper(self.kind, files=[str(p) for p in files], model_id=model_id, enabled=True)
+        progress({"stage": "start", "message": f"Starting the {self.spec['label']}"})
         self.start(wait=True, should_stop=should_stop)
         return self.status()
+
+    def _command(self, exe: Path, files: list[Path], port: int) -> list[str]:
+        ctx = str(int(self.cfg.get("ctx") or 8192))
+        cmd = [str(exe), "-m", str(files[0])]
+        if self.kind == "vision":
+            cmd += ["--mmproj", str(files[1]), "-c", ctx]
+        else:
+            # one passage and the question per scoring pass; passages are cut to 6000 characters
+            cmd += ["--reranking", "-c", ctx, "-b", "4096", "-ub", "4096"]
+        return cmd + ["-np", "1", "--host", "127.0.0.1", "--port", str(port)]
 
     def start(self, *, wait: bool = False, should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
         with self.server.lock:
             if self.server.running():
                 return self.status()
-            exe = self.rt.server_exe()
-            model, mmproj = self.files()
-            if exe is None or model is None or mmproj is None:
+            exe, files = self.rt.server_exe(), self.files()
+            if exe is None or files is None:
                 self.server.state, self.server.error = "stopped", None
                 return self.status()
-            need = (model.stat().st_size + mmproj.stat().st_size) // (1024 * 1024) + 1536
+            need = sum(p.stat().st_size for p in files) // (1024 * 1024) + 1024
             use_gpu, note = self.rt.gpu_plan(need)
-            port = _free_port(int(self.cfg.get("port") or 0) or VISION_PORT)
-            ctx = str(int(self.cfg.get("ctx") or 8192))
-            base = [str(exe), "-m", str(model), "--mmproj", str(mmproj), "-c", ctx, "-np", "1",
-                    "--host", "127.0.0.1", "--port", str(port)]
-            cpu = base + ["-ngl", "0", "--device", "none", "--no-mmproj-offload"]
+            port = _free_port(int(self.cfg.get("port") or 0) or self.spec["port"])
+            base = self._command(exe, files, port)
+            cpu = base + ["-ngl", "0", "--device", "none"] + (["--no-mmproj-offload"] if self.kind == "vision" else [])
+            self._device_note = note
             if use_gpu:
                 # The GPU may be full with the embedding model; then the CPU is tried, once.
-                self._device_note = note
                 self.server.launch(exe, base + ["-ngl", "99"], port, fallback=cpu)
             else:
-                self._device_note = note
                 self.server.launch(exe, cpu, port)
         if wait:
             self.server.wait(should_stop)
@@ -843,11 +904,25 @@ class VisionRuntime:
         return self.status()
 
     def configure(self, **changes: Any) -> dict[str, Any]:
-        allowed = {"enabled", "ctx", "port"}
+        allowed = {"enabled", "ctx", "port", "choice"}
         bad = set(changes) - allowed
         if bad:
-            raise ValueError(f"unknown picture model settings: {', '.join(sorted(bad))}")
-        self.settings.update_vision(**changes)
+            raise ValueError(f"unknown {self.spec['label']} settings: {', '.join(sorted(bad))}")
+        choice = changes.pop("choice", None)
+        if choice is not None:
+            # switch to a model that is already downloaded (downloading one is setup)
+            c = self._choice(choice)
+            if c is None:
+                raise ValueError(f"unknown model {choice!r}")
+            paths = [self.rt.models_dir / f["file"] for f in c["files"]]
+            if not all(p.is_file() for p in paths):
+                raise ValueError(f"{c['label']} isn't downloaded yet")
+            self.server.stop()
+            self.settings.update_helper(self.kind, files=[str(p) for p in paths], model_id=c["id"])
+            if self.cfg.get("enabled"):
+                self.start()
+        if changes:
+            self.settings.update_helper(self.kind, **changes)
         if changes.get("enabled") is False:
             self.stop()
         elif changes.get("enabled") is True and not self.status()["needs_setup"]:

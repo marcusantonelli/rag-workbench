@@ -55,6 +55,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [tabs, setTabs] = useState<Record<string, Tab>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
+  const liveRefresh = useRef<Record<string, number>>({});
   const kbIds = useRef<string[]>([]);
   kbIds.current = kbs.map((k) => k.id);
 
@@ -156,6 +157,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const j = data as Job;
         setJobs((all) => ({ ...all, [j.id]: { ...all[j.id], ...j } }));
         if (j.state !== "running" && j.kb) refreshKb(j.kb);
+        else if (j.kb) {
+          // while a build runs, the counts and size refresh every few seconds (Details, Documents)
+          const now = Date.now();
+          if (now - (liveRefresh.current[j.kb] ?? 0) > 2500) {
+            liveRefresh.current[j.kb] = now;
+            refreshKb(j.kb);
+          }
+        }
         if (j.kind === "runtime_setup" && j.state !== "running") refreshRuntime();
       } else if (name === "kb") {
         refreshKb((data as { id: string }).id);

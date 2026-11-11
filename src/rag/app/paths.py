@@ -47,14 +47,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "port": 0,                    # 0 = pick a free port
         "autostart": True,
     },
-    "vision": {
-        "enabled": False,             # describe pictures during builds (runs a second llama-server)
-        "model_path": None,
-        "mmproj_path": None,          # the model's image encoder
-        "model_id": None,
-        "ctx": 8192,
-        "port": 0,                    # 0 = 8083, or a free one
-    },
+    # helper models next to the embedding model (rag.app.runtime.HELPERS): picture descriptions
+    # during builds, and reranking of search results
+    "vision": {"enabled": False, "files": [], "model_id": None, "ctx": 8192, "port": 0},
+    "rerank": {"enabled": False, "files": [], "model_id": None, "ctx": 8192, "port": 0},
     "workspaces_dir": None,           # default: <data>/workspaces
     "recent": [],                     # [{path, kind, name, opened_at}]
 }
@@ -94,13 +90,16 @@ class Settings:
         self.save()
         return self.data["runtime"]
 
+    def helper(self, kind: str) -> dict[str, Any]:
+        return self.data[kind]
+
+    def update_helper(self, kind: str, **changes: Any) -> dict[str, Any]:
+        self.data[kind].update(changes)
+        self.save()
+        return self.data[kind]
+
     @property
     def vision(self) -> dict[str, Any]:
-        return self.data["vision"]
-
-    def update_vision(self, **changes: Any) -> dict[str, Any]:
-        self.data["vision"].update(changes)
-        self.save()
         return self.data["vision"]
 
     @property

@@ -1,4 +1,4 @@
-import { ExternalLink, Trash2 } from "lucide-react";
+import { ExternalLink, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { call } from "../api";
 import { useApp } from "../state";
@@ -96,6 +96,9 @@ export function DocumentsView({ kb }: { kb: KbSummary }) {
       <section className="doc-list-pane">
         <div className="filters">
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name" aria-label="Filter documents" />
+          <button className="icon-btn" title="Refresh the list" aria-label="Refresh the list" onClick={() => { refreshKb(kb.id); load(); }}>
+            <RefreshCw size={15} />
+          </button>
           <select value={type} onChange={(e) => setType(e.target.value)} aria-label="File type">
             <option value="">All types</option>
             {types.map((t) => (
