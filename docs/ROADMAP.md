@@ -50,6 +50,10 @@ marker and `.ragpack` extension (read the old names forever), docs, and the GitH
   - Per file, the current stage with its own progress: reading page 12/40, OCR, picture 3/9,
     chunking, embedding 160/420 chunks, writing.
   - Chunk counts climb as embedding batches finish, not only at the end.
+  - Documents tab: the file being built shows live "N chunks, M embedded" from progress events,
+    and its Details can list the chunks as they are made. The knowledge base itself still gets
+    the document in one transaction at the end, so a search never sees half a document and a
+    crash never leaves one behind.
   - Recent activity list (finished, skipped as unchanged, failed with the reason). The same
     progress shows in the CLI as a bar.
 
