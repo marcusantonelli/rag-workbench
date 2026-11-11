@@ -30,6 +30,7 @@ from typing import Any, Callable
 from rag import __version__
 from rag.app.paths import Settings
 from rag.app.runtime import Cancelled, Runtime, RuntimeErrorWithHint
+from rag.core import spot
 from rag.core.util import slugify
 
 EmitFn = Callable[[str, dict[str, Any]], None]
@@ -148,6 +149,7 @@ class Service:
             "kb.close": self.kb_close,
             "kb.list": self.kb_list,
             "kb.summary": self.kb_summary,
+            "kb.spot": self.kb_spot,
             "kb.documents": self.kb_documents,
             "kb.document": self.kb_document,
             "kb.chunk": self.kb_chunk,
@@ -571,7 +573,21 @@ class Service:
             "runtime": self._runtime_check(cfg),
             "last_build_at": meta.get("last_build_at"), "built_with": meta.get("app_version"),
             "config_fingerprint": meta.get("config_fingerprint"),
+            # 1: file › headings in each embedded chunk; 2: also the document's title, number, revision
+            "embed_context": int(meta.get("embed_context") or (1 if counts.get("chunks") else 0)) or None,
+            "structure": spot.status(k.root),
         }
+
+    def kb_spot(self, kb: str) -> dict[str, Any]:
+        """(Re)build a knowledge base's spot file from its stored chunks. Nothing is read or embedded."""
+        k = self._kb(kb)
+        if k.building:
+            raise ServiceError("busy", "This knowledge base is being built; its structure is rebuilt when the build ends.")
+        try:
+            spot.build(k.root / "rag.db")
+        except Exception as exc:  # noqa: BLE001
+            raise ServiceError("spot_failed", f"The structure couldn't be built: {exc}") from exc
+        return self.kb_summary(kb)
 
     # ---------------------------------------------------------------------------- browsing
     def kb_documents(self, kb: str, query: str = "", file_type: str | None = None,
@@ -647,7 +663,8 @@ class Service:
 
     def kb_search(self, kb: str, query: str, k: int | None = None, file_type: str | None = None,
                   expand: bool = True, allow_mismatch: bool = False, candidates: int = 30,
-                  rerank: bool | None = None, rerank_url: str | None = None) -> dict[str, Any]:
+                  rerank: bool | None = None, rerank_url: str | None = None,
+                  documents: list[str] | None = None) -> dict[str, Any]:
         from rag.core.retrieve.search import Searcher, rerank_settings
 
         if not query.strip():
@@ -662,7 +679,8 @@ class Service:
             searcher = Searcher(s, embedder, cfg, reranker=rerank_settings(config.data, rerank, rerank_url or None))
             try:
                 try:
-                    res = searcher.search(query, k=k, file_type=file_type or None, expand=expand)
+                    res = searcher.search(query, k=k, file_type=file_type or None, expand=expand,
+                                          documents=[d for d in (documents or []) if d and d.strip()] or None)
                 except Exception as exc:
                     from rag.core.models.embed import EmbedderError
 

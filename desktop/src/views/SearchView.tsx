@@ -42,6 +42,14 @@ function remember(key: string, value: string) {
   }
 }
 
+function procedureNote(p: NonNullable<SearchHit["procedure"]>): string {
+  const name = p.title || p.label || (p.kind === "flowchart" ? "the flowchart" : "the procedure");
+  const what = p.kind === "flowchart" ? "flowchart" : "procedure";
+  if (p.whole) return `The whole ${what} ${name} is included: ${p.steps} ${p.kind === "flowchart" ? "page" : "step"}${p.steps === 1 ? "" : "s"}`;
+  if (p.from === p.to) return `Step ${p.from} of the ${what} ${name} (${p.steps} steps)`;
+  return `Steps ${p.from} to ${p.to} of the ${what} ${name} (${p.steps} steps)`;
+}
+
 export function SearchView({ kb }: { kb: KbSummary }) {
   const { fail, setTab } = useApp();
   const [query, setQuery] = useState(lastQuery[kb.id] ?? "");
@@ -50,6 +58,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EngineCallError | null>(null);
   const [fileType, setFileType] = useState("");
+  const [onlyDocs, setOnlyDocs] = useState("");
   const [expand, setExpand] = useState(true);
   const [agentView, setAgentView] = useState(false);
   const [showCandidates, setShowCandidates] = useState(false);
@@ -71,6 +80,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
     try {
       const r = await call<SearchResponse>("kb.search", {
         kb: kb.id, query, file_type: fileType || null, expand, allow_mismatch: allowMismatch,
+        documents: onlyDocs.split(",").map((d) => d.trim()).filter(Boolean),
         rerank, rerank_url: rerank && !managed ? rerankUrl.trim() : null,
       });
       setRes(r);
@@ -113,12 +123,21 @@ export function SearchView({ kb }: { kb: KbSummary }) {
             </option>
           ))}
         </select>
+        <input
+          className="doc-filter"
+          value={onlyDocs}
+          onChange={(e) => setOnlyDocs(e.target.value)}
+          placeholder="Only documents (e.g. D02, WI-1234)"
+          aria-label="Only these documents: document numbers or parts of file names, separated by commas"
+          title="Document numbers (from the structure) or parts of file names, separated by commas"
+          spellCheck={false}
+        />
         <Button kind="primary" type="submit" disabled={busy || !query.trim()}>
           {busy ? "Searching…" : "Search"}
         </Button>
       </form>
       <div className="search-options">
-        <Switch checked={expand} onChange={setExpand} label="Add neighbouring chunks (as the agent gets them)" />
+        <Switch checked={expand} onChange={setExpand} label="Add the surrounding steps or chunks (as the agent gets them)" />
         <Switch checked={agentView} onChange={setAgentView} label="As the agent sees it" />
         <Switch checked={showCandidates} onChange={setShowCandidates} label="Show the 30 candidates before the cut" />
         <Switch
@@ -201,7 +220,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                   <span className="hit-body">
                     <span className="hit-file">{h.source.file.split(/[\\/]/).pop()}</span>
                     <span className="hit-where">
-                      {[hitLocation(h), h.source.heading_path, kindLabel(h.kind)].filter(Boolean).join(", ")}
+                      {[h.source.document, hitLocation(h), h.source.heading_path, kindLabel(h.kind)].filter(Boolean).join(", ")}
                     </span>
                     <span className="hit-snippet">{h.text.replace(/[#*|>`]/g, " ").slice(0, 160)}</span>
                   </span>
@@ -229,7 +248,8 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                   <div>
                     <h2>{hit.source.file.split(/[\\/]/).pop()}</h2>
                     <p className="evidence-where">
-                      {[hitLocation(hit), hit.source.heading_path, hit.source.symbol, kindLabel(hit.kind)]
+                      {[hit.source.document && `${hit.source.document}${hit.source.revision ? ` rev ${hit.source.revision}` : ""}`,
+                        hitLocation(hit), hit.source.heading_path, hit.source.symbol, kindLabel(hit.kind)]
                         .filter(Boolean)
                         .join(", ")}
                     </p>
@@ -249,7 +269,20 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                     <OpenSourceButton kb={kb} chunkId={hit.chunk_id} />
                   </div>
                 </header>
-                {hit.chunk_ids && hit.chunk_ids.length > 1 && (
+                {hit.procedure && (
+                  <p className="evidence-note">
+                    {procedureNote(hit.procedure)} ({hit.chunk_ids?.length ?? 1} chunk{(hit.chunk_ids?.length ?? 1) === 1 ? "" : "s"},
+                    matched in chunk {hit.chunk_id}).
+                  </p>
+                )}
+                {hit.related && hit.related.length > 0 && (
+                  <p className="evidence-note">
+                    Refers to:{" "}
+                    {hit.related.map((r) => r.kind === "section" ? `section ${r.title || r.ref}` :
+                      `${r.ref}${r.file ? ` (${r.file})` : " (not in this knowledge base)"}`).join("; ")}
+                  </p>
+                )}
+                {!hit.procedure && hit.chunk_ids && hit.chunk_ids.length > 1 && (
                   <p className="evidence-note">
                     Chunk {hit.chunk_id} matched; its neighbours from the same section are included (
                     {hit.chunk_ids.length} chunks).

@@ -109,6 +109,12 @@ if (File.Exists(ragFile))
         var typed = retriever.Search(question, qv, new RetrievalOptions { K = 3 });
         Expect(typed.Results.Count == 3 && typed.Results[0].Tag == "S1" && typed.Results[0].File.Length > 0
                && typed.Markdown!.StartsWith("[S1] ") && typed.Reranked is null, "typed search");
+        // structure: the Workbench writes a spot file with every build
+        Expect(retriever.Procedures is not null, "spot file read");
+        var none = retriever.Search(question, qv, new RetrievalOptions { K = 3, Documents = ["no-such-document"] });
+        Expect(none.Results.Count == 0, "document filter");
+        var flat = retriever.Search(question, qv, new RetrievalOptions { K = 3, Procedures = false });
+        Expect(flat.Results.All(r => r.Procedure is null), "procedures off");
         if (kb.TryGetProperty("rerank_url", out var url))
         {
             var ranked = retriever.Search(question, qv, new RetrievalOptions { K = 3, Rerank = new RerankOptions { Url = url.GetString()! } });

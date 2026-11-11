@@ -190,9 +190,12 @@ def ocr_figure(image: Image.Image, *, tables: bool = True) -> FigureText:
     frags = ocr_fragments(big)
     if not frags:
         return FigureText("", 0.0, None)
-    lines = _merge_lines(frags)
+    # unsure reads (glare, engraving, screen blur) are kept for the grid, which re-reads its
+    # cells, but not for the figure's text
+    sure = [f for f in frags if f.conf >= 0.4] or frags
+    lines = _merge_lines(sure)
     text = "\n\n".join(p.text for p in lines_to_paragraphs(lines))
-    conf = sum(f.conf for f in frags) / len(frags)
+    conf = sum(f.conf for f in sure) / len(sure)
     return FigureText(text, conf, grid_table(frags, big) if tables else None)
 
 

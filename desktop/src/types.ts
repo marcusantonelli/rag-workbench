@@ -100,6 +100,10 @@ export interface KbSummary {
   last_build_at: string | null;
   built_with: string | null;
   config_fingerprint: string | null;
+  /** 1 = file and headings in each embedded chunk; 2 = also the document's title, number and revision. */
+  embed_context?: number | null;
+  /** The spot file (structure.spot): procedures, steps and references found in the chunks. */
+  structure?: { present: boolean; current: boolean; built_at?: string; documents?: number; procedures?: number; steps?: number; links?: number; error?: string };
 }
 
 export interface RecentKb {
@@ -175,7 +179,23 @@ export interface SearchHit {
     lines: string | null;
     heading_path: string | null;
     symbol?: string | null;
+    /** From the spot file: the document's number and revision. */
+    document?: string | null;
+    revision?: string | null;
   };
+  /** The hit's procedure, when the knowledge base has a current spot file and the hit is in one. */
+  procedure?: {
+    id: number;
+    kind: "numbered" | "list" | "flowchart";
+    title: string | null;
+    label: string | null;
+    steps: number;
+    from: string | null;
+    to: string | null;
+    whole: boolean;
+  };
+  /** References in the result's text: other steps ("see Section 8.4") and other documents. */
+  related?: { kind: "section" | "document"; ref: string; title?: string | null; file?: string | null }[];
 }
 
 export interface SearchResponse {

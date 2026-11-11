@@ -25,15 +25,9 @@ marker and `.ragpack` extension (read the old names forever), docs, and the GitH
   including odd/even and per-section variants; remove them from scanned pages too.
 - Word text boxes (DrawingML and VML), without reading AlternateContent twice.
 - Forms on scanned pages: label/value pairs and checkbox states from OCR.
-- Procedure retrieval (0.4.1):
-  - Step metadata as real fields: procedure id, step number, document number, revision.
-  - Return the whole procedure, or a window around the matched step (parent/child retrieval).
-  - Filters (document number, latest revision, type) and grouping of hits by procedure.
-  - Cross-document links ("see WI-2210") later.
-  - Compatibility: new columns are optional. 0.4.0 packs and knowledge bases open unchanged and
-    fall back to document + heading path; vectors are never rebuilt for this. An in-place
-    upgrade fills the fields from stored text. 0.4.0 must still open 0.4.1 packs. Test: 0.4.0
-    test packs give the same results under 0.4.1.
+- Procedure retrieval (0.4.1): done (spot file, procedure expansion, document filter, embedding
+  context 2 for new knowledge bases). Still open: grouping by revision ("latest revision only")
+  and the experiments below.
 - Auto-update (0.4.1):
   - Tauri updater plugin; `latest.json` and signed installers on the GitHub releases
     (`releases/latest/download/latest.json`). The repo is public.
@@ -70,3 +64,14 @@ marker and `.ragpack` extension (read the old names forever), docs, and the GitH
 - Windows: install, first-run downloads, both helper models starting, a build and search on a
   Shammy knowledge base while another window searches it, `rag convert` and compaction.
 - Retrieval server: `ShammyRetriever` in the .NET MCP server against `ragpack/1` and `ragpack/2`.
+
+## Experiments after 0.4.x (structure)
+
+Measure first, with a question set from real documents (suggestion #3), on two knowledge bases
+side by side: one built with context 1, one with context 2.
+- Step graphs in the spot file: prerequisites, required tools and specs per step, branch targets
+  from flowcharts, so "what do I need before step 7" is a walk instead of a search.
+- Two-level search: one vector per procedure (the mean of its step vectors, or an embedded
+  summary) to pick the procedure first, then the step.
+- Revisions: link revisions of the same document, prefer the latest, answer "what changed".
+- Step-shaped chunks: chunk boundaries at step boundaries (needs a rebuild).

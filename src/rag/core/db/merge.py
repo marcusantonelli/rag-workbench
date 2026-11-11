@@ -40,6 +40,7 @@ class SourcePlan:
     compatible: bool
     reason: str = ""
     embedding: dict[str, str] = field(default_factory=dict)
+    embed_context: str = "1"          # the header its chunks were embedded with
     documents: int = 0
     add: int = 0
     replace: int = 0
@@ -54,6 +55,18 @@ class SourcePlan:
 
     def to_dict(self) -> dict[str, Any]:
         return {**self.__dict__, "renamed_tables": [list(t) for t in self.renamed_tables]}
+
+
+def refresh_spot(root: Path, emit: ProgressFn | None = None) -> None:
+    """Rebuild a knowledge base's spot file after its chunks changed. Best effort: without a
+    current spot file search simply works as it did before there were spot files."""
+    from rag.core import spot
+
+    try:
+        spot.build(Path(root) / "rag.db")
+    except Exception as exc:  # noqa: BLE001 - structure is an extra; never fail the build or merge over it
+        if emit:
+            emit({"event": "warning", "message": f"{spot.SPOT_NAME} wasn't rebuilt: {exc}"})
 
 
 def _embedding(meta: dict[str, str]) -> dict[str, str]:
@@ -155,12 +168,19 @@ def merge(dest: Path, sources: list[Path], *, on_conflict: str = "newer", keep_c
                     dest_embedding = plan.embedding   # an empty destination takes the first source's
             if store is not None and not dry_run:
                 store.set_meta("last_merge_at", now_iso())
+                if store.get_meta("embed_context") is None:
+                    # a new or empty destination embeds new documents the way its first source did
+                    merged = [p for p in plans if p.compatible]
+                    if merged:
+                        store.set_meta("embed_context", merged[0].embed_context)
                 store.conn.commit()
         finally:
             if store is not None:
                 store.close()
             if tables is not None:
                 tables.close()
+        if ws is not None and not dry_run:
+            refresh_spot(ws.root, emit)
         return {"dest": str(dest), "created": created, "dry_run": dry_run, "on_conflict": on_conflict,
                 "keep_copies": keep_copies, "sources": [p.to_dict() for p in plans],
                 "cancelled": stop()}
@@ -177,7 +197,8 @@ def _merge_one(src_path: Path, root: Path, name: str, store: RagStore | None, ta
     src_tables = TablesStore(root / "tables.db", readonly=True)
     try:
         src_embedding = _embedding(src.meta())
-        plan = SourcePlan(path=str(src_path), name=name, compatible=True, embedding=src_embedding)
+        plan = SourcePlan(path=str(src_path), name=name, compatible=True, embedding=src_embedding,
+                          embed_context=src.get_meta("embed_context") or "1")
         if not src_embedding:
             plan.compatible, plan.reason = False, "it has never been built (no embedding settings)"
         elif dest_embedding and src_embedding != dest_embedding:

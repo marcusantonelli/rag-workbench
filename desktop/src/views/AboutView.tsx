@@ -24,6 +24,32 @@ export function AboutView({ kb }: { kb: KbSummary }) {
   }, [convert?.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const m = kb.manifest;
+  const [spotBusy, setSpotBusy] = useState(false);
+  const st = kb.structure;
+  const rebuildSpot = async () => {
+    setSpotBusy(true);
+    try {
+      const r = await call<KbSummary>("kb.spot", { kb: kb.id });
+      const n = r.structure?.procedures ?? 0;
+      notify({ tone: "success", title: `Structure built: ${n} procedure${n === 1 ? "" : "s"} found` });
+      refreshKb(kb.id);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setSpotBusy(false);
+    }
+  };
+  const structure = (
+    <span key="s" className="fact-with-action">
+      {!st?.present ? "Not built yet" : !st.current ? "Out of date (the chunks changed since it was built)" :
+        `${st.procedures ?? 0} procedures, ${st.steps ?? 0} steps, ${st.links ?? 0} references`}
+      {!kb.building && (
+        <Button kind="ghost" onClick={rebuildSpot} disabled={spotBusy}>
+          {spotBusy ? "Building…" : st?.present && st.current ? "Rebuild" : "Build structure"}
+        </Button>
+      )}
+    </span>
+  );
 
   const rows: [string, React.ReactNode][] = [
     ["Location", <code key="p">{kb.path}</code>],
@@ -36,6 +62,9 @@ export function AboutView({ kb }: { kb: KbSummary }) {
     ["Query instruction", kb.embedding.query_instruction ? <code key="q">{kb.embedding.query_instruction}</code> : "None"],
     ["Last built", kb.last_build_at ? `${when(kb.last_build_at)} (${new Date(kb.last_build_at).toLocaleString()})` : "Not built yet"],
     ["Built with", kb.built_with ? `rag-builder ${kb.built_with}` : ""],
+    ["Embedded text", kb.embed_context === 2 ? "Document name, number and revision, file and headings" :
+      kb.embed_context === 1 ? "File and headings (made before 0.4.1; a new knowledge base also names the document)" : ""],
+    ["Structure", structure],
   ];
   if (m) {
     rows.push(["Pack exported", m.built_at ? new Date(m.built_at).toLocaleString() : ""]);

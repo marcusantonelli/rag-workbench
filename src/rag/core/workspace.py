@@ -154,7 +154,9 @@ class Workspace:
         root.mkdir(parents=True, exist_ok=True)
         cfg_path = root / "config.toml"
         if not cfg_path.exists():
-            cfg = Config().with_overrides(overrides or {})
+            # new knowledge bases name the document in every embedded chunk (context 2); the
+            # default stays 1 so a config written before it existed keeps meaning the same thing
+            cfg = Config().with_overrides({"chunking": {"context": 2}}).with_overrides(overrides or {})
             cfg_path.write_text(render_toml(cfg.data), encoding="utf-8")
         ws = cls(root=root, config=Config.load(cfg_path))
         for d in (ws.cache_dir, ws.assets_dir, ws.library_dir):

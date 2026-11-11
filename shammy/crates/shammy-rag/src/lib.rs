@@ -11,13 +11,14 @@
 
 mod query;
 mod rerank;
+mod spot;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once};
 use std::time::Instant;
 
-use rusqlite::{params_from_iter, Connection, OpenFlags, Row};
+use rusqlite::{params_from_iter, Connection, OpenFlags, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -62,6 +63,7 @@ fn d_k40() -> usize { 40 }
 fn d_rrf() -> f64 { 60.0 }
 fn d_neighbors() -> i64 { 1 }
 fn d_budget() -> i64 { 6000 }
+fn d_proc_tokens() -> i64 { 1500 }
 
 /// One search. Only `query` is required; the defaults are the Workbench's.
 #[derive(Clone, Debug, Deserialize)]
@@ -95,6 +97,18 @@ pub struct Request {
     /// Also return the compact Markdown form an agent reads.
     #[serde(default)]
     pub markdown: bool,
+    /// With a current spot file: answer a hit inside a procedure with its procedure (whole when it
+    /// is at most `procedure_tokens` long, else the hit's step and up to `procedure_window` steps
+    /// on each side that still fit).
+    #[serde(default = "d_true")]
+    pub procedures: bool,
+    #[serde(default = "d_proc_tokens")]
+    pub procedure_tokens: i64,
+    #[serde(default = "d_neighbors")]
+    pub procedure_window: i64,
+    /// Only these documents: a document number ("D02", needs the spot file) or part of the path.
+    #[serde(default)]
+    pub documents: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -106,6 +120,8 @@ pub struct Info {
     pub query_instruction: Option<String>,
     pub chunks: i64,
     pub vectors: i64,
+    /// Procedures in its spot file; None when it has no current spot file.
+    pub procedures: Option<i64>,
 }
 
 enum Vectors {
@@ -116,6 +132,7 @@ enum Vectors {
 /// A knowledge base opened for searching. Safe to share between threads.
 pub struct Retriever {
     conn: Mutex<Connection>,
+    spot: Option<spot::Spot>,
     vectors: Vectors,
     dir: PathBuf,
     dims: usize,
@@ -210,7 +227,8 @@ impl Retriever {
         } else {
             return Err(Error::Store(format!("unknown vector store {backend:?}; this version reads sqlite-vec and shammy")));
         };
-        Ok(Self { conn: Mutex::new(conn), vectors, dir, dims })
+        let spot = spot::Spot::open(&dir, &conn);
+        Ok(Self { conn: Mutex::new(conn), spot, vectors, dir, dims })
     }
 
     pub fn info(&self) -> Result<Info> {
@@ -224,7 +242,8 @@ impl Retriever {
             Vectors::SqliteVec => ("sqlite-vec", conn.query_row("SELECT COUNT(*) FROM chunk_vec", [], |r| r.get(0))?),
         };
         Ok(Info { path: self.dir.display().to_string(), vector_store: store.into(), dims: self.dims,
-                  model: meta("embed_model"), query_instruction: meta("query_instruction"), chunks, vectors })
+                  model: meta("embed_model"), query_instruction: meta("query_instruction"), chunks, vectors,
+                  procedures: self.spot.as_ref().map(|s| s.count("procedures")) })
     }
 
     fn vector_ids(&self, conn: &Connection, vector: &[f32], k: usize, file_type: Option<&str>, threads: usize) -> Result<Vec<i64>> {
@@ -309,6 +328,138 @@ impl Retriever {
         Ok(rows.split_off(lo))
     }
 
+    /// The doc_ids a document filter keeps; None without a filter.
+    fn documents_filter(&self, conn: &Connection, terms: &[String]) -> Result<Option<HashSet<i64>>> {
+        let terms: Vec<&str> = terms.iter().map(|t| t.trim()).filter(|t| !t.is_empty()).collect();
+        if terms.is_empty() {
+            return Ok(None);
+        }
+        let lowered: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+        let mut keep = HashSet::new();
+        let mut stmt = conn.prepare_cached("SELECT doc_id, display_path FROM documents ORDER BY doc_id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<String>>(1)?)))?;
+        for row in rows {
+            let (id, path) = row?;
+            let path = path.unwrap_or_default().to_lowercase();
+            if lowered.iter().any(|t| path.contains(t.as_str())) {
+                keep.insert(id);
+            }
+        }
+        if let Some(spot) = &self.spot {
+            let wanted: HashSet<String> = terms.iter().map(|t| spot::norm_number(t)).collect();
+            for (id, number) in spot.numbers()? {
+                if wanted.contains(&spot::norm_number(&number)) {
+                    keep.insert(id);
+                }
+            }
+        }
+        Ok(Some(keep))
+    }
+
+    /// The hit's procedure: whole when it fits `procedure_tokens`, else the hit's step with up to
+    /// `procedure_window` steps on each side that fit. None when the hit isn't in a procedure or its
+    /// step alone is too long (it is then expanded the usual way).
+    #[allow(clippy::type_complexity)]
+    fn procedure(&self, conn: &Connection, spot: &spot::Spot, req: &Request, cid: i64, included: &HashSet<i64>)
+                 -> Result<Option<(Vec<i64>, HashMap<i64, ChunkRow>, String, Value, (i64, i64, i64))>> {
+        let Some((pid, step)) = spot.member(cid)? else { return Ok(None) };
+        let Some(proc_) = spot.procedure(pid)? else { return Ok(None) };
+        let steps = spot.steps(pid)?;
+        let Some(idx) = steps.iter().position(|s| s.step == step) else { return Ok(None) };
+        let cap = req.procedure_tokens;
+        let (lo, hi, whole) = if proc_.tokens <= cap {
+            (0, steps.len() - 1, true)
+        } else {
+            if steps[idx].tokens > cap {
+                return Ok(None);
+            }
+            let (mut lo, mut hi, mut total) = (idx, idx, steps[idx].tokens);
+            for _ in 0..req.procedure_window.max(0) {
+                let mut grew = false;
+                if hi + 1 < steps.len() && total + steps[hi + 1].tokens <= cap {
+                    hi += 1;
+                    total += steps[hi].tokens;
+                    grew = true;
+                }
+                if lo >= 1 && total + steps[lo - 1].tokens <= cap {
+                    lo -= 1;
+                    total += steps[lo].tokens;
+                    grew = true;
+                }
+                if !grew {
+                    break;
+                }
+            }
+            (lo, hi, false)
+        };
+        let members: Vec<(i64, i64)> = spot.members(pid, steps[lo].step, steps[hi].step)?.into_iter()
+            .filter(|(c, _)| !included.contains(c)).collect();
+        if !members.iter().any(|(c, _)| *c == cid) {
+            return Ok(None);
+        }
+        let ids: Vec<i64> = members.iter().map(|m| m.0).collect();
+        let rows = self.load(conn, &ids)?;
+        let members: Vec<(i64, i64)> = members.into_iter().filter(|(c, _)| rows.contains_key(c)).collect();
+        let mut blocks: Vec<String> = Vec::new();
+        for st in &steps[lo..=hi] {
+            let texts: Vec<&str> = members.iter().filter(|(_, m)| *m == st.step).map(|(c, _)| rows[c].text.as_str()).collect();
+            if texts.is_empty() {
+                continue;
+            }
+            let body = texts.join("\n\n");
+            let header = if proc_.kind == "numbered" {
+                st.title.clone().filter(|t| !t.is_empty()).or_else(|| st.label.clone().filter(|t| !t.is_empty()))
+            } else {
+                None
+            };
+            blocks.push(match header {
+                Some(h) => format!("### {h}\n\n{body}"),
+                None => body,
+            });
+        }
+        let info = json!({"id": pid, "kind": proc_.kind, "title": proc_.title, "label": proc_.label, "steps": proc_.steps,
+                          "from": steps[lo].label, "to": steps[hi].label, "whole": whole});
+        let span: Vec<i64> = members.iter().map(|m| m.0).collect();
+        Ok(Some((span, rows, blocks.join("\n\n"), info, (pid, steps[lo].step, steps[hi].step))))
+    }
+
+    /// References made in a result's chunks, except to steps the result already holds.
+    fn related(&self, conn: &Connection, spot: &spot::Spot, span: &[i64], window: Option<(i64, i64, i64)>) -> Result<Vec<Value>> {
+        let mut out: Vec<Value> = Vec::new();
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        for c in span {
+            for link in spot.links(*c)? {
+                let key = (link.kind.clone(), link.reference.clone());
+                if seen.contains(&key) {
+                    continue;
+                }
+                let item = if link.kind == "section" {
+                    if let (Some((wp, lo, hi)), Some(lp), Some(ls)) = (window, link.proc_id, link.step) {
+                        if lp == wp && lo <= ls && ls <= hi {
+                            continue;
+                        }
+                    }
+                    let title = match (link.proc_id, link.step) {
+                        (Some(p), Some(st)) => spot.step_info(p, st)?
+                            .and_then(|(label, title)| title.filter(|t| !t.is_empty()).or(label)),
+                        _ => None,
+                    };
+                    json!({"kind": "section", "ref": link.reference, "title": title})
+                } else {
+                    let file: Option<String> = match link.doc_id {
+                        Some(d) => conn.query_row("SELECT display_path FROM documents WHERE doc_id = ?", [d], |r| r.get(0))
+                            .optional()?,
+                        None => None,
+                    };
+                    json!({"kind": "document", "ref": link.reference, "file": file})
+                };
+                seen.insert(key);
+                out.push(item);
+            }
+        }
+        Ok(out)
+    }
+
     /// Search with a JSON request (see `Request`) and get the JSON response.
     pub fn search_json(&self, request: &str, vector: &[f32]) -> Result<String> {
         let req: Request = serde_json::from_str(request).map_err(|e| Error::Request(format!("bad search request: {e}")))?;
@@ -323,9 +474,12 @@ impl Retriever {
         let file_type = req.file_type.as_deref().filter(|t| !t.is_empty());
         let mut timings = Map::new();
 
+        let allowed = self.documents_filter(&conn, &req.documents)?;
+        let widen = if allowed.is_some() { 4 } else { 1 };
+
         let t = Instant::now();
-        let vec_ids = self.vector_ids(&conn, vector, req.vec_k, file_type, req.threads)?;
-        let kw_ids = self.keyword_ids(&conn, &req.query, req.fts_k, file_type)?;
+        let vec_ids = self.vector_ids(&conn, vector, req.vec_k * widen, file_type, req.threads)?;
+        let kw_ids = self.keyword_ids(&conn, &req.query, req.fts_k * widen, file_type)?;
         // Reciprocal Rank Fusion; ties keep first-seen order (vector hits first)
         let mut scores: HashMap<i64, f64> = HashMap::new();
         let mut order: Vec<i64> = Vec::new();
@@ -346,7 +500,8 @@ impl Retriever {
         // collapse identical text (boilerplate repeated across files)
         let mut seen: HashSet<&str> = HashSet::new();
         let ordered: Vec<i64> = order.iter().copied()
-            .filter(|cid| rows.get(cid).is_some_and(|r| seen.insert(r.text_hash.as_str()))).collect();
+            .filter(|cid| rows.get(cid).is_some_and(|r| allowed.as_ref().is_none_or(|a| a.contains(&r.doc_id))
+                && seen.insert(r.text_hash.as_str()))).collect();
         timings.insert("search".into(), json!(ms(t)));
 
         let rr = req.rerank.as_ref().filter(|r| r.enabled);
@@ -402,15 +557,27 @@ impl Retriever {
             }
             let mut text = row.text.clone();
             let mut span = vec![*cid];
-            if req.expand && row.kind == "prose" && req.neighbors > 0 {
-                let around: Vec<ChunkRow> = self.neighbors(&conn, row, req.neighbors)?.into_iter()
-                    .filter(|r| !included.contains(&r.chunk_id)).collect();
-                if around.len() > 1 {
-                    text = around.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("\n\n");
-                    span = around.iter().map(|r| r.chunk_id).collect();
+            let mut proc_info = Value::Null;
+            let mut window = None;
+            let found = match (&self.spot, req.expand && req.procedures) {
+                (Some(spot), true) => self.procedure(&conn, spot, req, *cid, &included)?,
+                _ => None,
+            };
+            let tokens = if let Some((s, span_rows, t, info, w)) = found {
+                let tokens = s.iter().map(|c| span_rows[c].n_tokens.unwrap_or(0)).sum::<i64>();
+                (span, text, proc_info, window) = (s, t, info, Some(w));
+                tokens
+            } else {
+                if req.expand && row.kind == "prose" && req.neighbors > 0 {
+                    let around: Vec<ChunkRow> = self.neighbors(&conn, row, req.neighbors)?.into_iter()
+                        .filter(|r| !included.contains(&r.chunk_id)).collect();
+                    if around.len() > 1 {
+                        text = around.iter().map(|r| r.text.as_str()).collect::<Vec<_>>().join("\n\n");
+                        span = around.iter().map(|r| r.chunk_id).collect();
+                    }
                 }
-            }
-            let tokens = row.n_tokens.unwrap_or(0) * if text != row.text { 3 } else { 1 };
+                row.n_tokens.unwrap_or(0) * if text != row.text { 3 } else { 1 }
+            };
             if used > 0 && used + tokens > req.max_result_tokens {
                 break;
             }
@@ -436,6 +603,22 @@ impl Retriever {
             if let Some(s) = rerank_scores.get(cid) {
                 item["rerank_score"] = json!(s);
             }
+            if let Some(spot) = &self.spot {
+                let (number, revision) = spot.document(row.doc_id)?;
+                if let Some(n) = number.filter(|n| !n.is_empty()) {
+                    item["source"]["document"] = json!(n);
+                    if let Some(r) = revision.filter(|r| !r.is_empty()) {
+                        item["source"]["revision"] = json!(r);
+                    }
+                }
+                if !proc_info.is_null() {
+                    item["procedure"] = proc_info;
+                }
+                let related = self.related(&conn, spot, &span, window)?;
+                if !related.is_empty() {
+                    item["related"] = json!(related);
+                }
+            }
             results.push(item);
         }
 
@@ -449,6 +632,33 @@ impl Retriever {
         }
         Ok(out)
     }
+}
+
+fn nonempty(v: &Value) -> Option<String> {
+    v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+/// "8.0 Electrode Replacement: (steps 8.1-8.2 of 4)" for a result's source line.
+fn procedure_note(p: &Value) -> String {
+    let name = nonempty(&p["title"]).or_else(|| nonempty(&p["label"])).unwrap_or_else(|| "procedure".into());
+    let n = p["steps"].as_i64().unwrap_or(0);
+    let from = nonempty(&p["from"]).unwrap_or_else(|| "?".into());
+    let to = nonempty(&p["to"]).unwrap_or_else(|| "?".into());
+    let span = if p["whole"].as_bool().unwrap_or(false) {
+        format!("whole, {n} step{}", if n == 1 { "" } else { "s" })
+    } else if p["from"] == p["to"] {
+        format!("step {from} of {n}")
+    } else {
+        format!("steps {from}-{to} of {n}")
+    };
+    format!("{name} ({span})")
+}
+
+fn related_note(x: &Value) -> String {
+    if x["kind"].as_str() == Some("section") {
+        return format!("section {}", nonempty(&x["title"]).or_else(|| nonempty(&x["ref"])).unwrap_or_default());
+    }
+    nonempty(&x["ref"]).unwrap_or_default() + &nonempty(&x["file"]).map(|f| format!(" ({f})")).unwrap_or_default()
 }
 
 /// The compact form for an agent: a source line per result, then the passage.
@@ -476,9 +686,18 @@ pub fn markdown(response: &Value) -> String {
                 loc.push(v);
             }
         }
+        if let Some(doc) = text(&s["document"]) {
+            loc.insert(0, doc + &text(&s["revision"]).map(|r| format!(" rev {r}")).unwrap_or_default());
+        }
+        if r["procedure"].is_object() {
+            loc.push(procedure_note(&r["procedure"]));
+        }
         let place = if loc.is_empty() { String::new() } else { format!(" · {}", loc.join(" · ")) };
         out.push(format!("[{}] {}{}  (chunk {})", r["tag"].as_str().unwrap_or(""), s["file"].as_str().unwrap_or(""), place, r["chunk_id"]));
         out.push(r["text"].as_str().unwrap_or("").to_string());
+        if let Some(related) = r["related"].as_array().filter(|a| !a.is_empty()) {
+            out.push(format!("Related: {}", related.iter().map(related_note).collect::<Vec<_>>().join("; ")));
+        }
         out.push(String::new());
     }
     let tables = response["tables"].as_array().filter(|t| !t.is_empty());

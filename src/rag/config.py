@@ -79,6 +79,10 @@ DEFAULTS: dict[str, Any] = {
         "row_chunks": True,          # row-group chunks for small text-heavy tables
         "row_chunk_size": 25,
         "row_chunk_max_rows": 200,
+        # What each chunk's embedded text starts with: 1 = file › heading trail; 2 = also a line
+        # naming the document (title, document number, revision). New knowledge bases are made
+        # with 2; one built earlier keeps what it was built with (see embed_context in rag.db).
+        "context": 1,
     },
     "pdf": {
         "min_text_chars": 100,
@@ -120,6 +124,12 @@ DEFAULTS: dict[str, Any] = {
         "keep": 6,               # results returned (no reranker in v1)
         "neighbors": 1,
         "max_result_tokens": 6000,
+        # With a current spot file (structure.spot), a hit inside a procedure comes back with its
+        # procedure: whole when it is at most procedure_tokens long, else the hit's step with up
+        # to procedure_window steps on each side that still fit.
+        "procedures": True,
+        "procedure_tokens": 1500,
+        "procedure_window": 1,
     },
     "rerank": {
         # Optional second pass: a small reranker model reorders the best fused candidates before

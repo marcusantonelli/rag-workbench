@@ -22,6 +22,7 @@ import numpy as np
 
 from rag.core.chunk.identifiers import query_identifiers, split_identifier
 from rag.core.db.store import RagStore
+from rag.core.spot import SpotIndex, norm_number
 
 _STOP = set("""a an and are as at be by can do does for from has have how i if in is it of on or our
 should that the their there these this to was we what when where which who why will with you your""".split())
@@ -70,6 +71,25 @@ def fts_query(query: str) -> str:
     return " OR ".join(seen)
 
 
+def procedure_note(p: dict[str, Any]) -> str:
+    """"8.0 Electrode Replacement: (steps 8.1-8.2 of 4)" for a result's source line."""
+    name = p.get("title") or p.get("label") or "procedure"
+    n = p.get("steps") or 0
+    if p.get("whole"):
+        span = f"whole, {n} step" + ("" if n == 1 else "s")
+    elif p.get("from") == p.get("to"):
+        span = f"step {p.get('from') or '?'} of {n}"
+    else:
+        span = f"steps {p.get('from') or '?'}-{p.get('to') or '?'} of {n}"
+    return f"{name} ({span})"
+
+
+def related_note(x: dict[str, Any]) -> str:
+    if x.get("kind") == "section":
+        return "section " + (x.get("title") or x.get("ref") or "")
+    return (x.get("ref") or "") + (f" ({x['file']})" if x.get("file") else "")
+
+
 @dataclass
 class SearchResult:
     query: str
@@ -109,8 +129,14 @@ class SearchResult:
                 loc.append(s["heading_path"])
             if s.get("symbol"):
                 loc.append(s["symbol"])
+            if s.get("document"):
+                loc.insert(0, s["document"] + (f" rev {s['revision']}" if s.get("revision") else ""))
+            if r.get("procedure"):
+                loc.append(procedure_note(r["procedure"]))
             out.append(f"[{r['tag']}] {s['file']}" + (" · " + " · ".join(loc) if loc else "") + f"  (chunk {r['chunk_id']})")
             out.append(r["text"])
+            if r.get("related"):
+                out.append("Related: " + "; ".join(related_note(x) for x in r["related"]))
             out.append("")
         if self.tables:
             out.append("Tables that may answer this (use describe_table / query_table):")
@@ -204,7 +230,8 @@ class Searcher:
         return [dict(r) for r in rows[lo:hi + 1]]
 
     def search(self, query: str, *, k: int | None = None, file_type: str | None = None,
-               expand: bool = True) -> SearchResult:
+               expand: bool = True, documents: list[str] | None = None) -> SearchResult:
+        """``documents``: only these documents, by document number ("D02") or part of the path."""
         s = self.cfg
         k = int(k or s["keep"])
         timings: dict[str, float] = {}
@@ -217,23 +244,134 @@ class Searcher:
             out = retriever.search(
                 query, qvec, k=k, file_type=file_type or None, expand=expand, vec_k=int(s["vec_k"]),
                 fts_k=int(s["fts_k"]), rrf_k=float(s["rrf_k"]), neighbors=int(s.get("neighbors", 0)),
-                max_result_tokens=int(s.get("max_result_tokens", 6000)), markdown=True, rerank=self.reranker)
+                max_result_tokens=int(s.get("max_result_tokens", 6000)), markdown=True, rerank=self.reranker,
+                procedures=bool(s.get("procedures", True)), procedure_tokens=int(s.get("procedure_tokens", 1500)),
+                procedure_window=int(s.get("procedure_window", 1)), documents=list(documents or []))
             return SearchResult(
                 query=query, results=out["results"], tables=out["tables"], timings_ms={**timings, **out["timings_ms"]},
                 candidates=out["candidates"], ranks={int(c): r for c, r in out["ranks"].items()},
                 rerank=out.get("rerank"), markdown=out.get("markdown"), engine="native")
         if self.reranker:
             return self._reference_search(query, qvec, k, file_type, expand, timings, note={
-                "applied": False, "error": "reranking needs the shared search engine (the shammy module), which isn't installed"})
-        return self._reference_search(query, qvec, k, file_type, expand, timings)
+                "applied": False, "error": "reranking needs the shared search engine (the shammy module), which isn't installed"},
+                documents=documents)
+        return self._reference_search(query, qvec, k, file_type, expand, timings, documents=documents)
 
     def _reference_search(self, query: str, qvec, k: int, file_type: str | None, expand: bool,
-                          timings: dict[str, float], note: dict[str, Any] | None = None) -> SearchResult:
+                          timings: dict[str, float], note: dict[str, Any] | None = None,
+                          documents: list[str] | None = None) -> SearchResult:
         s = self.cfg
+        spot = SpotIndex.open(self.store.path.parent, self.store.conn)
+        try:
+            return self._reference_core(query, qvec, k, file_type, expand, timings, note, documents, spot)
+        finally:
+            if spot is not None:
+                spot.close()
+
+    def _documents(self, spot: SpotIndex | None, terms: list[str] | None) -> set[int] | None:
+        """The doc_ids a document filter keeps (None: no filter)."""
+        terms = [t.strip() for t in (terms or []) if t and t.strip()]
+        if not terms:
+            return None
+        keep: set[int] = set()
+        lowered = [t.lower() for t in terms]
+        for doc_id, path in self.store.conn.execute("SELECT doc_id, display_path FROM documents ORDER BY doc_id"):
+            if any(t in (path or "").lower() for t in lowered):
+                keep.add(doc_id)
+        if spot is not None:
+            wanted = {norm_number(t) for t in terms}
+            keep.update(doc_id for doc_id, number in spot.numbers() if norm_number(number) in wanted)
+        return keep
+
+    def _procedure(self, spot: SpotIndex, cid: int, included: set[int]):
+        """The hit's procedure, whole when it fits procedure_tokens, else its step with up to
+        procedure_window steps on each side that fit. None when the hit isn't in a procedure or its
+        step alone is too long (then it is expanded the usual way)."""
+        s = self.cfg
+        found = spot.member(cid)
+        if found is None:
+            return None
+        pid, step = found
+        proc = spot.procedure(pid)
+        steps = spot.steps(pid)
+        idx = next((i for i, st in enumerate(steps) if st["step"] == step), None)
+        if proc is None or idx is None:
+            return None
+        cap = int(s.get("procedure_tokens", 1500))
+        if proc["tokens"] <= cap:
+            lo, hi, whole = 0, len(steps) - 1, True
+        else:
+            if steps[idx]["tokens"] > cap:
+                return None
+            lo = hi = idx
+            total = steps[idx]["tokens"]
+            whole = False
+            for _ in range(max(0, int(s.get("procedure_window", 1)))):
+                grew = False
+                if hi + 1 < len(steps) and total + steps[hi + 1]["tokens"] <= cap:
+                    hi += 1
+                    total += steps[hi]["tokens"]
+                    grew = True
+                if lo - 1 >= 0 and total + steps[lo - 1]["tokens"] <= cap:
+                    lo -= 1
+                    total += steps[lo]["tokens"]
+                    grew = True
+                if not grew:
+                    break
+        members = [(c, st) for c, st in spot.members(pid, steps[lo]["step"], steps[hi]["step"]) if c not in included]
+        if cid not in {c for c, _ in members}:
+            return None
+        rows = self._load([c for c, _ in members])
+        members = [(c, st) for c, st in members if c in rows]
+        titles = {st["step"]: st["title"] or st["label"] for st in steps}
+        blocks: list[str] = []
+        for st in [x["step"] for x in steps[lo:hi + 1]]:
+            texts = [rows[c]["text"] for c, m in members if m == st]
+            if not texts:
+                continue
+            body = "\n\n".join(texts)
+            header = titles.get(st) if proc["kind"] == "numbered" else None
+            blocks.append(f"### {header}\n\n{body}" if header else body)
+        info: dict[str, Any] = {"id": pid, "kind": proc["kind"], "title": proc["title"], "label": proc["label"],
+                                "steps": proc["steps"], "from": steps[lo]["label"], "to": steps[hi]["label"], "whole": whole}
+        return [c for c, _ in members], rows, "\n\n".join(blocks), info, (pid, steps[lo]["step"], steps[hi]["step"])
+
+    def _related(self, spot: SpotIndex, span: list[int], window: tuple[int, int, int] | None) -> list[dict[str, Any]]:
+        """References made in a result's chunks ("see Section 8.4", "see MF164"), except to steps
+        the result already holds."""
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for c in span:
+            for link in spot.links(c):
+                key = (link["kind"], link["ref"])
+                if key in seen:
+                    continue
+                if link["kind"] == "section":
+                    if window and link["proc_id"] == window[0] and window[1] <= link["step"] <= window[2]:
+                        continue
+                    info = spot.step_info(link["proc_id"], link["step"])
+                    item = {"kind": "section", "ref": link["ref"], "title": (info[1] or info[0]) if info else None}
+                else:
+                    path = None
+                    if link["doc_id"] is not None:
+                        row = self.store.conn.execute("SELECT display_path FROM documents WHERE doc_id = ?",
+                                                      (link["doc_id"],)).fetchone()
+                        path = row[0] if row else None
+                    item = {"kind": "document", "ref": link["ref"], "file": path}
+                seen.add(key)
+                out.append(item)
+        return out
+
+    def _reference_core(self, query: str, qvec, k: int, file_type: str | None, expand: bool,
+                        timings: dict[str, float], note: dict[str, Any] | None, documents: list[str] | None,
+                        spot: SpotIndex | None) -> SearchResult:
+        s = self.cfg
+        allowed = self._documents(spot, documents)
+        widen = 4 if allowed is not None else 1
 
         t1 = time.perf_counter()
-        vec_ids = self._vector(qvec, int(s["vec_k"]), file_type)
-        kw_ids = self._keyword(query, int(s["fts_k"]), file_type)
+        vec_ids = self._vector(qvec, int(s["vec_k"]) * widen, file_type)
+        kw_ids = self._keyword(query, int(s["fts_k"]) * widen, file_type)
         rrf_k = float(s["rrf_k"])
         scores: dict[int, float] = {}
         for ranked in (vec_ids, kw_ids):
@@ -241,7 +379,7 @@ class Searcher:
                 scores[cid] = scores.get(cid, 0.0) + 1.0 / (rrf_k + rank)
         fused = sorted(scores, key=lambda c: scores[c], reverse=True)
         rows = self._load(fused)
-        fused = [c for c in fused if c in rows]
+        fused = [c for c in fused if c in rows and (allowed is None or rows[c]["doc_id"] in allowed)]
         # Collapse identical text (boilerplate repeated across files).
         seen_hash: set[str] = set()
         ordered: list[int] = []
@@ -284,12 +422,20 @@ class Searcher:
                 continue
             text = row["text"]
             span = [cid]
-            if expand and row["kind"] == "prose" and int(s.get("neighbors", 0)) > 0:
-                around = [r for r in self.neighbors(cid, int(s["neighbors"])) if r["chunk_id"] not in included]
-                if len(around) > 1:
-                    text = "\n\n".join(r["text"] for r in around)
-                    span = [r["chunk_id"] for r in around]
-            tokens = int(row["n_tokens"] or 0) * (3 if text != row["text"] else 1)
+            proc_info = None
+            window = None
+            found = (self._procedure(spot, cid, included)
+                     if expand and spot is not None and s.get("procedures", True) else None)
+            if found is not None:
+                span, span_rows, text, proc_info, window = found
+                tokens = sum(int(span_rows[c]["n_tokens"] or 0) for c in span)
+            else:
+                if expand and row["kind"] == "prose" and int(s.get("neighbors", 0)) > 0:
+                    around = [r for r in self.neighbors(cid, int(s["neighbors"])) if r["chunk_id"] not in included]
+                    if len(around) > 1:
+                        text = "\n\n".join(r["text"] for r in around)
+                        span = [r["chunk_id"] for r in around]
+                tokens = int(row["n_tokens"] or 0) * (3 if text != row["text"] else 1)
             if used and used + tokens > budget:
                 break
             used += tokens
@@ -298,6 +444,17 @@ class Searcher:
             item = self._format(row, cid, text, f"S{tag}", scores[cid])
             if len(span) > 1:
                 item["chunk_ids"] = span
+            if spot is not None:
+                number, revision = spot.document(row["doc_id"])
+                if number:
+                    item["source"]["document"] = number
+                    if revision:
+                        item["source"]["revision"] = revision
+                if proc_info is not None:
+                    item["procedure"] = proc_info
+                related = self._related(spot, span, window)
+                if related:
+                    item["related"] = related
             result.results.append(item)
         return result
 

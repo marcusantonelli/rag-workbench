@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from rag.core.chunk.breakpoints import split_sentences, topic_segments
 from rag.core.chunk.identifiers import identifier_terms
+from rag.core.structure import heading_number, identity, is_prefix
 from rag.core.types import Block, Chunk, ExtractedDoc
 from rag.core.util import markdown_table, normalize_for_hash, sha256_text
 
@@ -31,6 +32,10 @@ class ChunkSettings:
     topic_shift_percentile: float = 95
     code_max_tokens: int = 800
     table_chunk_max_rows: int = 1000     # larger tables stored in tables.db get a preview chunk only
+    # What each chunk's embedded text starts with. 1: file › heading trail. 2: also a line naming
+    # the document (title, document number, revision). Fixed per knowledge base when it is first
+    # built (meta embed_context), since vectors made with different headers don't mix.
+    context: int = 1
 
     @classmethod
     def from_config(cls, c: dict[str, Any]) -> "ChunkSettings":
@@ -47,8 +52,10 @@ def _header(display_path: str, heading_path: str | None, symbol: str | None) -> 
     return " › ".join(parts)
 
 
-def finalize(chunk: Chunk, display_path: str, count: Callable[[str], int]) -> Chunk:
+def finalize(chunk: Chunk, display_path: str, count: Callable[[str], int], doc_line: str | None = None) -> Chunk:
     header = _header(display_path, chunk.heading_path, chunk.symbol if chunk.kind in ("code", "sql") else None)
+    if doc_line:
+        header = f"{doc_line}\n{header}"
     body = chunk.text
     extra = ""
     if chunk.kind in ("code", "sql"):
@@ -275,12 +282,12 @@ class Chunker:
 
     # -- driver -----------------------------------------------------------------------------
     def chunk(self, doc: ExtractedDoc, display_path: str) -> list[Chunk]:
-        stack: list[tuple[int, str]] = []
+        stack: list[tuple[int, str, tuple[int, ...] | None]] = []
         section: list[Block] = []
         chunks: list[Chunk] = []
 
         def path() -> str | None:
-            return " › ".join(t for _, t in stack) or None
+            return " › ".join(t for _, t, _ in stack) or None
 
         figures: list[Block] = []     # pictures met inside the section being collected
 
@@ -305,9 +312,26 @@ class Chunker:
             if block.kind == "heading":
                 flush()
                 level = max(1, block.level or 1)
-                while stack and stack[-1][0] >= level:
-                    stack.pop()
-                stack.append((level, block.text.strip()))
+                title = block.text.strip()
+                number = heading_number(title)
+                if number is not None and any(n is not None for _, _, n in stack):
+                    # A numbered heading goes under the heading whose number it extends, whatever
+                    # level the file gave it: "8.1" after "7.0 › 7.8" belongs under "8.0", not 7.0.
+                    keep = 0
+                    for j, (_, _, n) in enumerate(stack):
+                        if n is not None:
+                            if not is_prefix(n, number):
+                                break
+                            keep = j + 1
+                        elif keep == j:
+                            keep = j + 1      # unnumbered headings above the numbering stay
+                    del stack[keep:]
+                    if stack:
+                        level = max(level, stack[-1][0] + 1)
+                else:
+                    while stack and stack[-1][0] >= level:
+                        stack.pop()
+                stack.append((level, title, number))
                 continue
             if block.kind in ("paragraph", "note"):
                 section.append(block)
@@ -332,8 +356,12 @@ class Chunker:
 
         # A document that is only headings (e.g. a title page) still gets one chunk.
         if not chunks and stack:
-            chunks.append(Chunk(kind="prose", text=" / ".join(t for _, t in stack), embed_text=""))
-        return [finalize(c, display_path, self.count) for c in chunks]
+            chunks.append(Chunk(kind="prose", text=" / ".join(t for _, t, _ in stack), embed_text=""))
+        doc_line = None
+        if self.s.context >= 2:
+            first = [b.text for b in doc.blocks[:8]]
+            doc_line = identity(doc.title, first, display_path).line()
+        return [finalize(c, display_path, self.count, doc_line) for c in chunks]
 
 
 def card_chunk(card: str, table_name: str, display_path: str, sheet: str | None, cell_range: str | None,

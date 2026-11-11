@@ -44,11 +44,39 @@ public sealed class RetrievalOptions
 
     /// <summary>Rerank the fused candidates with a model. Null means no reranking.</summary>
     public RerankOptions? Rerank { get; init; }
+
+    /// <summary>With a spot file (structure.spot): a hit inside a procedure brings its procedure (default true).</summary>
+    public bool? Procedures { get; init; }
+
+    /// <summary>A procedure up to this many tokens comes whole; a longer one as the hit's step and the steps around it (default 1500).</summary>
+    public int? ProcedureTokens { get; init; }
+
+    /// <summary>Steps on each side of the hit's step, when they fit (default 1).</summary>
+    public int? ProcedureWindow { get; init; }
+
+    /// <summary>Only these documents: document numbers ("D02", needs the spot file) or parts of file paths.</summary>
+    public IReadOnlyList<string>? Documents { get; init; }
 }
+
+/// <summary>The procedure a result belongs to (from the spot file).</summary>
+public sealed record RetrievalProcedure(long Id, string Kind, string? Title, string? Label, int Steps, string? From, string? To, bool Whole);
+
+/// <summary>A reference in a result's text: another step ("section") or another document ("document"; File is null when it isn't in the knowledge base).</summary>
+public sealed record RetrievalReference(string Kind, string Ref, string? Title, string? File);
 
 public sealed record RetrievalHit(string Tag, long ChunkId, string Kind, double Score, double? RerankScore, string Text,
                                   string File, string FileType, int? Page, int? PageEnd, string? Sheet, string? Range,
-                                  string? Lines, string? HeadingPath, string? Symbol, string? TableName, string? AssetPath);
+                                  string? Lines, string? HeadingPath, string? Symbol, string? TableName, string? AssetPath)
+{
+    /// <summary>The document's number and revision, from the spot file.</summary>
+    public string? Document { get; init; }
+    public string? Revision { get; init; }
+
+    /// <summary>The procedure this result was expanded to, when it is in one.</summary>
+    public RetrievalProcedure? Procedure { get; init; }
+
+    public IReadOnlyList<RetrievalReference> Related { get; init; } = [];
+}
 
 public sealed record RetrievalTable(string TableName, long ChunkId, double Score, string Summary, string Card);
 
@@ -107,7 +135,11 @@ public sealed class ShammyRetriever : IDisposable
         Model = root.GetProperty("model").GetString();
         QueryInstruction = root.GetProperty("query_instruction").GetString();
         Chunks = root.GetProperty("chunks").GetInt64();
+        Procedures = root.TryGetProperty("procedures", out var pr) && pr.ValueKind == JsonValueKind.Number ? pr.GetInt64() : null;
     }
+
+    /// <summary>Procedures in the knowledge base's spot file; null when it has no current one (results then carry no structure).</summary>
+    public long? Procedures { get; }
 
     /// <summary>Open the folder that holds <c>rag.db</c> (a workspace, or a pack after unpacking).</summary>
     public static ShammyRetriever Open(string folder)
@@ -140,6 +172,10 @@ public sealed class ShammyRetriever : IDisposable
         Set("neighbors", options.Neighbors);
         Set("max_result_tokens", options.MaxResultTokens);
         Set("threads", options.Threads);
+        Set("procedures", options.Procedures);
+        Set("procedure_tokens", options.ProcedureTokens);
+        Set("procedure_window", options.ProcedureWindow);
+        if (options.Documents is { Count: > 0 } docs) request["documents"] = docs;
         if (options.Rerank is { } r)
         {
             var rerank = new Dictionary<string, object?> { ["enabled"] = r.Enabled, ["url"] = r.Url, ["model"] = r.Model };
@@ -162,11 +198,23 @@ public sealed class ShammyRetriever : IDisposable
         foreach (var h in root.GetProperty("results").EnumerateArray())
         {
             var s = h.GetProperty("source");
+            RetrievalProcedure? procedure = null;
+            if (h.TryGetProperty("procedure", out var p) && p.ValueKind == JsonValueKind.Object)
+                procedure = new RetrievalProcedure(p.GetProperty("id").GetInt64(), Str(p, "kind") ?? "", Str(p, "title"), Str(p, "label"),
+                                                   Int(p, "steps") ?? 0, Str(p, "from"), Str(p, "to"),
+                                                   p.TryGetProperty("whole", out var w) && w.ValueKind == JsonValueKind.True);
+            var related = new List<RetrievalReference>();
+            if (h.TryGetProperty("related", out var rel) && rel.ValueKind == JsonValueKind.Array)
+                foreach (var x in rel.EnumerateArray())
+                    related.Add(new RetrievalReference(Str(x, "kind") ?? "", Str(x, "ref") ?? "", Str(x, "title"), Str(x, "file")));
             hits.Add(new RetrievalHit(Str(h, "tag") ?? "", h.GetProperty("chunk_id").GetInt64(), Str(h, "kind") ?? "",
                                       Num(h, "score") ?? 0, Num(h, "rerank_score"), Str(h, "text") ?? "", Str(s, "file") ?? "",
                                       Str(s, "file_type") ?? "", Int(s, "page"), Int(s, "page_end"), Str(s, "sheet"),
                                       Str(s, "range"), Str(s, "lines"), Str(s, "heading_path"), Str(s, "symbol"),
-                                      Str(s, "table_name"), Str(s, "asset_path")));
+                                      Str(s, "table_name"), Str(s, "asset_path"))
+            {
+                Document = Str(s, "document"), Revision = Str(s, "revision"), Procedure = procedure, Related = related,
+            });
         }
         var tables = new List<RetrievalTable>();
         foreach (var t in root.GetProperty("tables").EnumerateArray())

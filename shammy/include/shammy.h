@@ -108,12 +108,21 @@ int32_t shammy_verify(const char *path, ShammyReport *out);
  *    "max_result_tokens": 6000, "threads": 0,
  *    "markdown": true,                             also return the compact text form for an agent
  *    "rerank": {"enabled": true, "url": "http://127.0.0.1:8082", "model": "", "candidates": 20,
- *               "timeout_ms": 15000}}              rerank through a /v1/rerank endpoint
+ *               "timeout_ms": 15000},              rerank through a /v1/rerank endpoint
+ *    "procedures": true,                           with a spot file: a hit in a procedure brings it,
+ *    "procedure_tokens": 1500,                       whole when this short, else the hit's step and
+ *    "procedure_window": 1,                          up to this many steps each side that fit
+ *    "documents": ["D02", "WI-2210"]}              only these documents (number or part of the path)
  *
  * The response is a JSON object: "results" (tag, chunk_id, kind, score, text, source{...},
  * rerank_score when reranked), "tables" (table cards that ranked), "candidates", "ranks",
  * "timings_ms", "rerank" ({"applied": true|false, "error": ...}) and "markdown" when asked for.
  * If the reranker can't be reached the search still succeeds in fused order and says so there.
+ *
+ * Structure (from 0.4.1): when the folder holds a structure.spot that matches its rag.db, results
+ * also carry source.document / source.revision, "procedure" ({id, kind, title, label, steps, from,
+ * to, whole}) for a hit inside a procedure, and "related" (references to other steps and
+ * documents). Without one (any older pack), results are exactly as before.
  */
 typedef struct ShammyRetriever ShammyRetriever;
 

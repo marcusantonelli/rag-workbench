@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import unicodedata
 import io
 import json
 import urllib.error
@@ -120,6 +121,27 @@ def readable(text: str, conf: float | None) -> bool:
     return len(solid) >= 6 or (len(solid) >= 2 and (conf or 0) >= 0.85)
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", unicodedata.normalize("NFKC", text).lower())
+
+
+def confirmed_text(ocr: str, description: str) -> str:
+    """The lines of a picture's OCR text that its description confirms. OCR reads glyph by glyph
+    and invents words on glare, engraving and small screen text ("Hot Sutace", "TaskMunage"); the
+    vision model reads the picture as a whole and copies its labels. A line is kept when most of
+    its words are also in the description, so what remains is text both readers saw."""
+    said = set(_words(description))
+    keep: list[str] = []
+    for para in ocr.split("\n\n"):
+        for line in para.split("\n"):
+            words = [w for w in _words(line) if len(w) >= 2 or w.isdigit()]
+            if not words:
+                continue
+            if sum(1 for w in words if w in said) >= max(1, -(-len(words) * 3 // 5)):
+                keep.append(line.strip())
+    return "\n\n".join(keep)
+
+
 def make_figure_block(
     img: Image.Image,
     ctx: ExtractContext,
@@ -157,6 +179,8 @@ def make_figure_block(
         ocr = ""          # glare, engraving and screen blur read as noise; noise only hurts search
     if ocr and labels and re.sub(r"\W", "", ocr).lower() in re.sub(r"\W", "", " ".join(labels)).lower():
         ocr = ""          # the same words as the labels
+    if ocr and description:
+        ocr = confirmed_text(ocr, description)
     if ocr:
         parts.append("Text in figure: " + ocr.replace("\n\n", " / "))
     if description:

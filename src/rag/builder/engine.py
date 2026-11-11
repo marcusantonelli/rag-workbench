@@ -24,6 +24,8 @@ from typing import Any, Callable
 import numpy as np
 
 from rag import __version__
+from rag.core import spot
+from rag.core.db.merge import refresh_spot
 from rag.core.chunk.chunker import ChunkSettings, Chunker, card_chunk, row_chunks
 from rag.core.chunk.tokens import TokenCounter
 from rag.core.db.store import DocRecord, RagStore, now_iso
@@ -147,7 +149,9 @@ class Builder:
                 self.emit("skipped", reason=s)
             stats.skipped = len(skipped)
             self.emit("start", files=len(files), workspace=str(self.ws.root))
-            chunker = Chunker(ChunkSettings.from_config(self.cfg["chunking"]), self.count, self.embedder)
+            settings = ChunkSettings.from_config(self.cfg["chunking"])
+            settings.context = self._embed_context(store, settings.context)
+            chunker = Chunker(settings, self.count, self.embedder)
 
             for i, sf in enumerate(files, start=1):
                 if self.should_stop():
@@ -171,10 +175,32 @@ class Builder:
         finally:
             store.close()
             tables.close()
+        if stats.added or stats.updated or stats.removed or not spot.status(self.ws.root)["current"]:
+            refresh_spot(self.ws.root, lambda e: self.emit(e.pop("event"), **e))
         stats.seconds = round(time.monotonic() - started, 2)
         self.emit("done", **{k: v for k, v in stats.__dict__.items() if k != "errors"},
                   errors=len(stats.errors))
         return stats
+
+    def _embed_context(self, store: RagStore, wanted: int) -> int:
+        """The embedded-text header this knowledge base uses. It is fixed when the first document is
+        built: vectors made with different headers don't mix, so a knowledge base built before
+        context 2 existed keeps context 1 (its vectors stay valid) until it is rebuilt from scratch."""
+        recorded = store.get_meta("embed_context")
+        if recorded is None:
+            has_chunks = store.conn.execute("SELECT 1 FROM chunks LIMIT 1").fetchone() is not None
+            recorded = "1" if has_chunks else str(wanted)
+            store.set_meta("embed_context", recorded)
+            store.conn.commit()
+        try:
+            current = int(recorded)
+        except ValueError:
+            current = 1
+        if current != wanted:
+            self.emit("warning", message=(
+                f"this knowledge base embeds with context {current}, the config asks for {wanted}; "
+                "the recorded one is kept so its vectors stay comparable (a full rebuild switches)"))
+        return current
 
     # ------------------------------------------------------------------------------
     def _process(self, sf: SourceFile, index: int, total: int, store: RagStore, tables: TablesStore,
@@ -352,4 +378,6 @@ class Builder:
         finally:
             store.close()
             tables.close()
+        if removed:
+            refresh_spot(self.ws.root, lambda e: self.emit(e.pop("event"), **e))
         return removed

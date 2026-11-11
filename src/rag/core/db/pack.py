@@ -69,6 +69,16 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
             (tmp_dir / "tables.db", "tables.db"),
             (ws.config_path, "config.toml"),
         ]
+        # the structure (procedures and steps), made fresh for exactly the chunks in this pack;
+        # readers that don't know spot files ignore it
+        structure = None
+        try:
+            from rag.core import spot
+
+            structure = spot.build(tmp_dir / "rag.db", tmp_dir / spot.SPOT_NAME)
+            entries.append((tmp_dir / spot.SPOT_NAME, spot.SPOT_NAME))
+        except Exception:  # noqa: BLE001 - a pack without structure still searches as before
+            structure = None
         if backend == "shammy":
             from rag.core.db.vectors import SHAMMY_FILE, shammy_module
 
@@ -104,6 +114,7 @@ def export_pack(ws, out_path: Path, *, include_originals: bool = False, name: st
                 "tables": n_tables,
                 "chunks_by_kind": counts["chunks_by_kind"],
             },
+            "structure": structure,
             "includes_originals": include_originals,
             "files": {arc: sha256_file(src) for src, arc in entries},
         }

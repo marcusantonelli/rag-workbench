@@ -561,3 +561,9 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 /* Search: reranker address beside its switch */
 .rerank-url { display: inline-flex; align-items: center; gap: 6px; }
 .rerank-url input { width: 190px; padding: 3px 8px; font-size: 12px; }
+
+/* Search: the "only documents" filter sits beside the question, smaller */
+.search-bar input.doc-filter { flex: 0 1 230px; font-size: 13px; padding-left: 10px; border-left: 1px solid var(--rule); }
+@media (max-width: 720px) { .search-bar input.doc-filter { flex-basis: 140px; } }
+/* Details: a fact with a button beside it */
+.fact-with-action { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
