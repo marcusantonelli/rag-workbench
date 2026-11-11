@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from rag.core.ingest.context import ExtractContext
+from rag.core.ingest.grids import grid_blocks as _table_blocks   # the table rules Word shares
 from rag.core.types import Block, ExtractedDoc
 from rag.core.util import long_path, markdown_table, printable_ratio
 
@@ -953,69 +954,6 @@ def _assemble(pages: list[_PageItems], pdoc, ctx: ExtractContext, warnings: list
 
     blocks = _merge_continued_tables(blocks)
     return _drop_repeated_figures(blocks, len(pages), int(cfg["furniture_min_pages"]))
-
-
-_FORM_CELL_RE = re.compile(r"[:#]")
-
-
-def _table_blocks(rows: list[list[str]], page: int | None, caption: str | None) -> list[Block]:
-    from rag.core.ingest.forms import form_lines
-
-    """A ruled grid as blocks. Most are one table. A title block (a row of "Label: value" cells,
-    then a one-cell row naming what follows, then a real table) comes out as lines of text and a
-    captioned table, which is what it is."""
-    out: list[Block] = []
-    segment: list[list[str]] = []
-    pending = caption
-    titled = False          # the caption is the table's own first row
-
-    def flush() -> None:
-        nonlocal pending
-        if not segment:
-            return
-        first = segment[0]
-        filled = [c for c in first if c]
-        form = len(first) >= 2 and len(filled) <= len(first) / 2 and any(_FORM_CELL_RE.search(c) for c in filled)
-        pairs = form_lines(segment) if len(segment) > 1 or form else None
-        boxes_only = not any(sum(1 for c in r if c) >= 2 for r in segment)
-        if form or len(segment) == 1 or pairs is not None or boxes_only:
-            lines = pairs if pairs is not None else [c for r in segment for c in r if c]
-            text = "\n".join(([pending] if pending else []) + lines)
-            out.append(Block(kind="paragraph", text=text, page=page, meta={"form": pairs is not None}))
-        else:
-            # each part of the grid on its own: boxes inside cells split columns per table
-            from rag.core.ingest.layout_table import clean_rows, tidy_grid
-
-            tidy = clean_rows(tidy_grid([list(r) for r in segment]))
-            headers, data = tidy[0], tidy[1:]
-            text = (f"**{pending}**\n\n" if pending else "") + markdown_table(headers, data)
-            out.append(Block(kind="table", text=text, page=page,
-                             meta={"headers": headers, "rows": data, "caption": pending, "title_row": titled and not out}))
-        pending = None
-        segment.clear()
-
-    width = max(len(r) for r in rows)
-    for n, r in enumerate(rows):
-        filled = [c for c in r if c]
-        # a one-cell row names the part that follows; at the top, it is the table's title
-        title_row = (len(filled) == 1 and len(filled[0].split()) <= 12 and width >= 2 and n + 1 < len(rows)
-                     and sum(1 for c in rows[n + 1] if c) >= 2)
-        if not segment and title_row and pending is None:
-            pending = filled[0]
-            titled = True
-            continue
-        if width >= 3 and len(filled) == 1 and len(filled[0].split()) <= 8 and segment:
-            flush()                       # a one-cell row: the name of the part that follows
-            pending = filled[0]
-            continue
-        if segment:
-            first = segment[0]
-            first_form = len([c for c in first if c]) <= len(first) / 2 and any(_FORM_CELL_RE.search(c) for c in first if c)
-            if first_form and len(filled) > len(r) / 2:
-                flush()                   # label cells above, a full row below: a table starts here
-        segment.append(r)
-    flush()
-    return out
 
 
 def _caption_near(blocks: list[Block], events, idx: int, consumed: set[int]) -> str | None:

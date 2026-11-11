@@ -121,13 +121,19 @@ def _cell_text(cell) -> str:
 
 
 def _table_rows(table) -> list[list[str]]:
-    """Rows of cell text. A merged cell repeats in every column it spans, so columns
-    stay aligned (python-docx returns the same cell for each spanned position)."""
+    """Rows of cell text. A merged cell repeats in every column it spans, so columns stay aligned
+    (python-docx returns the same cell for each spanned position), except a cell merged across
+    the whole row (a title or a part name inside the table), which keeps its text in the first
+    column only, as a PDF's spanning cell does."""
     rows: list[list[str]] = []
     for row in table.rows:
         cells = [_cell_text(cell) for cell in row.cells]
-        if any(cells):
-            rows.append(cells)
+        if not any(cells):
+            continue
+        tcs = [cell._tc for cell in row.cells]
+        if len(cells) > 1 and all(tc is tcs[0] for tc in tcs):
+            cells = [cells[0]] + [""] * (len(cells) - 1)
+        rows.append(cells)
     return rows
 
 
@@ -155,15 +161,52 @@ def extract_docx(path: Path, ctx: ExtractContext, *, file_type: str = "docx") ->
 
     from rag.core.ingest.figures import make_figure_block
 
+    from rag.core.ingest import docx_shapes as shapes
+    from rag.core.ingest.figures import make_diagram_block
+    from rag.core.ingest.grids import grid_blocks
+    from rag.core.ingest.layout_table import drop_blank_rows
+
     document = docx.Document(long_path(path))
     blocks: list[Block] = []
     figure_index = 0
     min_px = 64
     has_title = False
+    last_level = 0
 
-    from rag.core.ingest.forms import form_lines
+    elements = list(_block_elements(document.element.body))
+    # Shapes first: a flowchart is often drawn as separate floating shapes anchored to several
+    # paragraphs, so the single shapes of each section (between headings) are tried together.
+    drawings: dict[int, list] = {}
+    loose: dict[int, list[list]] = {}              # section -> [(element index, shape), ...]
+    section = 0
+    for i, el in enumerate(elements):
+        if el.tag != f"{_W}p":
+            continue
+        style = Paragraph(el, document).style
+        if _style_level(style.name if style is not None else "") and _para_text(el).strip():
+            section += 1
+        found = shapes.read_drawings(el, i, _para_text)
+        if found:
+            drawings[i] = found
+            for d in found:
+                if len(d.shapes) == 1:
+                    loose.setdefault(section, []).append((i, d.shapes[0]))
+    together: dict[int, object] = {}               # element index -> diagram drawn there
+    consumed: set[int] = set()                     # id() of shapes read as part of one
+    for items in loose.values():
+        if len(items) >= 3:
+            made = shapes.to_diagram([sh for _, sh in items])
+            if made is not None:
+                d, used = made
+                together[next(i for i, sh in items if sh in used)] = d
+                consumed.update(id(sh) for sh in used)
 
-    for child in _block_elements(document.element.body):
+    def add_diagram(d) -> None:
+        nonlocal figure_index
+        figure_index += 1
+        blocks.append(make_diagram_block(None, d, ctx, page=None, index=figure_index, caption=None))
+
+    for i, child in enumerate(elements):
         tag = child.tag.split("}")[-1]
         if tag == "p":
             para = Paragraph(child, document)
@@ -177,10 +220,24 @@ def extract_docx(path: Path, ctx: ExtractContext, *, file_type: str = "docx") ->
                     elif has_title:
                         level = min(level + 1, 6)   # Title sits above Heading 1
                     blocks.append(Block(kind="heading", text=text, level=level))
+                    last_level = level
                 elif "list" in style.lower() or child.find(".//w:numPr", _NS) is not None:
                     blocks.append(Block(kind="paragraph", text=f"- {text}"))
                 else:
                     blocks.append(Block(kind="paragraph", text=text))
+            if i in together:
+                add_diagram(together[i])
+            rest = []                     # shapes not in a diagram: their text, in reading order
+            for d in drawings.get(i, []):
+                mine = [sh for sh in d.shapes if id(sh) not in consumed]
+                made = shapes.to_diagram(mine) if len(mine) >= 2 else None
+                if made is not None:
+                    add_diagram(made[0])
+                    mine = [sh for sh in mine if sh not in made[1]]
+                rest += mine
+            blocks.extend(Block(kind="paragraph", text=t) for t in shapes.loose_text(rest))
+            if i not in drawings:
+                blocks.extend(Block(kind="paragraph", text=t) for t in shapes.vml_text(child, _para_text))
             for blip in child.findall(".//a:blip", _NS):
                 rid = blip.get(f"{{{_NS['r']}}}embed")
                 part = document.part.related_parts.get(rid) if rid else None
@@ -196,19 +253,14 @@ def extract_docx(path: Path, ctx: ExtractContext, *, file_type: str = "docx") ->
                 figure_index += 1
                 blocks.append(make_figure_block(img, ctx, page=None, index=figure_index, caption=None))
         elif tag == "tbl":
-            rows = _table_rows(Table(child, document))
+            rows = drop_blank_rows(_table_rows(Table(child, document)))
             if not rows:
                 continue
-            if len(rows) == 1 or max(len(r) for r in rows) == 1:
-                blocks.append(Block(kind="paragraph", text=" / ".join(" ".join(r) for r in rows)))
-                continue
-            pairs = form_lines(rows)
-            if pairs is not None:          # a form laid out as a grid: "Label: value" lines
-                blocks.append(Block(kind="paragraph", text="\n".join(pairs), meta={"form": True}))
-                continue
-            headers, data = _split_header(rows)
-            blocks.append(Block(kind="table", text=markdown_table(headers, data),
-                                meta={"headers": headers, "rows": data, "caption": None}))
+            # the same rules as a PDF's ruled tables (title row, part names, panels, forms)
+            made = grid_blocks(rows, None, None, split_header=_split_header)
+            if made and made[0].meta.get("title_row") and made[0].meta.get("caption"):
+                blocks.append(Block(kind="heading", text=made[0].meta["caption"], level=min(last_level + 1, 6)))
+            blocks.extend(made)
 
     title = document.core_properties.title or next(
         (b.text for b in blocks if b.kind == "heading" and b.level == 1), None

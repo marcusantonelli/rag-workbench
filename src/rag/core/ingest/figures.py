@@ -221,13 +221,16 @@ def _table_block(table, ctx: ExtractContext, path: Path, img: Image.Image, *, pa
     )
 
 
-def make_diagram_block(img: Image.Image, diagram, ctx: ExtractContext, *, page: int | None, index: int,
+def make_diagram_block(img: Image.Image | None, diagram, ctx: ExtractContext, *, page: int | None, index: int,
                        caption: str | None) -> Block:
     """A flowchart rebuilt from the PDF's shapes: numbered steps with where each leads, plus a
     picture of it. The optional vision description is added when one is configured."""
-    name = f"p{page}-{index}.png" if page else f"img-{index}.png"
-    path: Path = ctx.asset_dir / name
-    img.convert("RGB").save(path, format="PNG", optimize=True)
+    asset = fingerprint = None
+    if img is not None:      # Word's own shapes have no picture to keep
+        name = f"p{page}-{index}.png" if page else f"img-{index}.png"
+        path: Path = ctx.asset_dir / name
+        img.convert("RGB").save(path, format="PNG", optimize=True)
+        asset, fingerprint = ctx.asset_rel(path), image_fingerprint(img)
     kind = "Flowchart" if diagram.flowchart else "Diagram"
     title = f"**{kind}**{f' (page {page})' if page else ''}" + (f": {caption}" if caption else "")
     text = diagram.to_text(title)
@@ -236,6 +239,6 @@ def make_diagram_block(img: Image.Image, diagram, ctx: ExtractContext, *, page: 
         kind="figure",
         text=text,
         page=page,
-        meta={"asset_path": ctx.asset_rel(path), "fingerprint": image_fingerprint(img), "ocr_conf": None,
+        meta={"asset_path": asset, "fingerprint": fingerprint, "ocr_conf": None,
               "described": bool(description), "diagram": {"steps": len(diagram.nodes), "connections": len(diagram.edges)}},
     )

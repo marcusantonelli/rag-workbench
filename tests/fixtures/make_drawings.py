@@ -634,3 +634,115 @@ def panels_pdf(path: Path) -> Path:
     c.showPage()
     c.save()
     return path
+
+
+# -- Word: tables by the shared rules, text boxes, flowcharts drawn with Word's shapes -------------
+_WNS = ('xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:v="urn:schemas-microsoft-com:vml"')
+_E = 12700     # EMU per point
+
+
+def _wsp(i, x, y, w, h, text="", prst="rect", connector=False, tail=False, glue=None, plain=False, flip_v=False):
+    flip = ' flipV="1"' if flip_v else ""
+    ln = ""
+    if connector:
+        ln = '<a:ln><a:tailEnd type="triangle"/></a:ln>' if tail else "<a:ln/>"
+    elif plain:
+        ln = "<a:noFill/><a:ln><a:noFill/></a:ln>"
+    nv = f'<wps:cNvPr id="{i}" name="s{i}"/>'
+    if connector:
+        g = "" if glue is None else f'<a:stCxn id="{glue[0]}" idx="2"/><a:endCxn id="{glue[1]}" idx="0"/>'
+        nv += f"<wps:cNvCnPr>{g}</wps:cNvCnPr>"
+    else:
+        nv += "<wps:cNvSpPr/>"
+    body = ""
+    if text:
+        paras = "".join(f"<w:p><w:r><w:t>{t}</w:t></w:r></w:p>" for t in text.split("|"))
+        body = f"<wps:txbx><w:txbxContent>{paras}</w:txbxContent></wps:txbx>"
+    return (f"<wps:wsp>{nv}<wps:spPr><a:xfrm{flip}><a:off x=\"{int(x * _E)}\" y=\"{int(y * _E)}\"/>"
+            f"<a:ext cx=\"{int(w * _E)}\" cy=\"{int(h * _E)}\"/></a:xfrm><a:prstGeom prst=\"{prst}\"><a:avLst/></a:prstGeom>"
+            f"{ln}</wps:spPr>{body}<wps:bodyPr/></wps:wsp>")
+
+
+def _anchor(inner, uri, x, y, w, h, doc_id, rel="page"):
+    return (f'<w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>'
+            f'<wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="1" behindDoc="0" locked="0" '
+            f'layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+            f'<wp:positionH relativeFrom="{rel}"><wp:posOffset>{int(x * _E)}</wp:posOffset></wp:positionH>'
+            f'<wp:positionV relativeFrom="{rel}"><wp:posOffset>{int(y * _E)}</wp:posOffset></wp:positionV>'
+            f'<wp:extent cx="{int(w * _E)}" cy="{int(h * _E)}"/><wp:wrapNone/><wp:docPr id="{doc_id}" name="d{doc_id}"/>'
+            f'<a:graphic><a:graphicData uri="{uri}">{inner}</a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice>'
+            f'<mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>FALLBACK COPY</w:t></w:r></w:p>'
+            f'</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>')
+
+
+def word_shapes_docx(path: Path) -> Path:
+    from docx import Document
+    from docx.oxml import parse_xml
+
+    WPS = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+    WPG = "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+    d = Document()
+    d.add_heading("Line set-up", 1)
+    d.add_paragraph("Follow the flow below for every change of recipe.")
+
+    # a grouped flowchart: four boxes, glued and unglued connectors, a "Yes" label
+    kids = (_wsp(11, 0, 0, 160, 40, "Load the recipe") + _wsp(12, 0, 80, 160, 40, "Run a first article")
+            + _wsp(13, 0, 160, 160, 60, "Article good?", prst="flowChartDecision")
+            + _wsp(14, 0, 260, 160, 40, "Release the line")
+            + _wsp(21, 80, 40, 0, 40, connector=True, tail=True, glue=(11, 12), prst="straightConnector1")
+            + _wsp(22, 80, 120, 0, 40, connector=True, tail=True, prst="straightConnector1")
+            + _wsp(23, 80, 220, 0, 40, connector=True, tail=True, prst="straightConnector1")
+            + _wsp(31, 88, 230, 30, 14, "Yes", plain=True))
+    group = (f'<wpg:wgp><wpg:cNvGrpSpPr/><wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{160 * _E}" cy="{300 * _E}"/>'
+             f'<a:chOff x="0" y="0"/><a:chExt cx="{160 * _E}" cy="{300 * _E}"/></a:xfrm></wpg:grpSpPr>{kids}</wpg:wgp>')
+    p = d.add_paragraph()
+    p._p.append(parse_xml(f"<w:r {_WNS}/>"))
+    p._p.append(parse_xml(_anchor(group, WPG, 72, 140, 160, 300, 1).replace("<w:r>", f"<w:r {_WNS}>", 1)))
+
+    # a lone text box: a side note
+    note = _wsp(41, 0, 0, 150, 60, "Keep the lid closed|while the pump runs.")
+    p = d.add_paragraph("The pump starts on its own after a recipe change.")
+    p._p.append(parse_xml(_anchor(note, WPS, 400, 140, 150, 60, 2).replace("<w:r>", f"<w:r {_WNS}>", 1)))
+
+    d.add_heading("Shut-down", 1)
+    # a flowchart of separate floating shapes, each anchored to its own paragraph
+    floats = [(_wsp(51, 0, 0, 140, 36, "Stop the pump"), 72, 500, 140, 36),
+              (_wsp(52, 0, 0, 0, 30, connector=True, tail=True, prst="straightConnector1"), 142, 536, 0, 30),
+              (_wsp(53, 0, 0, 140, 36, "Close the valve"), 72, 566, 140, 36),
+              (_wsp(54, 0, 0, 0, 30, connector=True, tail=True, prst="straightConnector1"), 142, 602, 0, 30),
+              (_wsp(55, 0, 0, 140, 36, "Log the stop"), 72, 632, 140, 36),
+              (_wsp(56, 0, 0, 160, 40, "Night shift: skip the log"), 400, 560, 160, 40)]   # a note, not a step
+    for k, (inner, x, y, w, h) in enumerate(floats):
+        p = d.add_paragraph("Shut the line down in this order." if k == 0 else "")
+        p._p.append(parse_xml(_anchor(inner, WPS, x, y, w, h, 60 + k).replace("<w:r>", f"<w:r {_WNS}>", 1)))
+
+    # an old document's text box (VML only)
+    p = d.add_paragraph()
+    p._p.append(parse_xml(f'<w:r {_WNS}><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>'
+                          'Call the shift lead before restarting.</w:t></w:r></w:p></w:txbxContent></v:textbox>'
+                          '</v:shape></w:pict></w:r>'))
+
+    # a table with a merged title row and a blank numbered row; a one-column panel
+    t = d.add_table(rows=6, cols=3)
+    t.style = "Table Grid"
+    title = t.cell(0, 0).merge(t.cell(0, 2))
+    title.text = "Troubleshooting"
+    for r, row in enumerate([["Symptom", "Likely cause", "What to do"],
+                             ["Seal leaks", "Worn seal seat", "Replace the seat"],
+                             ["Torque alarm", "Driver out of calibration", "Swap the driver"],
+                             ["Label misprint", "Ribbon low", "Change the ribbon"],
+                             ["4.", "", ""]], start=1):
+        for c, val in enumerate(row):
+            t.cell(r, c).text = val
+    d.add_paragraph("")
+    panel = d.add_table(rows=4, cols=1)
+    for r, val in enumerate(["Set-up Checklist", "Fixture clean and dry", "Torque driver calibrated", "Two operators signed in"]):
+        panel.cell(r, 0).text = val
+    d.save(path)
+    return path
