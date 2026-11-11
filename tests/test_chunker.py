@@ -18,27 +18,27 @@ def _sentence(i: int, topic: str) -> str:
 
 
 def test_long_section_packs_under_limit_with_overlap():
-    paras = [" ".join(_sentence(i * 5 + j, "bonding") for j in range(5)) for i in range(12)]
+    paras = [" ".join(_sentence(i * 5 + j, "crimping") for j in range(5)) for i in range(12)]
     doc = ExtractedDoc(file_type="txt", title=None,
-                       blocks=[Block(kind="heading", text="Bonding", level=1)] +
+                       blocks=[Block(kind="heading", text="Crimping", level=1)] +
                               [Block(kind="paragraph", text=p, page=1) for p in paras])
     chunks = _chunker().chunk(doc, "a.txt")
     assert len(chunks) > 2
     assert all(c.n_tokens <= 500 for c in chunks)
-    assert all(c.heading_path == "Bonding" for c in chunks)
+    assert all(c.heading_path == "Crimping" for c in chunks)
     # consecutive chunks share overlapping text
     assert any(c1.text.split(". ")[-1][:30] in c2.text for c1, c2 in zip(chunks, chunks[1:]))
-    assert chunks[0].embed_text.startswith("a.txt › Bonding\n")
+    assert chunks[0].embed_text.startswith("a.txt › Crimping\n")
 
 
 def test_topic_shift_split_uses_embedder():
-    sents = [_sentence(i, "bonding wire capillary") for i in range(25)] + \
-            [f"Lid seal furnace zone {i} needs nitrogen purge and helium leak testing." for i in range(25)]
+    sents = [_sentence(i, "crimping jaw") for i in range(25)] + \
+            [f"Curing oven zone {i} needs air purge and air leak testing." for i in range(25)]
     doc = ExtractedDoc(file_type="txt", title=None, blocks=[Block(kind="paragraph", text=" ".join(sents))])
     emb = HashEmbedder({"model": "h", "dims": 256})
     chunks = _chunker(emb).chunk(doc, "a.txt")
-    seal_chunks = [c for c in chunks if "furnace" in c.text]
-    assert seal_chunks and all("capillary" not in c.text for c in seal_chunks[1:])
+    seal_chunks = [c for c in chunks if "oven" in c.text]
+    assert seal_chunks and all("jaw" not in c.text for c in seal_chunks[1:])
 
 
 def test_heading_trail_and_levels():

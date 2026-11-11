@@ -56,20 +56,20 @@ def make_text_pdf(path: Path, figure_png: Path) -> None:
         canvas.restoreState()
 
     story = [
-        Paragraph("Wire Bond Pull Test Procedure", styles["Title"]),
+        Paragraph("Hose Clamp Pull Test Procedure", styles["Title"]),
         Paragraph("1 Purpose", styles["Heading1"]),
         Paragraph(
-            "This procedure defines how operators perform destructive wire bond pull testing on "
-            "hermetic power devices. Pull testing verifies bond strength before lot release and "
+            "This procedure defines how operators perform destructive hose clamp pull testing on "
+            "sealed power devices. Pull testing verifies clamp strength before lot release and "
             "must be performed on every assembly lot.", styles["BodyText"]),
         Paragraph("2 Equipment", styles["Heading1"]),
         Paragraph(
-            "Use the Dage 4000 bond tester with a calibrated 100 gram cartridge. Calibration must be "
-            "current within 12 months. Record the tester serial number on the traveler.", styles["BodyText"]),
+            "Use the Tester T-4000 pull tester with a calibrated 100 gram cartridge. Calibration must be "
+            "current within 12 months. Record the tester serial number on the job sheet.", styles["BodyText"]),
         Paragraph("3 Minimum Pull Strength", styles["Heading1"]),
         Paragraph("Table 1 Minimum pull strength by wire diameter", styles["BodyText"]),
     ]
-    data = [["Wire diameter (mil)", "Material", "Minimum pull (gf)"],
+    data = [["Hose diameter (mm)", "Material", "Minimum pull (gf)"],
             ["1.0", "Gold", "3.0"], ["1.25", "Gold", "4.0"], ["5.0", "Aluminum", "35.0"],
             ["10.0", "Aluminum", "75.0"], ["15.0", "Aluminum", "150.0"]]
     t = Table(data)
@@ -78,7 +78,7 @@ def make_text_pdf(path: Path, figure_png: Path) -> None:
     story += [
         Paragraph(
             "A pull value below the minimum is a reject. Record every failure mode code on the data "
-            "sheet: lift at first bond, lift at second bond, wire break at heel, or wire break mid span.",
+            "sheet: lift at first clamp, lift at second clamp, wire break at heel, or wire break mid span.",
             styles["BodyText"]),
         PageBreak(),
         Paragraph("4 Fixture Setup", styles["Heading1"]),
@@ -87,11 +87,11 @@ def make_text_pdf(path: Path, figure_png: Path) -> None:
         Paragraph("Figure 1 Fixture F-22 clamp positions", styles["BodyText"]),
         Paragraph("5 Records", styles["Heading1"]),
         Paragraph(
-            "Store the completed data sheet with the lot traveler. Records are retained for ten years "
+            "Store the completed data sheet with the lot job sheet. Records are retained for ten years "
             "per the quality manual.", styles["BodyText"]),
         PageBreak(),
         Paragraph("6 Revision History", styles["Heading1"]),
-        Paragraph("Revision C added the aluminum 15 mil limit and the failure mode codes.", styles["BodyText"]),
+        Paragraph("Revision C added the silicone 15 mm limit and the failure mode codes.", styles["BodyText"]),
     ]
     SimpleDocTemplate(str(path), pagesize=letter).build(story, onFirstPage=footer, onLaterPages=footer)
 
@@ -104,9 +104,9 @@ def make_scanned_pdf(path: Path) -> None:
     d = ImageDraw.Draw(page)
     d.text((150, 150), "Deviation Report DR-2291", fill="black", font=_font(64))
     body = [
-        "Lot 24A-0193 failed seal leak test after burn-in.",
-        "Root cause: lid seal furnace profile drifted 8 degrees low.",
-        "Corrective action: recalibrate furnace zone 3 weekly.",
+        "Lot 24A-0193 failed pressure leak test after run-in.",
+        "Root cause: curing oven profile drifted 8 degrees low.",
+        "Corrective action: recalibrate oven zone 3 weekly.",
         "Approved by quality engineering on March 4.",
     ]
     y = 320
@@ -128,21 +128,21 @@ def make_docx(path: Path, figure_png: Path) -> None:
     from docx.shared import Inches
 
     d = docx.Document()
-    d.core_properties.title = "Die Attach Work Instruction"
-    d.add_heading("Die Attach Work Instruction", 0)
+    d.core_properties.title = "Motor Mount Work Instruction"
+    d.add_heading("Motor Mount Work Instruction", 0)
     d.add_heading("Scope", 1)
-    d.add_paragraph("Applies to eutectic die attach on the Palomar 3800 for all TO-254 packages.")
+    d.add_paragraph("Applies to motor mount on the Press P-3800 for all H-254 packages.")
     d.add_heading("Steps", 1)
-    for step in ["Verify the preform lot against the traveler.",
+    for step in ["Verify the gasket lot against the job sheet.",
                  "Set the stage temperature to 340 C and wait for stability.",
-                 "Scrub the die for 3 seconds with 50 gram force."]:
+                 "Press the mount for 3 seconds with 50 newton force."]:
         d.add_paragraph(step, style="List Number")
-    d.add_heading("Void Limits", 2)
+    d.add_heading("Gap Limits", 2)
     table = d.add_table(rows=1, cols=3)
     table.style = "Table Grid"
-    for cell, text in zip(table.rows[0].cells, ["Package", "Max void (%)", "Inspection"]):
+    for cell, text in zip(table.rows[0].cells, ["Package", "Max gap (%)", "Inspection"]):
         cell.text = text
-    for row in [["TO-254", "10", "X-ray"], ["TO-257", "15", "X-ray"], ["SMD-0.5", "20", "SAM"]]:
+    for row in [["H-254", "10", "X-ray"], ["H-257", "15", "X-ray"], ["HS-0.5", "20", "Gauge"]]:
         cells = table.add_row().cells
         for cell, text in zip(cells, row):
             cell.text = text
@@ -157,23 +157,23 @@ def make_xlsx(path: Path) -> None:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Yields"
-    ws["A1"] = "Q3 burn-in yields by lot"            # note line
+    ws["A1"] = "Q3 run-in yields by lot"            # note line
     ws.append([])
     ws.append(["Lot", "Device", "Test", None, "Date"])
     ws.append([None, None, "Pass", "Fail", None])
     ws.merge_cells("C3:D3")
-    rows = [["24A-0190", "IRHM7360", 498, 2, date(2025, 7, 3)],
-            ["24A-0191", "IRHM7360", 495, 5, date(2025, 7, 9)],
-            ["24A-0193", "IRHN57250", 470, 30, date(2025, 8, 2)],
-            ["24A-0197", "IRHN57250", 499, 1, date(2025, 8, 21)]]
+    rows = [["24A-0190", "PX7360", 498, 2, date(2025, 7, 3)],
+            ["24A-0191", "PX7360", 495, 5, date(2025, 7, 9)],
+            ["24A-0193", "PX57250", 470, 30, date(2025, 8, 2)],
+            ["24A-0197", "PX57250", 499, 1, date(2025, 8, 21)]]
     for r in rows:
         ws.append(r)
     ws.append([])
     ws.append(["Owner", "Reliability engineering"])
     ws2 = wb.create_sheet("Limits")
     ws2.append(["Test", "Limit", "Unit"])
-    ws2.append(["Seal leak", 5e-8, "atm cc/s"])
-    ws2.append(["Burn-in hours", 160, "h"])
+    ws2.append(["Pressure leak", 5e-8, "atm cc/s"])
+    ws2.append(["Run-in hours", 160, "h"])
     wb.save(path)
 
 
@@ -181,9 +181,9 @@ def make_csv(path: Path) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["Tool", "Last calibration", "Interval (months)", "Owner"])
-        w.writerow(["Dage 4000", "2025-03-14", "12", "Metrology"])
-        w.writerow(["Palomar 3800", "2025-01-20", "6", "Assembly"])
-        w.writerow(["Seal furnace 2", "2024-11-02", "3", "Process"])
+        w.writerow(["Tester T-4000", "2025-03-14", "12", "Metrology"])
+        w.writerow(["Press P-3800", "2025-01-20", "6", "Assembly"])
+        w.writerow(["Curing oven 2", "2024-11-02", "3", "Process"])
 
 
 SQL = """-- Lot genealogy schema
@@ -210,7 +210,7 @@ BEGIN
 END
 GO
 """ + "".join(
-    f"INSERT INTO dbo.Lots (LotId, DeviceId, StartDate) VALUES ('24A-{i:04d}', 'IRHM7360', '2025-07-01');\n"
+    f"INSERT INTO dbo.Lots (LotId, DeviceId, StartDate) VALUES ('24A-{i:04d}', 'PX7360', '2025-07-01');\n"
     for i in range(30)
 ) + """
 SELECT DeviceId, COUNT(*) FROM dbo.Lots GROUP BY DeviceId;
@@ -219,7 +219,7 @@ SELECT DeviceId, COUNT(*) FROM dbo.Lots GROUP BY DeviceId;
 CS = '''using System;
 using System.Collections.Generic;
 
-namespace Acme.Mes.Release
+namespace Acme.Track.Release
 {
     /// <summary>Decides whether a lot can be released.</summary>
     public class LotReleaseService
@@ -232,7 +232,7 @@ namespace Acme.Mes.Release
             _yields = yields;
         }
 
-        /// <summary>Returns true when the lot meets the minimum burn-in yield.</summary>
+        /// <summary>Returns true when the lot meets the minimum run-in yield.</summary>
         /// <param name="lotId">Lot identifier, e.g. 24A-0193.</param>
         public bool CanRelease(string lotId)
         {
@@ -249,7 +249,7 @@ namespace Acme.Mes.Release
     {
         None,
         LowYield,
-        SealLeak,
+        PressureLeak,
     }
 
     public interface IYieldRepository
@@ -259,7 +259,7 @@ namespace Acme.Mes.Release
 }
 '''
 
-PY = '''"""Burn-in data loader for the reliability dashboard."""
+PY = '''"""Run-in data loader for the reliability dashboard."""
 
 import csv
 from dataclasses import dataclass
@@ -268,8 +268,8 @@ DEFAULT_HOURS = 160
 
 
 @dataclass
-class BurnInRecord:
-    """One lot's burn-in result."""
+class RunInRecord:
+    """One lot's run-in result."""
 
     lot_id: str
     passed: int
@@ -282,40 +282,40 @@ class BurnInRecord:
 
 
 def load_records(path):
-    """Read BurnInRecord rows from a CSV export."""
+    """Read RunInRecord rows from a CSV export."""
     with open(path, newline="") as fh:
-        return [BurnInRecord(r["lot"], int(r["pass"]), int(r["fail"])) for r in csv.DictReader(fh)]
+        return [RunInRecord(r["lot"], int(r["pass"]), int(r["fail"])) for r in csv.DictReader(fh)]
 '''
 
 MD = """---
-title: Seal Leak Troubleshooting
+title: Pressure Leak Troubleshooting
 ---
 
-# Seal Leak Troubleshooting
+# Pressure Leak Troubleshooting
 
-Fine leak failures after burn-in usually trace back to the lid seal furnace.
+Slow leak failures after run-in usually trace back to the curing oven.
 
 ## Checks
 
-1. Confirm the furnace zone 3 thermocouple reading.
+1. Confirm the oven zone 3 thermocouple reading.
 2. Inspect lid plating for contamination.
 
 | Symptom | Likely cause |
 | --- | --- |
-| Gross leak | Cracked lid |
-| Fine leak | Low seal temperature |
+| Fast leak | Cracked lid |
+| Slow leak | Low seal temperature |
 
 ```bash
-mes-cli holds --reason SealLeak --since 2025-07-01
+track-cli holds --reason PressureLeak --since 2025-07-01
 ```
 """
 
-HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Cleanroom Gowning</title>
+HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Workshop Safety</title>
 <script>var tracking = 1;</script><style>body{}</style></head>
 <body><nav><a href="/">Home</a> | <a href="/qa">Quality</a></nav>
-<main><h1>Cleanroom Gowning</h1>
-<p>All personnel must gown in the order below before entering the Class 1000 assembly area.</p>
-<h2>Gowning order</h2>
+<main><h1>Workshop Safety</h1>
+<p>All personnel must coverall in the order below before entering the Class 1000 assembly area.</p>
+<h2>Safety order</h2>
 <ul><li>Hood</li><li>Coverall<ul><li>Zip fully</li></ul></li><li>Boots</li></ul>
 <table><caption>Garment change frequency</caption>
 <tr><th>Garment</th><th>Change</th></tr>
@@ -325,10 +325,10 @@ HTML = """<!doctype html><html><head><meta charset="utf-8"><title>Cleanroom Gown
 
 TXT = """Shift handoff notes - Assembly line 2
 
-The wire bonder on station 4 threw a bond placement alarm twice during second shift.
-Maintenance replaced the capillary and the alarm cleared.
+The hose crimper on station 4 threw a crimp placement alarm twice during second shift.
+Maintenance replaced the jaw and the alarm cleared.
 
-Seal furnace 2 is scheduled for calibration on Thursday; route lots to furnace 1 until then.
+Curing oven 2 is scheduled for calibration on Thursday; route lots to oven 1 until then.
 """
 
 
@@ -338,19 +338,19 @@ def make_all(out: Path) -> Path:
     text_image(["FIXTURE F-22", "CLAMP A  CLAMP B"], font_size=56).save(fig)
     make_text_pdf(out / "QP-114 Pull Test.pdf", fig)
     make_scanned_pdf(out / "DR-2291 scan.pdf")
-    make_docx(out / "Die Attach WI.docx", fig)
-    make_xlsx(out / "Burn-in Yields Q3.xlsx")
+    make_docx(out / "Motor Mount WI.docx", fig)
+    make_xlsx(out / "Run-in Yields Q3.xlsx")
     make_csv(out / "calibration.csv")
     (out / "code").mkdir(exist_ok=True)
     (out / "code" / "lots.sql").write_text(SQL, encoding="utf-8")
     (out / "code" / "LotReleaseService.cs").write_text(CS, encoding="utf-8")
-    (out / "code" / "burnin.py").write_text(PY, encoding="utf-8")
+    (out / "code" / "runin.py").write_text(PY, encoding="utf-8")
     (out / "code" / "bin").mkdir(exist_ok=True)
     (out / "code" / "bin" / "ignored.cs").write_text("class Ignored {}", encoding="utf-8")
-    (out / "Seal Leak.md").write_text(MD, encoding="utf-8")
-    (out / "gowning.html").write_text(HTML, encoding="utf-8")
+    (out / "Pressure Leak.md").write_text(MD, encoding="utf-8")
+    (out / "safety.html").write_text(HTML, encoding="utf-8")
     (out / "handoff.txt").write_text(TXT, encoding="cp1252")
-    (out / "~$Die Attach WI.docx").write_bytes(b"lock")
+    (out / "~$Motor Mount WI.docx").write_bytes(b"lock")
     fig.unlink()
     return out
 

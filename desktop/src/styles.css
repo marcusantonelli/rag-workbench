@@ -1,5 +1,5 @@
-/* RAG Workbench. Cleanroom greys, process blue for actions, and one accent:
-   photolithography "yellow room" amber, used only to highlight evidence and ranks. */
+/* RAG Workbench. Quiet greys, a calm blue for actions, and one accent: a highlighter amber,
+   used only to mark evidence and ranks. */
 
 :root {
   --bg: #f4f6f7;
@@ -105,13 +105,12 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
   display: flex; align-items: center; gap: 10px; background: none; border: 0; cursor: pointer;
   padding: 4px 8px 14px; font-weight: 700; font-size: 15px; text-align: left;
 }
-/* A wafer: a disc with a flat, the one bit of fab iconography in the app. */
+/* The mark: a page of text with one line highlighted, the passage that answers. */
 .brand-mark {
-  width: 18px; height: 18px; border-radius: 50%; background:
-    repeating-linear-gradient(0deg, transparent 0 3px, color-mix(in srgb, var(--panel) 70%, transparent) 3px 4px),
-    repeating-linear-gradient(90deg, transparent 0 3px, color-mix(in srgb, var(--panel) 70%, transparent) 3px 4px),
+  width: 16px; height: 18px; border-radius: 3px; flex: none; background:
+    linear-gradient(#f2c440, #f2c440) 2px 9px / 12px 3px no-repeat,
+    repeating-linear-gradient(180deg, transparent 0 3px, color-mix(in srgb, var(--panel) 80%, transparent) 3px 4px) 3px 3px / 10px 13px no-repeat,
     var(--primary);
-  clip-path: inset(0 0 13% 0);   /* the flat */
 }
 .side-actions { display: grid; gap: 2px; padding-bottom: 10px; border-bottom: 1px solid var(--rule); }
 .side-action, .side-link {
@@ -470,7 +469,7 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 .tabs.flat { position: static; padding: 0; margin-bottom: 18px; background: none; }
 .cli-view { max-width: 1100px; }
 
-/* The terminal: a slate block in both themes, like a console in the cleanroom. */
+/* The terminal: a slate block in both themes, like a console on a workbench. */
 .terminal-wrap { display: grid; gap: 8px; }
 .terminal-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .terminal-bar .grow, .terminal-bar.grow { flex: 1; }

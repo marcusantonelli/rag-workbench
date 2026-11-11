@@ -33,7 +33,7 @@ def test_built_workspace_is_consistent(built_ws):
     t = TablesStore(built_ws.tables_db, readonly=True)
     names = {r["table_name"] for r in t.catalog()}
     t.close()
-    assert {"t_burn_in_yields_q3_yields", "t_burn_in_yields_q3_limits", "t_calibration"} <= names
+    assert {"t_run_in_yields_q3_yields", "t_run_in_yields_q3_limits", "t_calibration"} <= names
 
 
 def test_incremental_update_change_and_prune(tmp_path, corpus):
@@ -46,7 +46,7 @@ def test_incremental_update_change_and_prune(tmp_path, corpus):
     again = Builder(ws).build([src])
     assert again.unchanged == 11 and again.added == again.updated == 0
 
-    (src / "handoff.txt").write_text("Completely new handoff note about the die shear tester.", encoding="utf-8")
+    (src / "handoff.txt").write_text("Completely new handoff note about the torque tester.", encoding="utf-8")
     (src / "calibration.csv").unlink()
     (src / "Big Table.md").write_text(
         "# Parts\n\n| part | qty |\n| --- | --- |\n" + "".join(f"| P-{i} | {i} |\n" for i in range(45)),
@@ -60,7 +60,7 @@ def test_incremental_update_change_and_prune(tmp_path, corpus):
     texts = " ".join(r[0] for r in store.conn.execute("SELECT text FROM chunks"))
     pointer = store.conn.execute("SELECT table_name, text FROM chunks WHERE kind='table' AND table_name IS NOT NULL").fetchone()
     store.close()
-    assert "die shear" in texts and "wire bonder on station 4" not in texts
+    assert "torque" in texts and "hose crimper on station 4" not in texts
     assert pointer is not None and "of 45; the whole table is in tables.db" in pointer["text"]
     t = TablesStore(ws.tables_db, readonly=True)
     names = {r["table_name"] for r in t.catalog()}
@@ -132,13 +132,13 @@ def test_export_unpack_and_tamper_detection(tmp_path, built_ws):
 
 @pytest.mark.parametrize("query,expected_file", [
     ("minimum pull strength aluminum wire", "QP-114 Pull Test.pdf"),
-    ("lid seal furnace drifted deviation report", "DR-2291 scan.pdf"),
-    ("eutectic die attach stage temperature", "Die Attach WI.docx"),
+    ("curing oven drifted deviation report", "DR-2291 scan.pdf"),
+    ("motor mount stage temperature", "Motor Mount WI.docx"),
     ("GetLotYield", "lots.sql"),
-    ("CanRelease minimum burn-in yield", "LotReleaseService.cs"),
-    ("yield_pct percentage", "burnin.py"),
-    ("gowning order coverall", "gowning.html"),
-    ("wire bonder alarm capillary", "handoff.txt"),
+    ("CanRelease minimum run-in yield", "LotReleaseService.cs"),
+    ("yield_pct percentage", "runin.py"),
+    ("safety order coverall", "safety.html"),
+    ("hose crimper alarm jaw", "handoff.txt"),
 ])
 def test_search_finds_expected_file(searcher, query, expected_file):
     res = searcher.search(query, k=3)
@@ -147,20 +147,20 @@ def test_search_finds_expected_file(searcher, query, expected_file):
 
 
 def test_table_card_surfaces_and_sql_answers(searcher, built_ws):
-    res = searcher.search("burn-in pass fail by lot and device", k=6)
-    assert any(t["table_name"] == "t_burn_in_yields_q3_yields" for t in res.tables)
+    res = searcher.search("run-in pass fail by lot and device", k=6)
+    assert any(t["table_name"] == "t_run_in_yields_q3_yields" for t in res.tables)
     out = run_query(built_ws.tables_db,
-                    "SELECT lot FROM t_burn_in_yields_q3_yields WHERE test_fail > 10")
+                    "SELECT lot FROM t_run_in_yields_q3_yields WHERE test_fail > 10")
     assert out["rows"] == [["24A-0193"]]
     t = TablesStore(built_ws.tables_db, readonly=True)
-    d = t.describe("t_burn_in_yields_q3_yields")
+    d = t.describe("t_run_in_yields_q3_yields")
     t.close()
     assert "CREATE TABLE" in d["create_table"] and len(d["sample_rows"]) == 3
     assert {c["name"]: c["type"] for c in d["columns"]}["date"] == "date"
 
 
 def test_markdown_rendering_has_sources(searcher):
-    md = searcher.search("void limits by package", k=2).to_markdown()
+    md = searcher.search("gap limits by package", k=2).to_markdown()
     assert md.startswith("[S1] corpus") and "chunk" in md
 
 
@@ -187,10 +187,10 @@ def test_eval_runs(tmp_path, searcher):
     golden.write_text("\n".join(json.dumps(q) for q in [
         {"id": "a", "type": "doc_table", "question": "minimum pull strength 5 mil aluminum",
          "expect": [{"file": "*QP-114*", "page": 1}]},
-        {"id": "b", "type": "scan", "question": "furnace zone 3 recalibrate weekly",
+        {"id": "b", "type": "scan", "question": "oven zone 3 recalibrate weekly",
          "expect": [{"file": "*DR-2291*"}]},
-        {"id": "c", "type": "sheet", "question": "burn-in yields pass fail per lot",
-         "expect": [{"file": "*Burn-in*", "kind": "table_card"}]},
+        {"id": "c", "type": "sheet", "question": "run-in yields pass fail per lot",
+         "expect": [{"file": "*Run-in*", "kind": "table_card"}]},
     ]), encoding="utf-8")
     report = run_eval(searcher, golden)
     assert report["overall"]["n"] == 3 and report["overall"]["recall@20"] == 1.0
@@ -199,7 +199,7 @@ def test_eval_runs(tmp_path, searcher):
     from rag.eval import report_markdown
 
     with golden.open("a", encoding="utf-8") as fh:
-        fh.write("\n" + json.dumps({"id": "z", "question": "price of a wire bonder", "expect": []}))
+        fh.write("\n" + json.dumps({"id": "z", "question": "price of a hose crimper", "expect": []}))
     shown = run_eval(searcher, golden, show=3)
     for q in shown["questions"]:
         ranks = [c["rank"] for c in q["retrieved"]]

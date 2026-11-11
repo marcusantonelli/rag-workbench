@@ -20,8 +20,8 @@ from rag.core.workspace import Workspace  # noqa: E402
 from conftest import TEST_EMBEDDING  # noqa: E402
 
 QUERIES = [
-    "fine leak failures after burn-in", "lid seal furnace profile", "mes-cli holds --reason SealLeak",
-    "what is the helium leak rate limit", "GetLotYield", "calibration due dates for the leak tester",
+    "slow leak failures after run-in", "curing oven profile", "track-cli holds --reason PressureLeak",
+    "what is the air leak rate limit", "GetLotYield", "calibration due dates for the leak tester",
     "who took over the night shift handoff", "E42 error on HTTPServer2", "the of and", "torque 40 Nm",
     "SELECT lot_id FROM yields", "figure showing the seal cross-section", "résumé of the audit findings",
 ]
@@ -82,7 +82,7 @@ def test_retriever_directly_and_errors(stores, tmp_path):
     with shammy.Retriever(ws.root) as r:
         info = r.info()
         assert info["vector_store"] == "shammy" and info["dims"] == 256 and info["chunks"] == info["vectors"] > 0
-        out = r.search("lid seal furnace", emb.embed_query("lid seal furnace"), k=2, markdown=True)
+        out = r.search("curing oven", emb.embed_query("curing oven"), k=2, markdown=True)
         assert len(out["results"]) == 2 and out["results"][0]["tag"] == "S1" and out["markdown"].startswith("[S1] ")
         assert "rerank" not in out
         with pytest.raises(ValueError, match="values"):

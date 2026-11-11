@@ -1,7 +1,7 @@
 """The spots file: a knowledge base's structure, beside its rag.db (``structure.spots``).
 
 It records which chunks make up a procedure and its steps, the warnings and notes in each step,
-the references between steps and documents ("see Section 8.4", "see MF164"), and each document's
+the references between steps and documents ("see Section 8.4", "see FX-100"), and each document's
 number and revision. Search uses it to answer with a whole procedure, or the steps around the one
 that matched, instead of a lone fragment.
 

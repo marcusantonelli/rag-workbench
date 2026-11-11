@@ -44,16 +44,16 @@ def test_flowchart_becomes_steps_and_connections(files, ctx):
     figs = [b for b in blocks if b.kind == "figure"]
     assert len(figs) == 2 and all(b.meta["diagram"] for b in figs)
     first = figs[0]
-    assert first.text.startswith("**Flowchart** (page 1): Figure 4. Lot disposition after a fine leak failure")
+    assert first.text.startswith("**Flowchart** (page 1): Figure 4. Lot disposition after a slow leak failure")
     assert first.meta["diagram"] == {"steps": 8, "connections": 8}
     assert (ctx.assets_root.parent / first.meta["asset_path"]).is_file()
     s = _steps(first.text)
-    assert s["Start: lot fails fine leak"] == "→ <Place lot on hold (mes-cli holds --reason SealLeak)>"
-    assert s["Leak rate < 5E-8 atm·cc/s?"] == "→ No: <Submit to MRB for review>; Yes: <Retest with helium bomb>"
+    assert s["Start: lot fails slow leak"] == "→ <Place lot on hold (track-cli holds --reason PressureLeak)>"
+    assert s["Leak rate < 5E-8 atm·cc/s?"] == "→ No: <Submit to MRB for review>; Yes: <Retest with air bomb>"
     assert s["Scrap lot"] == "→ <End>" and s["Release lot to stock"] == "→ <End>" and s["End"] == ""
     # the labels left the text flow; the prose around the drawing is intact and in order
     prose = [b.text for b in blocks if b.kind == "paragraph" and b.page == 1]
-    assert prose == ["Every lot that fails fine leak after burn-in follows the process below before it can be released "
+    assert prose == ["Every lot that fails slow leak after run-in follows the process below before it can be released "
                      "or scrapped. The MRB decides within two shifts.",
                      "Lots released after a retest keep their original date code."]
     assert not any("Submit to MRB" in b.text or "Figure 4" in b.text for b in blocks if b.kind != "figure")
@@ -65,18 +65,18 @@ def test_visio_style_flowchart(files, ctx):
     """Connectors in pieces, open arrowheads, lanes, a branch, a two-way arrow, a plain link, a page frame."""
     blocks = _blocks(files["flowchart"], ctx)
     fig = [b for b in blocks if b.kind == "figure"][1]
-    assert fig.text.startswith("**Flowchart** (page 2): Figure 5. Gross leak check")
+    assert fig.text.startswith("**Flowchart** (page 2): Figure 5. Fast leak check")
     s = _steps(fig.text)
-    assert s["Pull 5-unit sample [Operator]"] == "→ <Run gross leak test [Operator]>"
-    assert s["Bubbles seen? [Operator]"] == "→ Not OK: <Log failure in MES [QA Engineer]>; OK: <Continue to marking [Operator]>"
-    log = s["Log failure in MES [QA Engineer]"]
+    assert s["Pull 5-unit sample [Operator]"] == "→ <Run fast leak test [Operator]>"
+    assert s["Bubbles seen? [Operator]"] == "→ Not OK: <Log failure in tracking system [QA Engineer]>; OK: <Continue to marking [Operator]>"
+    log = s["Log failure in tracking system [QA Engineer]"]
     assert all(t in log for t in ("<QA on-call phone [QA Engineer]>", "<Notify QA engineer [QA Engineer]>",
                                   "<Place lot on hold [QA Engineer]>"))
-    assert s["QA on-call phone [QA Engineer]"] == "→ <Log failure in MES [QA Engineer]>"       # two-way
+    assert s["QA on-call phone [QA Engineer]"] == "→ <Log failure in tracking system [QA Engineer]>"       # two-way
     assert s["Notify QA engineer [QA Engineer]"] == "— <See WI-0042 [Operator]>"               # no arrowhead
     assert "Notes:" not in fig.text
     prose = [b.text for b in blocks if b.kind == "paragraph" and b.page == 2]
-    assert prose[0].startswith("Operators run the gross leak check") and prose[-1].startswith("Record every check")
+    assert prose[0].startswith("Operators run the fast leak check") and prose[-1].startswith("Record every check")
     assert not any("Operator" == p or "Not OK" in p for p in prose)
 
 
@@ -96,7 +96,7 @@ def test_pictures_of_spreadsheets_become_tables(files, ctx):
     assert len(tables) == 2
     small, big = tables
     assert [small.meta["headers"]] + small.meta["rows"] == SHEET          # every cell, the lone "0" included
-    assert small.meta["caption"] == "Table 2. Burn-in yields by lot (read from the picture with OCR)"
+    assert small.meta["caption"] == "Table 2. Run-in yields by lot (read from the picture with OCR)"
     assert small.meta["from_image"] and (ctx.assets_root.parent / small.meta["asset_path"]).is_file()
     # a full-page Excel screenshot: its column letters and row numbers are dropped, single digits kept
     assert [big.meta["headers"]] + big.meta["rows"] == long_sheet()
@@ -105,7 +105,7 @@ def test_pictures_of_spreadsheets_become_tables(files, ctx):
     kinds = [b.kind for b in blocks if b.page == 1]
     assert kinds == ["heading", "paragraph", "table", "figure", "paragraph"]
     fig = next(b for b in blocks if b.kind == "figure")
-    assert "Seal the lid within four hours" in fig.text and "|" not in fig.text
+    assert "fitthecoverwithinfourhours" in fig.text.replace(" ", "").lower() and "|" not in fig.text
     assert not any("Table 2." in b.text for b in blocks if b.kind == "paragraph")
 
 

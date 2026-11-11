@@ -115,7 +115,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
           ref={input}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask what your agent would ask, e.g. what's new in Opcenter Execution Semiconductor 8.6"
+          placeholder="Ask what your agent would ask, e.g. how do I replace the filter?"
           aria-label="Search question"
         />
         <select value={fileType} onChange={(e) => setFileType(e.target.value)} aria-label="File type">
@@ -130,7 +130,7 @@ export function SearchView({ kb }: { kb: KbSummary }) {
           className="doc-filter"
           value={onlyDocs}
           onChange={(e) => setOnlyDocs(e.target.value)}
-          placeholder="Only documents (e.g. D02, WI-1234)"
+          placeholder="Only documents (e.g. DOC-12, WI-1234)"
           aria-label="Only these documents: document numbers or parts of file names, separated by commas"
           title="Document numbers (from the structure) or parts of file names, separated by commas"
           spellCheck={false}

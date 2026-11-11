@@ -1,0 +1,49 @@
+# rag-crawl preset: a template. It collects public documentation about a fictional product,
+# "Nimbus", from example.com; replace the names, terms and seeds with your own subject.
+# Copy it with `rag-crawl preset example > my-topic.toml`, edit, then
+# `rag-crawl run my-topic.toml OUT --budget 2GB`.
+
+[topic]
+name = "Nimbus product documentation"
+# A file is kept only if these appear at least min_term_hits times (a title hit counts double).
+terms = ["nimbus"]
+# These raise priority and score but never qualify a file on their own.
+related = ["user guide", "release notes", "administration", "installation", "configuration", "api"]
+min_term_hits = 2
+# Optional second subject: a file must also mention one of these (to narrow a broad product
+# name to one edition, for example). Empty = no second subject.
+also_required = []
+languages = ["en"]
+
+[crawl]
+seeds = [
+  "https://www.example.com/products/nimbus/",
+  "https://docs.example.com/nimbus/",
+]
+# Crawled freely (suffix match: "example.com" covers docs.example.com, blog.example.com, ...).
+# Sites whose robots.txt disallows crawlers, and pages behind a login, are never fetched.
+allowed_domains = ["example.com"]
+follow_external = true
+max_offsite_hops = 1
+max_tunnel = 1
+max_depth = 8
+max_pages_per_host = 20000
+delay_s = 1.0
+workers = 4
+max_file_mb = 200
+html_min_words = 250
+
+[search]
+# Optional. "brave" needs BRAVE_API_KEY (free tier at brave.com/search/api);
+# "searxng" needs searxng_url pointing at your own SearXNG instance.
+provider = ""
+queries = [
+  "\"Nimbus\" user guide filetype:pdf",
+  "\"Nimbus\" release notes",
+  "\"Nimbus\" administration guide",
+]
+pages_per_query = 5
+
+[sitemaps]
+enabled = true
+max_files = 300

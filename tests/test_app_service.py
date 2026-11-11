@@ -122,7 +122,7 @@ def test_create_build_browse_search_export_and_reopen_as_pack(svc, corpus, tmp_p
     golden.write_text("\n".join(json.dumps(q) for q in [
         {"id": "a", "type": "t", "question": "minimum pull strength 5 mil aluminum",
          "expect": [{"file": "*QP-114*"}]},
-        {"id": "z", "question": "price of a wire bonder", "expect": []},
+        {"id": "z", "question": "price of a hose crimper", "expect": []},
     ]), encoding="utf-8")
     ev = wait_job(svc, svc.call("eval.run", {"kb": kb["id"], "golden": str(golden), "show": 3}))
     assert ev["state"] == "done", ev["error"]
@@ -138,7 +138,7 @@ def test_create_build_browse_search_export_and_reopen_as_pack(svc, corpus, tmp_p
     pack = svc.call("kb.open", {"path": str(pack_path)})
     assert pack["kind"] == "pack" and pack["readonly"] and pack["name"] == "Plant docs"
     assert pack["counts"]["documents"] == 11 and pack["manifest"]["counts"]["documents"] == 11
-    assert svc.call("kb.search", {"kb": pack["id"], "query": "furnace zone 3"})["results"]
+    assert svc.call("kb.search", {"kb": pack["id"], "query": "oven zone 3"})["results"]
     with pytest.raises(ServiceError) as err:
         svc.call("kb.build", {"kb": pack["id"], "inputs": [str(corpus)]})
     assert err.value.code == "readonly"
@@ -232,7 +232,7 @@ def test_managed_runtime_with_fake_llama_server(svc, corpus, tmp_path):
     # native_dims stays 4096 in config; dims 64 truncates the fake server's 64-dim output.
     job = wait_job(svc, svc.call("kb.build", {"kb": kb["id"], "inputs": [str(corpus)]}))
     assert job["state"] == "done", job["error"]
-    assert svc.call("kb.search", {"kb": kb["id"], "query": "seal leak"})["results"]
+    assert svc.call("kb.search", {"kb": kb["id"], "query": "pressure leak"})["results"]
 
     # Force CPU restarts the server without offload.
     svc.call("runtime.configure", {"accel": "cpu"})
@@ -245,9 +245,9 @@ def test_managed_runtime_with_fake_llama_server(svc, corpus, tmp_path):
     # A different model id makes searching this knowledge base a coded error.
     svc.settings.update_runtime(model_id="something-else")
     with pytest.raises(ServiceError) as err:
-        svc.call("kb.search", {"kb": kb["id"], "query": "seal leak"})
+        svc.call("kb.search", {"kb": kb["id"], "query": "pressure leak"})
     assert err.value.code == "model_mismatch"
-    assert svc.call("kb.search", {"kb": kb["id"], "query": "seal leak", "allow_mismatch": True})["results"]
+    assert svc.call("kb.search", {"kb": kb["id"], "query": "pressure leak", "allow_mismatch": True})["results"]
 
     svc.call("runtime.stop", {})
     assert svc.call("runtime.status", {})["state"] == "stopped"
@@ -521,7 +521,7 @@ def test_merge_a_pack_into_a_workspace(svc, corpus, tmp_path):
     b = svc.call("kb.create", {"name": "Line B", "dims": 256, "backend": "hash-test"})
     assert wait_job(svc, svc.call("kb.build", {"kb": a["id"], "inputs": [str(corpus / "handoff.txt")]}))["state"] == "done"
     assert wait_job(svc, svc.call("kb.build", {"kb": b["id"], "inputs": [str(corpus / "calibration.csv"),
-                                                                         str(corpus / "Seal Leak.md")]}))["state"] == "done"
+                                                                         str(corpus / "Pressure Leak.md")]}))["state"] == "done"
     ex = wait_job(svc, svc.call("kb.export", {"kb": b["id"], "out": str(tmp_path / "b.ragpack")}))
     pack = svc.call("kb.open", {"path": ex["result"]["path"]})
 
@@ -534,7 +534,7 @@ def test_merge_a_pack_into_a_workspace(svc, corpus, tmp_path):
     assert job["result"]["sources"][0]["add"] == 2 and job["progress"]["files_done"] == 2
     summary = svc.call("kb.summary", {"kb": a["id"]})
     assert summary["counts"]["documents"] == 3 and summary["counts"]["tables"] == 1
-    assert svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})["results"]
+    assert svc.call("kb.search", {"kb": a["id"], "query": "air leak rate"})["results"]
 
     with pytest.raises(ServiceError) as err:
         svc.call("kb.merge", {"kb": pack["id"], "sources": [a["path"]]})
@@ -547,13 +547,13 @@ def test_shammy_knowledge_bases_and_convert(svc, corpus, tmp_path):
     a = svc.call("kb.create", {"name": "On Shammy", "dims": 256, "backend": "hash-test", "vectors": "shammy"})
     assert a["vector_store"] == "shammy"
     assert wait_job(svc, svc.call("kb.build", {"kb": a["id"], "inputs": [str(corpus / "calibration.csv"),
-                                                                         str(corpus / "Seal Leak.md")]}))["state"] == "done"
+                                                                         str(corpus / "Pressure Leak.md")]}))["state"] == "done"
     before = svc.call("kb.summary", {"kb": a["id"]})
     assert before["counts"]["vectors"] == before["counts"]["chunks"] > 0 and before["counts"]["tables"] == 1
-    found = svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})
+    found = svc.call("kb.search", {"kb": a["id"], "query": "air leak rate"})
     hits = found["results"]
     assert hits and found["engine"] == "native" and "rerank" not in found
-    unreachable = svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate", "rerank": True,
+    unreachable = svc.call("kb.search", {"kb": a["id"], "query": "air leak rate", "rerank": True,
                                          "rerank_url": "http://127.0.0.1:9"})
     assert unreachable["rerank"]["applied"] is False and unreachable["results"][0]["text"] == hits[0]["text"]
 
@@ -562,13 +562,13 @@ def test_shammy_knowledge_bases_and_convert(svc, corpus, tmp_path):
     assert job["result"]["vectors"] == before["counts"]["vectors"] and job["result"]["missing"] == 0
     after = svc.call("kb.summary", {"kb": a["id"]})
     assert after["vector_store"] == "sqlite-vec" and after["counts"]["vectors"] == before["counts"]["vectors"]
-    assert svc.call("kb.search", {"kb": a["id"], "query": "helium leak rate"})["results"][0]["text"] == hits[0]["text"]
+    assert svc.call("kb.search", {"kb": a["id"], "query": "air leak rate"})["results"][0]["text"] == hits[0]["text"]
     assert wait_job(svc, svc.call("kb.convert", {"kb": a["id"], "to": "shammy"}))["state"] == "done"
     assert wait_job(svc, svc.call("kb.verify", {"kb": a["id"]}))["result"]["ok"]
 
     ex = wait_job(svc, svc.call("kb.export", {"kb": a["id"], "out": str(tmp_path / "s.ragpack")}))
     pack = svc.call("kb.open", {"path": ex["result"]["path"]})
-    assert pack["vector_store"] == "shammy" and svc.call("kb.search", {"kb": pack["id"], "query": "helium leak rate"})["results"]
+    assert pack["vector_store"] == "shammy" and svc.call("kb.search", {"kb": pack["id"], "query": "air leak rate"})["results"]
     with pytest.raises(ServiceError) as err:
         svc.call("kb.convert", {"kb": pack["id"], "to": "sqlite-vec"})
     assert err.value.code == "readonly"

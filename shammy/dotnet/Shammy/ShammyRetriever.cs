@@ -57,7 +57,7 @@ public sealed class RetrievalOptions
     /// <summary>At most this many results from one procedure while other results are left (default 3).</summary>
     public int? ProcedureHits { get; init; }
 
-    /// <summary>Only these documents: document numbers ("D02", needs the spots file) or parts of file paths.</summary>
+    /// <summary>Only these documents: document numbers ("DOC-12", needs the spots file) or parts of file paths.</summary>
     public IReadOnlyList<string>? Documents { get; init; }
 }
 

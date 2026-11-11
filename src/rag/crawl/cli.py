@@ -1,9 +1,9 @@
 """rag-crawl: collect on-topic documents from the web up to a size budget.
 
     rag-crawl run CONFIG.toml OUT --budget 15GB [--max 20GB]
-    rag-crawl run --preset opcenter OUT --budget 2GB
+    rag-crawl run --preset example OUT --budget 2GB
     rag-crawl report OUT
-    rag-crawl preset opcenter > opcenter.toml
+    rag-crawl preset example > my-topic.toml
 
 Files land in OUT/files/<host>/; OUT/manifest.jsonl records each file's source URL.
 Run again with the same OUT to resume (or to raise the budget). Then build:
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("run", help="crawl (or resume) until the budget is reached or nothing on-topic is left")
     s.add_argument("config", nargs="?", help="topic TOML file")
     s.add_argument("out", nargs="?", help="output folder")
-    s.add_argument("--preset", help="use a built-in topic preset instead of a config file (e.g. opcenter)")
+    s.add_argument("--preset", help="use a built-in topic preset instead of a config file (e.g. example, a template)")
     s.add_argument("--budget", required=True, help="target total size, e.g. 15GB")
     s.add_argument("--max", help="hard cap, never exceeded (default: budget + 15%%)")
     s.add_argument("--workers", type=int)

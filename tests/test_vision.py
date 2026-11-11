@@ -29,8 +29,8 @@ class _Vision(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         type(self).seen.append({"path": self.path, **body})
-        data = json.dumps({"choices": [{"message": {"content": "The image shows a seam sealer glove box with "
-                                                               "a red CAUTION label on the oven door."}}]}).encode()
+        data = json.dumps({"choices": [{"message": {"content": "The image shows a bench press with "
+                                                               "a red CAUTION label on the pump motor."}}]}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
@@ -62,11 +62,11 @@ def test_describe_step(vision, ctx, tmp_path):
     assert describe_settings(ctx.config)["url"] == vision + "/v1/chat/completions"
     img = Image.new("RGB", (2400, 1200), "white")
     ImageDraw.Draw(img).rectangle([200, 200, 900, 800], fill="gray")
-    text = describe_image(img, ctx, context="step 7.1 Verify the oven calibration")
-    assert text == "A seam sealer glove box with a red CAUTION label on the oven door."   # "The image shows" trimmed
+    text = describe_image(img, ctx, context="step 7.1 Check the torque driver")
+    assert text == "A bench press with a red CAUTION label on the pump motor."   # "The image shows" trimmed
     sent = _Vision.seen[-1]
     prompt = sent["messages"][0]["content"][1]["text"]
-    assert "illustrating: step 7.1 Verify the oven calibration" in prompt
+    assert "illustrating: step 7.1 Check the torque driver" in prompt
     assert sent["messages"][0]["content"][0]["image_url"]["url"].startswith("data:image/png;base64,")
     # a redaction box or blank frame isn't sent
     n = len(_Vision.seen)
@@ -113,7 +113,7 @@ def test_build_describes_pictures_and_rereads_only_when_needed(files, tmp_path, 
         assert extractors()["Yield pictures.pdf"].endswith("@v6+vis")
         s = RagStore(ws.rag_db, readonly=True)
         try:
-            described = s.conn.execute("SELECT COUNT(*) FROM chunks WHERE text LIKE '%Description: A seam sealer%'").fetchone()[0]
+            described = s.conn.execute("SELECT COUNT(*) FROM chunks WHERE text LIKE '%Description: A bench press%'").fetchone()[0]
         finally:
             s.close()
         assert described == 1          # the prose screenshot; the spreadsheet pictures became tables

@@ -28,12 +28,12 @@ def _text(path, ctx):
 def test_fillable_pdf_values_are_read(files, ctx):
     blocks, text = _text(files["fillable"], ctx)
     assert "Lot number: L26-3007 Date: 2026-11-03" in text
-    assert "Seal ring inspected ☒ Rework required ☐" in text
+    assert "Gasket inspected ☒ Rework required ☐" in text
     assert "Disposition: ○ Release ◉ MRB" in text
     assert "Oven: OV-2" in text and "Comments: Leak at corner 3, retest after bake" in text
     # values typed into fields inside a ruled table land in their cells
     table = next(b for b in blocks if b.kind == "table")
-    assert table.meta["headers"] == ["Unit", "Fine leak (atm cc/s)", "Gross leak"]
+    assert table.meta["headers"] == ["Unit", "Slow leak (atm cc/s)", "Fast leak"]
     assert table.meta["rows"] == [["Unit 1", "2.1E-9", "☐"], ["Unit 2", "6.0E-8", "☒"]]
 
 
@@ -47,7 +47,7 @@ def test_printed_grid_form_reads_as_label_value_lines(files, ctx):
     blocks, _ = _text(files["grid"], ctx)
     form = next(b for b in blocks if b.meta.get("form"))
     assert form.kind == "paragraph"
-    assert form.text.split("\n") == ["Lot number: L26-3011", "Date: 2026-11-04", "Part number: IRHM-7250",
+    assert form.text.split("\n") == ["Lot number: L26-3011", "Date: 2026-11-04", "Part number: PX-7250",
                                      "Quantity: 48", "Operator: J. Ruiz", "Shift: 2"]
     assert not any(b.kind == "table" for b in blocks)
 
@@ -58,7 +58,7 @@ def test_word_form(files, ctx):
     assert "Operator: M. Okafor" in lines                                   # inline content control
     assert "☒ Oven door seal checked" in lines                             # content-control checkbox
     assert "☑ Calibration sticker current  ☐ Rework needed" in lines        # Wingdings symbol and font
-    assert "☒ Nitrogen flow verified" in lines                             # legacy form checkbox
+    assert "☒ Air flow verified" in lines                             # legacy form checkbox
     assert "Bake time: 4 hours" in lines and "2 hours" not in text          # tracked insertion / deletion
     assert "Released by QA after the bake log was reviewed." in lines       # block-level content control
     form = next(b for b in blocks if b.meta.get("form"))

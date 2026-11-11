@@ -1,9 +1,9 @@
-"""Generate the Halden Microsystems test corpus, its golden questions and answer key.
+"""Generate the Halden Pumpworks test corpus, its golden questions and answer key.
 
     python tools/make_test_corpus.py OUT_DIR
 
-Halden Microsystems is fictional: a back-end (assembly and test) plant for
-hermetic power devices, running an MES. Every document type the Builder reads
+Halden Pumpworks is fictional: a maker of
+sealed water pumps, running a tracking system. Every document type the Builder reads
 is represented, with the messiness real document sets have: a superseded
 revision next to the current one, a byte-identical copy, a two-column
 newsletter, a large spec table, a table without ruling lines, scanned and
@@ -30,7 +30,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 R = random.Random(20251107)
-COMPANY = "Halden Microsystems"
+COMPANY = "Halden Pumpworks"
 
 
 # ---------------------------------------------------------------------------
@@ -134,32 +134,32 @@ def make_sop(path: Path, rev: str) -> None:
 
     c = rev == "C"
     s = styles()
-    packages = "TO-254, TO-257, SMD-0.5 and SMD-1" if c else "TO-254, TO-257 and SMD-0.5"
+    packages = "H-254, H-257, HS-0.5 and HS-1" if c else "H-254, H-257 and HS-0.5"
     observe = "30 seconds" if c else "60 seconds"
     hold = "HL-SEAL" if c else "HL-LEAK"
     fig = path.parent / "_fig_leak.png"
     label_figure(["BOMB CHAMBER BC-2", "LEAK DETECTOR HLD-7"]).save(fig)
     P = lambda t, st="BodyText": Paragraph(t, s[st])  # noqa: E731
     story = [
-        P(f"SOP-0412 Hermetic Seal Leak Test", "Title"),
+        P(f"SOP-0412 Sealed Pressure Leak Test", "Title"),
         P(f"Revision {rev} &nbsp;&nbsp; Effective {'2025-09-02' if c else '2024-05-21'} &nbsp;&nbsp; Owner: Reliability Engineering"),
         P("1 Purpose", "Heading1"),
-        P("This procedure defines fine and gross leak testing of hermetically sealed packages after lid seal "
-          "and after burn-in. It ensures that every shipped device meets the seal requirements of the "
+        P("This procedure defines fine and fast leak testing of sealedally sealed packages after cabinet assembly "
+          "and after run-in. It ensures that every shipped device meets the seal requirements of the "
           "customer specification and of MIL-STD-883 Test Method 1014."),
         P("2 Scope", "Heading1"),
-        P(f"Applies to all hermetic packages assembled at the Fairbury site: {packages}. Plastic packages are "
+        P(f"Applies to all sealed packages assembled at the Fairbury site: {packages}. Plastic packages are "
           "out of scope."),
         P("3 References", "Heading1"),
-        P("MIL-STD-883 Test Method 1014 (Seal); WI-0217 Die Attach; SOP-0388 Lid Seal; MES Hold Codes (KB)."),
+        P("MIL-STD-883 Test Method 1014 (Seal); WI-0217 Motor Mount; SOP-0388 Cabinet Assembly; tracking system Hold Codes (KB)."),
         PageBreak(),
         P("4 Equipment", "Heading1"),
-        P("Helium leak detector HLD-7 (calibrated annually), bomb chamber BC-2, gross leak bath GL-1 filled "
+        P("Air leak detector HLD-7 (calibrated annually), bomb chamber BC-2, fast leak bath GL-1 filled "
           "with FC-40 fluorocarbon, black-background viewing station with 10X magnifier."),
         P("5 Fine Leak Test", "Heading1"),
-        P("Bomb the parts in helium according to Table 2, then measure within the maximum dwell time. Parts "
-          "measuring above the reject limit fail fine leak."),
-        P("Table 2 Fine leak bombing conditions by cavity volume", "Caption"),
+        P("Bomb the parts in air according to Table 2, then measure within the maximum dwell time. Parts "
+          "measuring above the reject limit fail slow leak."),
+        P("Table 2 Slow leak bombing conditions by cavity volume", "Caption"),
         grid_table(BOMB_TABLE, [1.4 * inch, 1.3 * inch, 1.0 * inch, 1.0 * inch, 1.8 * inch], 8),
         Spacer(1, 10),
         P("If the measurement cannot start within the maximum dwell time, re-bomb the parts. Do not re-bomb "
@@ -167,28 +167,28 @@ def make_sop(path: Path, rev: str) -> None:
         PageBreak(),
         P("Mount parts in the bomb chamber and connect the detector as shown in Figure 1."),
         RLImage(str(fig), width=5.5 * inch, height=2.1 * inch),
-        P("Figure 1 Helium fine leak test setup", "Caption"),
+        P("Figure 1 Air slow leak test setup", "Caption"),
         P("6 Gross Leak Test", "Heading1"),
         P(f"Immerse the parts in FC-40 at 125 &deg;C &plusmn; 5 &deg;C and observe them for {observe} against "
           "the black background. A continuous stream of bubbles from one location, or two or more large "
-          "bubbles, is a gross leak reject."),
+          "bubbles, is a fast leak reject."),
         PageBreak(),
         P("7 Disposition", "Heading1"),
-        P(f"Tag rejects with a red HOLD label and place the lot on hold in the MES with hold code {hold}. One "
-          "retest is allowed within 4 hours if the first failure is suspected to be surface helium; a second "
+        P(f"Tag rejects with a red HOLD label and place the lot on hold in the tracking system with hold code {hold}. One "
+          "retest is allowed within 4 hours if the first failure is suspected to be surface air; a second "
           "failure is final."),
         P("8 Records", "Heading1"),
-        P("Leak test data are recorded in the MES against the lot. Paper data sheets, if used, are attached "
-          "to the traveler. Records are retained for ten years."),
+        P("Leak test data are recorded in the tracking system against the lot. Paper data sheets, if used, are attached "
+          "to the job sheet. Records are retained for ten years."),
     ]
     if c:
         story += [PageBreak(), P("9 Revision History", "Heading1"), grid_table([
             ["Rev", "Date", "Change"],
             ["A", "2023-02-10", "Initial release"],
-            ["B", "2024-05-21", "Added SMD-0.5; added retest rule"],
-            ["C", "2025-09-02", "Added SMD-1; gross leak observation reduced from 60 s to 30 s; hold code HL-LEAK renamed HL-SEAL"],
+            ["B", "2024-05-21", "Added HS-0.5; added retest rule"],
+            ["C", "2025-09-02", "Added HS-1; fast leak observation reduced from 60 s to 30 s; hold code HL-LEAK renamed HL-SEAL"],
         ], [0.5 * inch, 1.0 * inch, 5.0 * inch], 8)]
-    doc = SimpleDocTemplate(str(path), pagesize=letter, title=f"SOP-0412 Hermetic Seal Leak Test Rev {rev}")
+    doc = SimpleDocTemplate(str(path), pagesize=letter, title=f"SOP-0412 Sealed Pressure Leak Test Rev {rev}")
     foot = footer_fn(f"{COMPANY} - Controlled Copy - SOP-0412 Rev {rev}")
     doc.build(story, onFirstPage=foot, onLaterPages=foot)
     fig.unlink()
@@ -219,23 +219,23 @@ def make_newsletter(path: Path) -> None:
     filler = ("Teams across assembly and test contributed to the result, and the reliability group thanks "
               "everyone who supported the qualification runs and the extra weekend shifts. ")
     story = [
-        P("Burn-in capacity expands", "Heading2"),
-        P("Two new burn-in ovens, BI-05 and BI-06, were commissioned in August. Together they raise burn-in "
+        P("Run-in capacity expands", "Heading2"),
+        P("Two new run-in ovens, BI-05 and BI-06, were commissioned in August. Together they raise run-in "
           "capacity by 40 percent and remove the queue that held lots for up to three days in July. " + filler),
-        P("Both ovens run the standard 160-hour profile at 125 &deg;C and are connected to the MES so that "
+        P("Both ovens run the standard 160-hour profile at 125 &deg;C and are connected to the tracking system so that "
           "start and end times are captured automatically. " + filler * 2),
         P("Customer return CR-2207 closed", "Heading2"),
-        P("The root cause of customer return CR-2207 was die attach voiding above 25 percent on lot "
-          "HM25-1187, traced to preform lot PF-3381 from the supplier. Failure analysis report FA-25-031 has "
-          "the details. Incoming inspection now X-rays one preform coupon per lot. " + filler),
+        P("The root cause of customer return CR-2207 was motor mount voiding above 25 percent on lot "
+          "HM25-1187, traced to gasket lot PF-3381 from the supplier. Failure analysis report FA-25-031 has "
+          "the details. Incoming inspection now X-rays one gasket coupon per lot. " + filler),
         P("Safety", "Heading2"),
         P("The site reached 212 days without a lost-time incident on September 30. Remember to wear "
           "cryogenic gloves when refilling the leak detector cold trap. " + filler),
         P("Metrology welcomes a new lead", "Heading2"),
         P("Dana Whitfield joined as metrology lead in September. Dana owns the calibration register and the "
           "measurement system analysis program. " + filler * 2),
-        P("Wire bond pull data", "Heading2"),
-        P("Average pull strength on 15 mil aluminum wire held at 182 grams-force in Q3, well above the "
+        P("Hose clamp pull data", "Heading2"),
+        P("Average pull strength on 15 mm silicone hose held at 182 grams-force in Q3, well above the "
           "150 gram-force minimum. " + filler * 3),
     ]
     doc.build(story)
@@ -250,7 +250,7 @@ def make_spec(path: Path) -> None:
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
     s = styles()
-    pkgs = ["TO-254", "TO-257", "SMD-0.5", "SMD-1"]
+    pkgs = ["H-254", "H-257", "HS-0.5", "HS-1"]
     for i in range(36):
         bv = [60, 100, 150, 200, 250][i % 5]
         rds = round(8 + bv * 0.42 + R.uniform(-3, 3), 1)
@@ -272,12 +272,12 @@ def make_spec(path: Path) -> None:
 
 
 SUPPLIERS = [
-    ("Kestrel Wire Co.", "Gold bond wire 1.0 mil", "ISO 9001", "2026-03-31"),
-    ("Brightline Alloys", "Aluminum bond wire 15 mil", "AS9100", "2026-01-15"),
-    ("Morrow Ceramics", "TO-254 ceramic seal rings", "AS9100", "2025-12-01"),
-    ("Pellam Metals", "AuSn 80/20 preforms", "ISO 9001", "2026-06-30"),
+    ("Kestrel Wire Co.", "Rubber hose 10 mm", "ISO 9001", "2026-03-31"),
+    ("Brightline Alloys", "Silicone hose 15 mm", "AS9100", "2026-01-15"),
+    ("Morrow Ceramics", "H-254 ceramic gaskets", "AS9100", "2025-12-01"),
+    ("Pellam Metals", "80/20 gaskets", "ISO 9001", "2026-06-30"),
     ("Corvid Lids", "Kovar lids, gold plated", "AS9100", "2026-02-28"),
-    ("Tallis Gas", "Helium 99.999 percent", "ISO 9001", "2025-11-30"),
+    ("Tallis Gas", "Air 99.999 percent", "ISO 9001", "2025-11-30"),
 ]
 
 
@@ -321,7 +321,7 @@ def make_fa_report(path: Path) -> None:
     scanned_page([
         ("MRB DISPOSITION - FA-25-031", 54, True), ("", 0, False),
         ("Lot: HM25-1187   Device: HM-R150C02   Qty: 1,240 units", 38, False),
-        ("Finding: die attach voids 31% (limit 10%)", 38, False),
+        ("Finding: motor mount gap 31% (limit 10%)", 38, False),
         ("Disposition: SCRAP entire lot", 44, True),
         ("Customer notified: yes, return CR-2207", 38, False), ("", 0, False),
         ("Approved by: R. Okafor, Quality Manager", 38, False),
@@ -333,18 +333,18 @@ def make_fa_report(path: Path) -> None:
         P("Customer return CR-2207, lot HM25-1187", "Heading2"),
         P("1 Summary", "Heading1"),
         P("Four units returned by the customer failed thermal impedance screening. X-ray inspection of the "
-          "returned units and of 20 retained units showed die attach voiding of 18 to 31 percent against a "
-          "limit of 10 percent for TO-254. Die shear on five units averaged 3.1 kgf against a minimum of "
+          "returned units and of 20 retained units showed motor mount voiding of 18 to 31 percent against a "
+          "limit of 10 percent for H-254. Torque on five units averaged 3.1 kgf against a minimum of "
           "5.0 kgf."),
         P("2 Root cause", "Heading1"),
-        P("The AuSn preform lot PF-3381 had oxidized surfaces. Wetting was incomplete at the standard stage "
-          "temperature, which left voids under the die. The preform supplier confirmed a storage excursion."),
+        P("The gasket lot PF-3381 had oxidized surfaces. Wetting was incomplete at the standard stage "
+          "temperature, which left gap under the mount. The gasket supplier confirmed a storage excursion."),
         PageBreak(),
         P("3 Corrective actions", "Heading1"),
-        P("Incoming inspection X-rays one preform coupon per preform lot. Preforms are stored in nitrogen "
-          "cabinets. WI-0217 now requires a void check on the first three units of every lot."),
+        P("Incoming inspection X-rays one gasket coupon per gasket lot. Preforms are stored in air "
+          "cabinets. WI-0217 now requires a gap check on the first three units of every lot."),
         P("4 Containment", "Heading1"),
-        P("All WIP built with preform lot PF-3381 was placed on hold with code HL-VOID. Lots HM25-1190 and "
+        P("All WIP built with gasket lot PF-3381 was placed on hold with code HL-VOID. Lots HM25-1190 and "
           "HM25-1192 passed X-ray screening and were released."),
         PageBreak(),
         RLImage(str(scan), width=6.2 * inch, height=6.2 * inch * 2200 / 1700),
@@ -376,18 +376,18 @@ def make_wi(path: Path) -> None:
     from docx.shared import Inches
 
     d = docx.Document()
-    d.core_properties.title = "WI-0217 Die Attach"
-    d.add_heading("WI-0217 Die Attach", 0)
-    d.add_paragraph("Revision D. Applies to eutectic AuSn die attach on the Palomar 3800 die bonder.")
+    d.core_properties.title = "WI-0217 Motor Mount"
+    d.add_heading("WI-0217 Motor Mount", 0)
+    d.add_paragraph("Revision D. Applies to motor mount on the Press P-3800 mount press.")
     d.add_heading("Materials", 1)
-    d.add_paragraph("AuSn 80/20 preforms from an approved supplier, stored in a nitrogen cabinet. "
+    d.add_paragraph("80/20 gaskets from an approved supplier, stored in a air cabinet. "
                     "Preforms out of the cabinet for more than 8 hours must be scrapped.")
     d.add_heading("Procedure", 1)
     for step in [
-        "Verify the preform lot number against the traveler and scan it into the MES.",
+        "Verify the gasket lot number against the job sheet and scan it into the tracking system.",
         "Set the stage temperature to 335 °C and wait for the reading to stabilize within ±3 °C.",
-        "Set nitrogen forming gas flow to 20 L/min over the stage.",
-        "Scrub the die for 3 seconds with 50 gf bond force.",
+        "Set air forming gas flow to 20 L/min over the stage.",
+        "Press the mount for 3 seconds with 50 gf crimp force.",
         "X-ray the first three units of every lot before continuing (added after FA-25-031).",
     ]:
         d.add_paragraph(step, style="List Number")
@@ -395,11 +395,11 @@ def make_wi(path: Path) -> None:
     t = d.add_table(rows=2, cols=3)
     t.style = "Table Grid"
     t.cell(0, 0).text = "Package"
-    t.cell(0, 1).merge(t.cell(0, 2)).text = "Maximum void area (%)"
+    t.cell(0, 1).merge(t.cell(0, 2)).text = "Maximum gap area (%)"
     t.cell(1, 0).text = ""
     t.cell(1, 1).text = "X-ray"
-    t.cell(1, 2).text = "SAM"
-    for row in [["TO-254", "10", "15"], ["TO-257", "10", "15"], ["SMD-0.5", "15", "20"], ["SMD-1", "15", "20"]]:
+    t.cell(1, 2).text = "Gauge"
+    for row in [["H-254", "10", "15"], ["H-257", "10", "15"], ["HS-0.5", "15", "20"], ["HS-1", "15", "20"]]:
         cells = t.add_row().cells
         for c, v in zip(cells, row):
             c.text = v
@@ -423,7 +423,7 @@ def make_mrb_minutes(path: Path) -> None:
                     "waiver W-552.")
     d.add_paragraph("Lot HM25-1215: illegible laser marking on 64 units. Disposition REWORK: re-mark and "
                     "re-inspect.")
-    d.add_paragraph("Lot HM25-1222: fine leak failures on 3 of 400 units after burn-in. Disposition: "
+    d.add_paragraph("Lot HM25-1222: slow leak failures on 3 of 400 units after run-in. Disposition: "
                     "screen 100 percent and scrap failures.")
     d.add_heading("Action items", 1)
     t = d.add_table(rows=1, cols=3)
@@ -444,10 +444,10 @@ def make_mrb_minutes(path: Path) -> None:
 # ---------------------------------------------------------------------------
 SHIFT_LOG = """Shift log - Fairbury assembly - 2025-10-20 - night shift
 
-22:10  Started burn-in load BI-03 with lots HM25-1230 and HM25-1231 (160 h at 125°C).
-23:45  Wire bonder WB-04 alarm "bond placement error" twice on lot HM25-1228.
-02:15  Maintenance replaced the WB-04 capillary; alarm cleared after test bonds passed.
-05:40  Lid seal furnace F-3 alarm "zone 3 over-temp" – reset, zone 3 reading back to 320°C.
+22:10  Started run-in load BI-03 with lots HM25-1230 and HM25-1231 (160 h at 125°C).
+23:45  Hose crimper WB-04 alarm "crimp placement error" twice on lot HM25-1228.
+02:15  Maintenance replaced the WB-04 jaw; alarm cleared after test crimps passed.
+05:40  Curing oven F-3 alarm "zone 3 over-temp" – reset, zone 3 reading back to 320°C.
        Note: F-3 is running at 320°C under deviation DV-2025-044.
 06:30  Handoff to day shift. Open item: WB-04 pull test data for HM25-1228 still pending.
 """
@@ -455,30 +455,30 @@ SHIFT_LOG = """Shift log - Fairbury assembly - 2025-10-20 - night shift
 LINE_STATUS = """Line 2 status board export
 Updated 2025-10-21 07:00
 
-Die attach: running (Palomar 3800 #2)
-Wire bond: WB-04 back in production after capillary change
-Lid seal: F-3 on deviation DV-2025-044 (320°C), F-2 down for PM until 2025-10-23
-Burn-in: BI-05 and BI-06 available; BI-03 loaded
+Motor mount: running (Press P-3800 #2)
+Hose clamp: WB-04 back in production after jaw change
+Cabinet assembly: F-3 on deviation DV-2025-044 (320°C), F-2 down for PM until 2025-10-23
+Run-in: BI-05 and BI-06 available; BI-03 loaded
 """
 
-WIREBOND_MD = """---
-title: Troubleshooting - Wire Bond
+HOSECLAMP_MD = """---
+title: Troubleshooting - Hose Clamp
 owner: Process Engineering
 ---
 
-# Troubleshooting - Wire Bond
+# Troubleshooting - Hose Clamp
 
-Use this page when pull test results or bonder alarms point to a wire bond problem.
-Check the bonder's alarm history in the MES before changing anything.
+Use this page when pull test results or crimper alarms point to a hose clamp problem.
+Check the crimper's alarm history in the tracking system before changing anything.
 
 ## Symptoms and likely causes
 
 | Symptom | Likely cause | First action |
 | --- | --- | --- |
-| Heel cracks | Loop too low or excessive bond force | Check loop height and force settings |
-| Lift at first bond | Contaminated bond pad | Plasma clean the lot and re-test |
-| Low pull strength on all wires | Worn capillary or wedge | Replace the tool and re-qualify |
-| Bond placement error alarm | Vision misalignment | Re-teach the pattern recognition |
+| Frayed hose ends | Hose too short or excessive crimp force | Check hose length and force settings |
+| Lift at first clamp | Contaminated hose barb | Clean the lot and re-test |
+| Low pull strength on all wires | Worn jaw or wedge | Replace the tool and re-qualify |
+| Crimp placement error alarm | Vision misalignment | Re-teach the pattern recognition |
 
 ## Pull test minimums
 
@@ -491,19 +491,19 @@ SELECT lot_id, wire_id, pull_gf FROM pull_tests WHERE pull_gf < 150 AND test_dat
 ```
 """
 
-HOLDCODES_MD = """# MES Hold Codes
+HOLDCODES_MD = """# tracking system Hold Codes
 
-Every hold placed in the MES needs a reason code. Codes marked QE require
+Every hold placed in the tracking system needs a reason code. Codes marked QE require
 Quality Engineering approval to release.
 
 | Code | Meaning | Release needs |
 | --- | --- | --- |
-| HL-SEAL | Fine or gross leak failure (SOP-0412 Rev C) | QE |
-| HL-VOID | Die attach voiding above limit | QE |
-| HL-REL | Reliability screen failure (burn-in, temp cycle) | QE |
+| HL-SEAL | Fine or fast leak failure (SOP-0412 Rev C) | QE |
+| HL-VOID | Motor mount voiding above limit | QE |
+| HL-REL | Reliability screen failure (run-in, temp cycle) | QE |
 | HL-ESD | ESD control violation in the area | Supervisor |
 | HL-MARK | Marking defect | Supervisor |
-| HL-DOC | Missing or wrong traveler data | Supervisor |
+| HL-DOC | Missing or wrong job sheet data | Supervisor |
 
 HL-LEAK was the code for leak failures before SOP-0412 Rev C; it is retired.
 """
@@ -532,21 +532,21 @@ Work surfaces are checked monthly for resistance to ground.</p>
 <table>
   <caption>EPA zones</caption>
   <tr><th>Zone</th><th>Area</th><th>Owner</th></tr>
-  <tr><td>EPA-1</td><td>Die attach and wire bond</td><td>Assembly</td></tr>
-  <tr><td>EPA-2</td><td>Lid seal and leak test</td><td>Assembly</td></tr>
-  <tr><td>EPA-3</td><td>Electrical test and burn-in</td><td>Test</td></tr>
+  <tr><td>EPA-1</td><td>Motor mount and hose clamp</td><td>Assembly</td></tr>
+  <tr><td>EPA-2</td><td>Cabinet assembly and leak test</td><td>Assembly</td></tr>
+  <tr><td>EPA-3</td><td>Electrical test and run-in</td><td>Test</td></tr>
 </table>
-<p>Violations are logged in the MES with hold code HL-ESD on any lot in the area.</p>
+<p>Violations are logged in the tracking system with hold code HL-ESD on any lot in the area.</p>
 </main>
-<footer>Copyright Halden Microsystems. Internal use only.</footer>
+<footer>Copyright Halden Pumpworks. Internal use only.</footer>
 </body></html>
 """
 
-GOWNING_HTM = """<html><head><title>Cleanroom Gowning</title>
-<link rel="stylesheet" href="Cleanroom Gowning_files/style.css"></head>
+SAFETY_HTM = """<html><head><title>Workshop Safety</title>
+<link rel="stylesheet" href="Workshop Safety_files/style.css"></head>
 <body><div id="menu"><a href="/">Home</a></div>
-<h1>Cleanroom Gowning</h1>
-<p>The assembly cleanroom is ISO Class 7. Gown in this order before entering.</p>
+<h1>Workshop Safety</h1>
+<p>The assembly workshop is ISO Class 7. Gown in this order before entering.</p>
 <ol><li>Hair cover and beard cover</li><li>Hood</li><li>Coverall, zipped to the neck</li>
 <li>Boot covers</li><li>Gloves, cuffs over the coverall sleeves</li></ol>
 <p>Coveralls are changed weekly and gloves at every entry. A torn glove is replaced immediately.</p>
@@ -558,13 +558,13 @@ GOWNING_HTM = """<html><head><title>Cleanroom Gowning</title>
 # data files
 # ---------------------------------------------------------------------------
 CAL_ROWS: list[dict] = []
-BURNIN_ROWS: list[dict] = []
+RUNIN_ROWS: list[dict] = []
 YIELD_ROWS: list[dict] = []
 EQUIP_ROWS: list[dict] = []
 
 
 def make_calibration_csv(path: Path) -> None:
-    kinds = [("HLD", "Helium leak detector", 12), ("BPT", "Bond pull tester", 12), ("DST", "Die shear tester", 12),
+    kinds = [("HLD", "Air leak detector", 12), ("BPT", "Clamp pull tester", 12), ("DST", "Torque tester", 12),
              ("TC", "Thermocouple reader", 6), ("XR", "X-ray inspection", 12), ("MM", "Multimeter", 12),
              ("TM", "Torque meter", 6), ("ESD", "Wrist strap tester", 6)]
     owners = ["Metrology", "Assembly", "Test", "Reliability"]
@@ -584,7 +584,7 @@ def make_calibration_csv(path: Path) -> None:
             w.writerow([r["id"], r["desc"], r["last"].isoformat(), r["interval"], r["due"].isoformat(), r["owner"]])
 
 
-def make_burnin_csv(path: Path) -> None:
+def make_runin_csv(path: Path) -> None:
     parts = ["HM-R150C02", "HM-R200D03", "HM-R100B01", "HM-R250E04"]
     ovens = ["BI-01", "BI-02", "BI-03", "BI-04", "BI-05", "BI-06"]
     lot = 1100
@@ -596,14 +596,14 @@ def make_burnin_csv(path: Path) -> None:
             qty = R.choice([200, 250, 300, 400])
             rate = R.uniform(0.002, 0.02) if lot != 1187 else 0.11
             fail = int(round(qty * rate))
-            BURNIN_ROWS.append({"lot": f"HM25-{lot}", "part": R.choice(parts), "oven": oven,
+            RUNIN_ROWS.append({"lot": f"HM25-{lot}", "part": R.choice(parts), "oven": oven,
                                 "start": day, "hours": R.choice([160, 160, 160, 168, 240]),
                                 "qty_in": qty, "qty_pass": qty - fail, "qty_fail": fail})
         day += timedelta(days=1)
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["lot_id", "part_number", "oven", "start_date", "hours", "qty_in", "qty_pass", "qty_fail"])
-        for r in BURNIN_ROWS:
+        for r in RUNIN_ROWS:
             w.writerow([r["lot"], r["part"], r["oven"], r["start"].isoformat(), r["hours"], r["qty_in"],
                         r["qty_pass"], r["qty_fail"]])
 
@@ -652,10 +652,10 @@ def make_yield_xlsx(path: Path) -> None:
 def make_equipment_xlsx(path: Path) -> None:
     import openpyxl
 
-    areas = {"Die attach": ["Palomar 3800 die bonder", "Nitrogen cabinet"],
-             "Wire bond": ["K&S wedge bonder", "Bond pull tester"],
-             "Seal": ["Lid seal furnace", "Helium leak detector", "Gross leak bath"],
-             "Test": ["Parametric tester", "Burn-in oven"]}
+    areas = {"Motor mount": ["Press P-3800 mount press", "Air cabinet"],
+             "Hose clamp": ["K&S hose crimper", "Clamp pull tester"],
+             "Seal": ["Curing oven", "Air leak detector", "Fast leak bath"],
+             "Test": ["Parametric tester", "Run-in oven"]}
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Assets"
@@ -679,9 +679,9 @@ HOLD_SERVICE_CS = '''using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace Halden.Mes.Holds
+namespace Halden.Track.Holds
 {
-    /// <summary>Places and releases lot holds in the MES.</summary>
+    /// <summary>Places and releases lot holds in the tracking system.</summary>
     public sealed class HoldService
     {
         /// <summary>Hold codes whose release needs Quality Engineering approval.</summary>
@@ -731,7 +731,7 @@ namespace Halden.Mes.Holds
 REPO_CS = '''using System;
 using System.Collections.Generic;
 
-namespace Halden.Mes.Holds
+namespace Halden.Track.Holds
 {
     public interface IHoldRepository
     {
@@ -751,7 +751,7 @@ namespace Halden.Mes.Holds
 REASONS_CS = '''using System;
 using System.Collections.Generic;
 
-namespace Halden.Mes.Holds
+namespace Halden.Track.Holds
 {
     public sealed record Hold(string LotId, string Code, string Comment, string PlacedBy, DateTime PlacedUtc)
     {
@@ -773,7 +773,7 @@ namespace Halden.Mes.Holds
 }
 '''
 
-DESIGNER_CS = '''namespace Halden.Mes.Holds.Forms
+DESIGNER_CS = '''namespace Halden.Track.Holds.Forms
 {
     partial class MainForm
     {
@@ -818,7 +818,7 @@ def target_for(metric: str) -> float:
     return {"assembly": 0.975, "test": 0.93, "otd": 0.96}[metric]
 '''
 
-SPC_PY = '''"""Western Electric rules for the SPC charts on burn-in failure rates."""
+SPC_PY = '''"""Western Electric rules for the SPC charts on run-in failure rates."""
 
 from __future__ import annotations
 
@@ -850,7 +850,7 @@ def rule_4(points: list[float], mean: float) -> list[int]:
     return hits
 '''
 
-SCHEMA_SQL = """-- MES lot and hold schema (SQL Server)
+SCHEMA_SQL = """-- tracking system lot and hold schema (SQL Server)
 CREATE TABLE dbo.Lots (
     LotId       VARCHAR(20)  NOT NULL PRIMARY KEY,
     PartNumber  VARCHAR(20)  NOT NULL,
@@ -919,8 +919,8 @@ ORDER BY PartNumber, Week;
 
 
 def seed_sql() -> str:
-    rows = [("HL-SEAL", "Leak failure", 1), ("HL-VOID", "Die attach voids", 1), ("HL-REL", "Reliability failure", 1),
-            ("HL-ESD", "ESD violation", 1), ("HL-MARK", "Marking defect", 1), ("HL-DOC", "Traveler data", 1),
+    rows = [("HL-SEAL", "Leak failure", 1), ("HL-VOID", "Motor mount gap", 1), ("HL-REL", "Reliability failure", 1),
+            ("HL-ESD", "ESD violation", 1), ("HL-MARK", "Marking defect", 1), ("HL-DOC", "Job sheet data", 1),
             ("HL-LEAK", "Leak failure (retired)", 0)]
     rows += [(f"HL-X{i:02d}", f"Legacy reason {i}", 0) for i in range(30)]
     return "-- Reference data for dbo.HoldReasons\n" + "".join(
@@ -931,47 +931,47 @@ def seed_sql() -> str:
 # questions
 # ---------------------------------------------------------------------------
 def questions() -> list[dict]:
-    aug_bi03 = sum(r["qty_fail"] for r in BURNIN_ROWS if r["oven"] == "BI-03" and r["start"].month == 8)
-    worst = max(BURNIN_ROWS, key=lambda r: r["qty_fail"] / r["qty_in"])
+    aug_bi03 = sum(r["qty_fail"] for r in RUNIN_ROWS if r["oven"] == "BI-03" and r["start"].month == 8)
+    worst = max(RUNIN_ROWS, key=lambda r: r["qty_fail"] / r["qty_in"])
     asof = date(2025, 11, 1)
     overdue = sorted(r["id"] for r in CAL_ROWS if r["due"] < asof)
     low = min(YIELD_ROWS, key=lambda r: r["t_out"] / r["t_in"])
     seal_assets = sum(1 for r in EQUIP_ROWS if r["area"] == "Seal")
-    to257_200 = sorted(r[0] for r in SPEC_ROWS if r[4] == "TO-257" and r[1] == 200)
+    to257_200 = sorted(r[0] for r in SPEC_ROWS if r[4] == "H-257" and r[1] == 200)
     lowest_rds = min((r for r in SPEC_ROWS if r[1] == 150), key=lambda r: r[2])
-    new_ovens = sum(r["qty_in"] for r in BURNIN_ROWS if r["oven"] in ("BI-05", "BI-06"))
+    new_ovens = sum(r["qty_in"] for r in RUNIN_ROWS if r["oven"] in ("BI-05", "BI-06"))
 
     def q(id_, type_, question, answer, expect, source, sql=None, note=None):
         return {"id": id_, "type": type_, "question": question, "answer": answer, "expect": expect,
                 "source": source, "sql": sql, "note": note}
 
-    sop = "*SOP-0412 Hermetic Seal Leak Test Rev C*"
+    sop = "*SOP-0412 Sealed Pressure Leak Test Rev C*"
     return [
         # text PDF, current revision
-        q("sop-1", "pdf_text", "How long are parts observed in the gross leak bath?",
+        q("sop-1", "pdf_text", "How long are parts observed in the fast leak bath?",
           "30 seconds (SOP-0412 Rev C). Rev B said 60 seconds; Rev C is current.",
           [{"file": sop, "contains": "observe them for 30 seconds"}], "SOP-0412 Rev C, section 6",
           note="Revision trap: the archived Rev B says 60 seconds."),
-        q("sop-2", "pdf_text", "Which packages does the seal leak test procedure cover?",
-          "TO-254, TO-257, SMD-0.5 and SMD-1.", [{"file": sop, "contains": "SMD-1"}], "SOP-0412 Rev C, section 2"),
-        q("sop-3", "pdf_text", "What MES hold code is used for parts that fail leak test?",
+        q("sop-2", "pdf_text", "Which packages does the pressure leak test procedure cover?",
+          "H-254, H-257, HS-0.5 and HS-1.", [{"file": sop, "contains": "HS-1"}], "SOP-0412 Rev C, section 2"),
+        q("sop-3", "pdf_text", "What tracking system hold code is used for parts that fail leak test?",
           "HL-SEAL (it replaced HL-LEAK in Rev C).", [{"file": sop, "contains": "HL-SEAL"},
                                                     {"file": "*Hold Codes*", "contains": "HL-SEAL"}],
-          "SOP-0412 Rev C section 7; MES Hold Codes"),
+          "SOP-0412 Rev C section 7; tracking system Hold Codes"),
         q("sop-4", "pdf_table", "What bomb pressure and time are used for a 0.03 cc cavity?",
           "60 psig for 4 hours (cavity > 0.01 to 0.05 cc), max dwell 1 h, reject above 5.0E-8 atm-cc/s.",
           [{"file": sop, "contains": "0.05"}], "SOP-0412 Rev C, Table 2"),
         q("sop-5", "pdf_text", "How long are leak test records kept?", "Ten years.",
           [{"file": sop, "contains": "ten years"}], "SOP-0412 Rev C, section 8"),
         q("sop-6", "pdf_table", "What changed in revision C of SOP-0412?",
-          "Added SMD-1; gross leak observation reduced from 60 s to 30 s; hold code HL-LEAK renamed HL-SEAL.",
+          "Added HS-1; fast leak observation reduced from 60 s to 30 s; hold code HL-LEAK renamed HL-SEAL.",
           [{"file": sop, "contains": "renamed HL-SEAL"}], "SOP-0412 Rev C, revision history"),
-        q("fig-1", "figure", "What equipment is shown in the helium fine leak test setup figure?",
+        q("fig-1", "figure", "What equipment is shown in the air slow leak test setup figure?",
           "Bomb chamber BC-2 and leak detector HLD-7.", [{"file": sop, "kind": "figure"}],
           "SOP-0412 Rev C, Figure 1 (text read by OCR)"),
         # two-column newsletter
-        q("news-1", "pdf_two_column", "Which burn-in ovens were added in Q3 and how much capacity did they add?",
-          "BI-05 and BI-06, commissioned in August; +40 percent burn-in capacity.",
+        q("news-1", "pdf_two_column", "Which run-in ovens were added in Q3 and how much capacity did they add?",
+          "BI-05 and BI-06, commissioned in August; +40 percent run-in capacity.",
           [{"file": "*Newsletter*", "contains": "BI-06"}], "Reliability Newsletter Q3 2025"),
         q("news-2", "pdf_two_column", "How many days without a lost-time incident did the site reach?",
           "212 days (on September 30).", [{"file": "*Newsletter*", "contains": "212 days"}],
@@ -979,50 +979,50 @@ def questions() -> list[dict]:
         q("news-3", "pdf_two_column", "Who is the new metrology lead?", "Dana Whitfield (joined in September).",
           [{"file": "*Newsletter*", "contains": "Dana Whitfield"}], "Reliability Newsletter Q3 2025"),
         # large spec table -> tables.db
-        q("spec-1", "pdf_big_table", "Which TO-257 parts are rated for 200 V BVDSS?", ", ".join(to257_200),
+        q("spec-1", "pdf_big_table", "Which H-257 parts are rated for 200 V BVDSS?", ", ".join(to257_200),
           [{"file": "*DS-150*"}], "DS-150 (large table, also in tables.db)",
           sql="SELECT part_number FROM t_ds_150_device_parameter_specification_table_1 "
-              "WHERE package = 'TO-257' AND bvdss_v = 200 ORDER BY part_number"),
+              "WHERE package = 'H-257' AND bvdss_v = 200 ORDER BY part_number"),
         q("spec-2", "pdf_big_table", "Which 150 V part has the lowest RDS(on)?",
           f"{lowest_rds[0]} at {lowest_rds[2]:.1f} mOhm.", [{"file": "*DS-150*"}], "DS-150",
           sql="SELECT part_number, rds_on_max_mohm FROM t_ds_150_device_parameter_specification_table_1 "
               "WHERE bvdss_v = 150 ORDER BY rds_on_max_mohm LIMIT 1"),
         # table without ruling lines
-        q("asl-1", "pdf_unruled_table", "Who supplies the gold bond wire and when does their approval expire?",
+        q("asl-1", "pdf_unruled_table", "Who supplies the gold hose and when does their approval expire?",
           "Kestrel Wire Co.; approval expires 2026-03-31.", [{"file": "*Supplier*", "contains": "Kestrel"}],
           "Approved Supplier List"),
         q("asl-2", "pdf_unruled_table", "Which supplier's approval expires first?",
-          "Tallis Gas (helium), 2025-11-30.", [{"file": "*Supplier*", "contains": "Tallis"}],
+          "Tallis Gas (air), 2025-11-30.", [{"file": "*Supplier*", "contains": "Tallis"}],
           "Approved Supplier List"),
         # half-scanned FA report
         q("fa-1", "pdf_mixed", "What was the root cause of customer return CR-2207?",
-          "Die attach voiding (18-31 percent vs 10 percent limit) on lot HM25-1187, caused by oxidized AuSn "
-          "preform lot PF-3381.", [{"file": "*FA-25-031*"}, {"file": "*Newsletter*", "contains": "CR-2207"}],
+          "Motor mount voiding (18-31 percent vs 10 percent limit) on lot HM25-1187, caused by oxidized "
+          "gasket lot PF-3381.", [{"file": "*FA-25-031*"}, {"file": "*Newsletter*", "contains": "CR-2207"}],
           "FA-25-031; newsletter"),
         q("fa-2", "pdf_scanned_page", "What was the disposition of lot HM25-1187 and who approved it?",
           "Scrap the entire lot (1,240 units); approved by R. Okafor, Quality Manager, 2025-08-19.",
           [{"file": "*FA-25-031*", "page": 3}], "FA-25-031 page 3 (scanned, OCR)"),
-        q("fa-3", "pdf_text", "Which lots were held because of preform lot PF-3381 and later released?",
+        q("fa-3", "pdf_text", "Which lots were held because of gasket lot PF-3381 and later released?",
           "HM25-1190 and HM25-1192 passed X-ray and were released (hold code HL-VOID).",
           [{"file": "*FA-25-031*", "contains": "HM25-1190"}], "FA-25-031 section 4"),
         # scans
-        q("dv-1", "pdf_scanned", "Why is furnace F-3 running at 320 °C?",
+        q("dv-1", "pdf_scanned", "Why is oven F-3 running at 320 °C?",
           "Deviation DV-2025-044: thermocouple TC-3 replacement is on backorder, so F-3 runs at 320 °C instead "
           "of 330 °C from 2025-10-01 to 2025-10-31, with 5 extra fine-leak samples per lot.",
           [{"file": "*DV-2025-044*"}, {"file": "*shift_log*", "contains": "DV-2025-044"}],
           "DV-2025-044 (scanned); shift log"),
         q("dv-2", "pdf_scanned", "Who approved deviation DV-2025-044?", "J. Marsh, Quality Engineering.",
           [{"file": "*DV-2025-044*", "page": 2}], "DV-2025-044 page 2 (scanned)"),
-        q("cal-1", "pdf_scanned", "When is the helium leak detector HLD-7 due for calibration?",
+        q("cal-1", "pdf_scanned", "When is the air leak detector HLD-7 due for calibration?",
           "2026-06-12 (calibrated 2025-06-12, certificate CC-88213).",
           [{"file": "*CC-88213*"}, {"file": "*calibration_register*", "kind": "table_card"}],
           "Calibration certificate CC-88213 (scanned); calibration register"),
         # Word
-        q("wi-1", "docx", "What stage temperature is used for die attach?", "335 °C, stable within ±3 °C.",
-          [{"file": "*WI-0217*", "contains": "335"}], "WI-0217 Die Attach, step 2"),
-        q("wi-2", "docx_table", "What is the maximum void area for SMD-1 by SAM?", "20 percent.",
-          [{"file": "*WI-0217*", "contains": "SAM"}], "WI-0217 void limits table (merged header)"),
-        q("wi-3", "docx", "How long can AuSn preforms be out of the nitrogen cabinet?",
+        q("wi-1", "docx", "What stage temperature is used for motor mount?", "335 °C, stable within ±3 °C.",
+          [{"file": "*WI-0217*", "contains": "335"}], "WI-0217 Motor Mount, step 2"),
+        q("wi-2", "docx_table", "What is the maximum gap area for HS-1 by Gauge?", "20 percent.",
+          [{"file": "*WI-0217*", "contains": "Gauge"}], "WI-0217 gap limits table (merged header)"),
+        q("wi-3", "docx", "How long can gaskets be out of the air cabinet?",
           "8 hours; after that they must be scrapped.", [{"file": "*WI-0217*", "contains": "8 hours"}],
           "WI-0217 Materials"),
         q("mrb-1", "docx", "What did the MRB decide for lot HM25-1201?",
@@ -1032,35 +1032,35 @@ def questions() -> list[dict]:
           "D. Whitfield, due 2025-11-15.", [{"file": "*MRB Minutes*", "contains": "Retrain"}],
           "MRB minutes 2025-10-14, action items"),
         # text, markdown, html
-        q("log-1", "txt", "What happened to wire bonder WB-04 on the night shift of 2025-10-20?",
-          "Bond placement error alarm twice on lot HM25-1228; maintenance replaced the capillary at 02:15 and the "
+        q("log-1", "txt", "What happened to hose crimper WB-04 on the night shift of 2025-10-20?",
+          "Crimp placement error alarm twice on lot HM25-1228; maintenance replaced the jaw at 02:15 and the "
           "alarm cleared.", [{"file": "*shift_log*", "contains": "WB-04"}], "Shift log 2025-10-20"),
-        q("log-2", "txt", "When does furnace F-2 come back from PM?", "2025-10-23.",
+        q("log-2", "txt", "When does oven F-2 come back from PM?", "2025-10-23.",
           [{"file": "*line2_status*", "contains": "F-2"}], "Line 2 status"),
-        q("md-1", "markdown", "What usually causes heel cracks in wire bonds?",
-          "Loop too low or excessive bond force; check loop height and force settings.",
-          [{"file": "*Wire Bond*", "contains": "Heel cracks"}], "Troubleshooting - Wire Bond"),
+        q("md-1", "markdown", "What usually causes heel cracks in hose clamps?",
+          "Hose too short or excessive crimp force; check hose length and force settings.",
+          [{"file": "*Hose Clamp*", "contains": "Frayed hose ends"}], "Troubleshooting - Hose Clamp"),
         q("md-2", "markdown", "Which hold codes need QE approval to release?", "HL-SEAL, HL-VOID and HL-REL.",
           [{"file": "*Hold Codes*", "contains": "HL-REL"}, {"file": "*HoldService*", "contains": "QeApprovalCodes"}],
-          "MES Hold Codes; HoldService.cs"),
+          "tracking system Hold Codes; HoldService.cs"),
         q("html-1", "html", "What resistance range must a wrist strap test pass?", "750 kilohm to 35 megohm.",
           [{"file": "*ESD Program*", "contains": "750 kilohm"}], "ESD Control Program (intranet)"),
-        q("html-2", "html", "How often are coveralls changed in the cleanroom?",
-          "Weekly (gloves at every entry).", [{"file": "*Cleanroom Gowning*", "contains": "weekly"}],
-          "Cleanroom Gowning (.htm)"),
+        q("html-2", "html", "How often are coveralls changed in the workshop?",
+          "Weekly (gloves at every entry).", [{"file": "*Workshop Safety*", "contains": "weekly"}],
+          "Workshop Safety (.htm)"),
         # spreadsheets and CSV -> SQL
-        q("csv-1", "csv_sql", "How many units failed burn-in in oven BI-03 in August 2025?", str(aug_bi03),
-          [{"file": "*burnin_results*", "kind": "table_card"}], "burnin_results_2025Q3.csv",
-          sql="SELECT SUM(qty_fail) FROM t_burnin_results_2025q3 WHERE oven = 'BI-03' "
+        q("csv-1", "csv_sql", "How many units failed run-in in oven BI-03 in August 2025?", str(aug_bi03),
+          [{"file": "*runin_results*", "kind": "table_card"}], "runin_results_2025Q3.csv",
+          sql="SELECT SUM(qty_fail) FROM t_runin_results_2025q3 WHERE oven = 'BI-03' "
               "AND start_date BETWEEN '2025-08-01' AND '2025-08-31'"),
-        q("csv-2", "csv_sql", "Which lot had the highest burn-in failure rate in Q3?",
+        q("csv-2", "csv_sql", "Which lot had the highest run-in failure rate in Q3?",
           f"{worst['lot']} ({worst['qty_fail']} of {worst['qty_in']} failed).",
-          [{"file": "*burnin_results*", "kind": "table_card"}], "burnin_results_2025Q3.csv",
-          sql="SELECT lot_id, qty_fail, qty_in, 1.0 * qty_fail / qty_in AS rate FROM t_burnin_results_2025q3 "
+          [{"file": "*runin_results*", "kind": "table_card"}], "runin_results_2025Q3.csv",
+          sql="SELECT lot_id, qty_fail, qty_in, 1.0 * qty_fail / qty_in AS rate FROM t_runin_results_2025q3 "
               "ORDER BY rate DESC LIMIT 1"),
         q("csv-3", "csv_sql", "How many units went through the new ovens BI-05 and BI-06 in Q3?", str(new_ovens),
-          [{"file": "*burnin_results*", "kind": "table_card"}], "burnin_results_2025Q3.csv",
-          sql="SELECT SUM(qty_in) FROM t_burnin_results_2025q3 WHERE oven IN ('BI-05', 'BI-06')"),
+          [{"file": "*runin_results*", "kind": "table_card"}], "runin_results_2025Q3.csv",
+          sql="SELECT SUM(qty_in) FROM t_runin_results_2025q3 WHERE oven IN ('BI-05', 'BI-06')"),
         q("csv-4", "csv_semicolon", "Which instruments were overdue for calibration on 2025-11-01?",
           ", ".join(overdue) or "None.", [{"file": "*calibration_register*", "kind": "table_card"}],
           "calibration_register.csv (semicolon-delimited)",
@@ -1107,26 +1107,26 @@ def questions() -> list[dict]:
 def main(out: Path) -> None:
     docs = out / "docs"
     for sub in ("procedures/archive", "newsletters", "specs", "suppliers", "quality/scans", "work-instructions",
-                "meetings", "logs", "kb", "intranet/Cleanroom Gowning_files", "data",
-                "code/mes-holds/bin/Debug", "code/mes-holds/Forms", "code/yield_tools", "code/sql/reports"):
+                "meetings", "logs", "kb", "intranet/Workshop Safety_files", "data",
+                "code/track-holds/bin/Debug", "code/track-holds/Forms", "code/yield_tools", "code/sql/reports"):
         (docs / sub).mkdir(parents=True, exist_ok=True)
-    make_sop(docs / "procedures" / "SOP-0412 Hermetic Seal Leak Test Rev C.pdf", "C")
-    make_sop(docs / "procedures" / "archive" / "SOP-0412 Hermetic Seal Leak Test Rev B.pdf", "B")
-    (docs / "procedures" / "SOP-0412 Hermetic Seal Leak Test Rev C (copy).pdf").write_bytes(
-        (docs / "procedures" / "SOP-0412 Hermetic Seal Leak Test Rev C.pdf").read_bytes())
+    make_sop(docs / "procedures" / "SOP-0412 Sealed Pressure Leak Test Rev C.pdf", "C")
+    make_sop(docs / "procedures" / "archive" / "SOP-0412 Sealed Pressure Leak Test Rev B.pdf", "B")
+    (docs / "procedures" / "SOP-0412 Sealed Pressure Leak Test Rev C (copy).pdf").write_bytes(
+        (docs / "procedures" / "SOP-0412 Sealed Pressure Leak Test Rev C.pdf").read_bytes())
     make_newsletter(docs / "newsletters" / "Reliability Newsletter 2025 Q3.pdf")
     make_spec(docs / "specs" / "DS-150 Device Parameter Specification.pdf")
     make_supplier_list(docs / "suppliers" / "Approved Supplier List.pdf")
     make_fa_report(docs / "quality" / "FA-25-031 Failure Analysis Report.pdf")
     make_scan_pdf(docs / "quality" / "scans" / "DV-2025-044 Deviation (scan).pdf", [
         scanned_page([("DEVIATION DV-2025-044", 56, True), ("", 0, False),
-                      ("Process: Lid seal furnace F-3", 38, False),
+                      ("Process: Curing oven F-3", 38, False),
                       ("Requirement: seal profile peak 330 C (SOP-0388)", 38, False),
                       ("Deviation: run F-3 at 320 C peak", 38, False),
                       ("Period: 2025-10-01 to 2025-10-31", 38, False), ("", 0, False),
                       ("Reason: replacement thermocouple TC-3", 38, False),
                       ("is on backorder; zone 3 reads high.", 38, False), ("", 0, False),
-                      ("Risk control: fine leak test 5 extra", 38, False),
+                      ("Risk control: slow leak test 5 extra", 38, False),
                       ("samples per lot sealed on F-3.", 38, False)], rotate=0.8, seed=3),
         scanned_page([("DV-2025-044 page 2", 44, True), ("", 0, False),
                       ("Approvals", 44, True),
@@ -1137,33 +1137,33 @@ def main(out: Path) -> None:
     ], "DV-2025-044 Deviation")
     make_scan_pdf(docs / "quality" / "scans" / "Calibration Certificate CC-88213 (scan).pdf", [
         scanned_page([("CERTIFICATE OF CALIBRATION", 56, True), ("Certificate No. CC-88213", 40, False),
-                      ("", 0, False), ("Instrument: Helium leak detector", 38, False),
+                      ("", 0, False), ("Instrument: Air leak detector", 38, False),
                       ("Asset ID: HLD-7", 38, False), ("Calibration date: 2025-06-12", 38, False),
                       ("Next due: 2026-06-12", 38, False),
-                      ("Standard leak: 2.1E-8 atm-cc/s helium", 38, False),
+                      ("Standard leak: 2.1E-8 atm-cc/s air", 38, False),
                       ("As found: in tolerance", 38, False), ("As left: in tolerance", 38, False), ("", 0, False),
                       ("Technician: M. Osei, Vacutek Services", 38, False)], rotate=0.4, seed=5)],
         "Calibration Certificate CC-88213")
-    make_wi(docs / "work-instructions" / "WI-0217 Die Attach.docx")
+    make_wi(docs / "work-instructions" / "WI-0217 Motor Mount.docx")
     make_mrb_minutes(docs / "meetings" / "MRB Minutes 2025-10-14.docx")
     (docs / "logs" / "shift_log_2025-10-20.txt").write_text(SHIFT_LOG, encoding="cp1252")
     (docs / "logs" / "line2_status.txt").write_text(LINE_STATUS, encoding="utf-8")
-    (docs / "kb" / "Troubleshooting - Wire Bond.md").write_text(WIREBOND_MD, encoding="utf-8")
-    (docs / "kb" / "MES Hold Codes.md").write_text(HOLDCODES_MD, encoding="utf-8")
+    (docs / "kb" / "Troubleshooting - Hose Clamp.md").write_text(HOSECLAMP_MD, encoding="utf-8")
+    (docs / "kb" / "tracking system Hold Codes.md").write_text(HOLDCODES_MD, encoding="utf-8")
     (docs / "intranet" / "ESD Program.html").write_text(ESD_HTML, encoding="utf-8")
-    (docs / "intranet" / "Cleanroom Gowning.htm").write_text(GOWNING_HTM, encoding="utf-8")
-    (docs / "intranet" / "Cleanroom Gowning_files" / "style.css").write_text("body{margin:0}", encoding="utf-8")
-    (docs / "intranet" / "Cleanroom Gowning_files" / "menu.html").write_text("<a href='/'>Home</a>", encoding="utf-8")
+    (docs / "intranet" / "Workshop Safety.htm").write_text(SAFETY_HTM, encoding="utf-8")
+    (docs / "intranet" / "Workshop Safety_files" / "style.css").write_text("body{margin:0}", encoding="utf-8")
+    (docs / "intranet" / "Workshop Safety_files" / "menu.html").write_text("<a href='/'>Home</a>", encoding="utf-8")
     make_calibration_csv(docs / "data" / "calibration_register.csv")
-    make_burnin_csv(docs / "data" / "burnin_results_2025Q3.csv")
+    make_runin_csv(docs / "data" / "runin_results_2025Q3.csv")
     make_yield_xlsx(docs / "data" / "Yield Tracker FY25.xlsx")
     make_equipment_xlsx(docs / "data" / "Equipment List.xlsx")
     (docs / "data" / "~$Yield Tracker FY25.xlsx").write_bytes(b"lock file")
-    (docs / "code" / "mes-holds" / "HoldService.cs").write_text(HOLD_SERVICE_CS, encoding="utf-8")
-    (docs / "code" / "mes-holds" / "IHoldRepository.cs").write_text(REPO_CS, encoding="utf-8")
-    (docs / "code" / "mes-holds" / "HoldReasons.cs").write_text(REASONS_CS, encoding="utf-8")
-    (docs / "code" / "mes-holds" / "Forms" / "MainForm.Designer.cs").write_text(DESIGNER_CS, encoding="utf-8")
-    (docs / "code" / "mes-holds" / "bin" / "Debug" / "Generated.cs").write_text("class Generated {}", encoding="utf-8")
+    (docs / "code" / "track-holds" / "HoldService.cs").write_text(HOLD_SERVICE_CS, encoding="utf-8")
+    (docs / "code" / "track-holds" / "IHoldRepository.cs").write_text(REPO_CS, encoding="utf-8")
+    (docs / "code" / "track-holds" / "HoldReasons.cs").write_text(REASONS_CS, encoding="utf-8")
+    (docs / "code" / "track-holds" / "Forms" / "MainForm.Designer.cs").write_text(DESIGNER_CS, encoding="utf-8")
+    (docs / "code" / "track-holds" / "bin" / "Debug" / "Generated.cs").write_text("class Generated {}", encoding="utf-8")
     (docs / "code" / "yield_tools" / "yield_report.py").write_text(YIELD_PY, encoding="utf-8")
     (docs / "code" / "yield_tools" / "spc.py").write_text(SPC_PY, encoding="utf-8")
     (docs / "code" / "sql" / "mes_schema.sql").write_text(SCHEMA_SQL, encoding="utf-8")
@@ -1174,10 +1174,10 @@ def main(out: Path) -> None:
     qdir = out / "questions"
     qdir.mkdir(exist_ok=True)
     with open(qdir / "golden.jsonl", "w", encoding="utf-8") as fh:
-        fh.write("# Halden Microsystems test corpus. expect: [] = not answerable from the documents.\n")
+        fh.write("# Halden Pumpworks test corpus. expect: [] = not answerable from the documents.\n")
         for x in qs:
             fh.write(json.dumps({k: x[k] for k in ("id", "type", "question", "expect")}) + "\n")
-    lines = ["# Halden Microsystems test corpus: questions and expected answers", "",
+    lines = ["# Halden Pumpworks test corpus: questions and expected answers", "",
              "All companies, people, parts and numbers here are fictional.", "",
              "Build `docs/`, then run `rag eval <workspace> questions/golden.jsonl` for retrieval scores. "
              "Ask the same questions through your agent and compare with the answers below. Questions marked "
@@ -1197,10 +1197,10 @@ def main(out: Path) -> None:
         lines.append("")
     (qdir / "ANSWERS.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "README.md").write_text(
-        "# Halden Microsystems test corpus\n\nFictional documents for testing the RAG Builder end to end.\n\n"
+        "# Halden Pumpworks test corpus\n\nFictional documents for testing the RAG Builder end to end.\n\n"
         "```\nrag init halden-ws\nrag build halden-ws docs\nrag eval halden-ws questions/golden.jsonl\n```\n\n"
         "`questions/ANSWERS.md` has the expected answers. Excluded on purpose: `~$` lock files, "
-        "`bin/`, `*.Designer.cs`, and the `Cleanroom Gowning_files/` asset folder.\n", encoding="utf-8")
+        "`bin/`, `*.Designer.cs`, and the `Workshop Safety_files/` asset folder.\n", encoding="utf-8")
     print(f"wrote {sum(1 for _ in docs.rglob('*') if _.is_file())} files and {len(qs)} questions to {out}")
 
 

@@ -77,9 +77,9 @@ def sheet_image(path: Path, rows: list[list[str]] = SHEET, *, excel: bool = Fals
 
 def prose_image(path: Path) -> Path:
     """A screenshot of a paragraph: text, not a table."""
-    lines = ["Seal the lid within four hours of die attach. If the window is",
+    lines = ["Fit the cover within four hours of motor mount. If the window is",
              "missed, bake the parts at 150 C for 24 hours before sealing and",
-             "record the bake on the traveler. Parts that wait longer than",
+             "record the bake on the job sheet. Parts that wait longer than",
              "seven days are scrapped and the lot is reviewed by the MRB."]
     f = _font(18)
     img = Image.new("RGB", (640, 40 + 30 * len(lines)), "white")
@@ -170,13 +170,13 @@ def flowchart_pdf(path: Path) -> Path:
     open arrowheads, a branch, a two-word label, a plain link and a two-way arrow."""
     c, H = _canvas(path)
     _text(c, H, 72, 72, "3.2 Lot disposition", 14, "Helvetica-Bold")
-    _text(c, H, 72, 95, "Every lot that fails fine leak after burn-in follows the process below before")
+    _text(c, H, 72, 95, "Every lot that fails slow leak after run-in follows the process below before")
     _text(c, H, 72, 108, "it can be released or scrapped. The MRB decides within two shifts.")
     cx, top = 306, 150
-    _shape(c, H, cx - 60, top, 120, 30, ["Start: lot fails", "fine leak"], "round")
-    _shape(c, H, cx - 70, top + 60, 140, 34, ["Place lot on hold", "(mes-cli holds --reason SealLeak)"])
+    _shape(c, H, cx - 60, top, 120, 30, ["Start: lot fails", "slow leak"], "round")
+    _shape(c, H, cx - 70, top + 60, 140, 34, ["Place lot on hold", "(track-cli holds --reason PressureLeak)"])
     _shape(c, H, cx - 60, top + 125, 120, 60, ["Leak rate", "< 5E-8 atm·cc/s?"], "diamond")
-    _shape(c, H, cx + 120, top + 136, 120, 38, ["Retest with", "helium bomb"])
+    _shape(c, H, cx + 120, top + 136, 120, 38, ["Retest with", "air bomb"])
     _shape(c, H, cx - 240, top + 136, 120, 38, ["Submit to MRB", "for review"])
     _shape(c, H, cx - 240, top + 230, 120, 34, ["Scrap lot"])
     _shape(c, H, cx + 120, top + 230, 120, 34, ["Release lot", "to stock"])
@@ -192,14 +192,14 @@ def flowchart_pdf(path: Path) -> Path:
     _text(c, H, cx + 75, top + 150, "Yes", 8)
     _text(c, H, cx - 100, top + 150, "No", 8)
     c.setFont("Helvetica-Oblique", 9)
-    c.drawCentredString(cx, H - (top + 375), "Figure 4. Lot disposition after a fine leak failure")
+    c.drawCentredString(cx, H - (top + 375), "Figure 4. Lot disposition after a slow leak failure")
     _text(c, H, 72, top + 410, "Lots released after a retest keep their original date code.")
     c.showPage()
 
     # page 2
     c.rect(36, 36, 612 - 72, H - 72)                                    # page frame
-    _text(c, H, 60, 70, "3.3 Gross leak check", 14, "Helvetica-Bold")
-    _text(c, H, 60, 92, "Operators run the gross leak check on a sample from every sealed lot; QA owns")
+    _text(c, H, 60, 70, "3.3 Fast leak check", 14, "Helvetica-Bold")
+    _text(c, H, 60, 92, "Operators run the fast leak check on a sample from every sealed lot; QA owns")
     _text(c, H, 60, 105, "the follow-up when bubbles are seen.")
     lane_top = 130
     c.rect(60, H - (lane_top + 330), 300, 330)                          # lane: Operator
@@ -207,10 +207,10 @@ def flowchart_pdf(path: Path) -> Path:
     _text(c, H, 66, lane_top + 14, "Operator", 9, "Helvetica-Bold")
     _text(c, H, 366, lane_top + 14, "QA Engineer", 9, "Helvetica-Bold")
     _shape(c, H, 140, lane_top + 30, 120, 30, ["Pull 5-unit sample"], "filled")
-    _shape(c, H, 140, lane_top + 90, 120, 30, ["Run gross leak test"], "filled")
+    _shape(c, H, 140, lane_top + 90, 120, 30, ["Run fast leak test"], "filled")
     _shape(c, H, 140, lane_top + 150, 120, 56, ["Bubbles", "seen?"], "diamond")
     _shape(c, H, 140, lane_top + 250, 120, 30, ["Continue to marking"], "filled")
-    _shape(c, H, 395, lane_top + 160, 120, 34, ["Log failure", "in MES"], "filled")
+    _shape(c, H, 395, lane_top + 160, 120, 34, ["Log failure", "in tracking system"], "filled")
     _shape(c, H, 395, lane_top + 235, 120, 30, ["Notify QA engineer"], "filled")
     _shape(c, H, 395, lane_top + 290, 120, 30, ["Place lot on hold"], "filled")
     _shape(c, H, 395, lane_top + 40, 120, 30, ["QA on-call phone"], "filled")
@@ -233,8 +233,8 @@ def flowchart_pdf(path: Path) -> Path:
     c.setDash()
     _text(c, H, 272, lane_top + 172, "Not OK", 8)
     _text(c, H, 205, lane_top + 230, "OK", 8)
-    _text(c, H, 60, lane_top + 360, "Figure 5. Gross leak check", 9, "Helvetica-Oblique")
-    _text(c, H, 60, lane_top + 390, "Record every check on the lot traveler, including passes.")
+    _text(c, H, 60, lane_top + 360, "Figure 5. Fast leak check", 9, "Helvetica-Oblique")
+    _text(c, H, 60, lane_top + 390, "Record every check on the lot job sheet, including passes.")
     c.showPage()
     c.save()
     return path
@@ -244,7 +244,7 @@ def lookalikes_pdf(path: Path) -> Path:
     """Drawings that are not flowcharts: a table made of touching boxes with rules, a bar chart,
     and three text boxes with no connectors."""
     c, H = _canvas(path)
-    _text(c, H, 72, 72, "Burn-in ovens", 14, "Helvetica-Bold")
+    _text(c, H, 72, 72, "Run-in ovens", 14, "Helvetica-Bold")
     cols, rows = [72, 172, 272, 372], [100, 124, 148, 172]
     data = [["Oven", "Max temp", "Slots"], ["OV-1", "150 C", "48"], ["OV-2", "150 C", "48"], ["OV-3", "175 C", "32"]]
     for r, row in enumerate(data):
@@ -272,10 +272,10 @@ def picture_pdf(path: Path, pictures: dict[str, Path]) -> Path:
     """Page 1: a spreadsheet picture with a caption below it, then a prose screenshot.
     Page 2: an Excel screenshot (row numbers and column letters) of a 40-row sheet."""
     c, H = _canvas(path)
-    _text(c, H, 72, 72, "4 Burn-in results", 14, "Helvetica-Bold")
+    _text(c, H, 72, 72, "4 Run-in results", 14, "Helvetica-Bold")
     _text(c, H, 72, 95, "The March lots are summarised below.")
     c.drawImage(str(pictures["sheet"]), 72, H - 110 - 160, width=440, height=160)
-    _text(c, H, 72, 290, "Table 2. Burn-in yields by lot", 9, "Helvetica-Oblique")
+    _text(c, H, 72, 290, "Table 2. Run-in yields by lot", 9, "Helvetica-Oblique")
     c.drawImage(str(pictures["prose"]), 72, H - 320 - 100, width=440, height=100)
     _text(c, H, 72, 440, "Lot L24-0819 was scrapped after the oven alarm.")
     c.showPage()
@@ -350,7 +350,7 @@ def procedure_pdf(path: Path, pics: dict[str, Path]) -> Path:
     """A work instruction: title block and revision history, numbered sections, then a
     STEP | PROCEDURE | DESCRIPTION | VISUAL grid that runs over three pages."""
     c, H = _canvas(path)
-    title, spec, rev, pages = "Lid Seal Work Instruction", "WI-0042", "B", 4
+    title, spec, rev, pages = "Cabinet Assembly Work Instruction", "WI-0042", "B", 4
     # page 1: title block
     c.rect(40, H - 150, 320, 50)
     c.rect(360, H - 150, 210, 50)
@@ -396,24 +396,24 @@ def procedure_pdf(path: Path, pics: dict[str, Path]) -> Path:
     _text(c, H, 36, 100, "1.0", 10, "Helvetica-Bold")
     _text(c, H, 86, 100, "Purpose:", 10, "Helvetica-Bold")
     _text(c, H, 86, 120, "1.1", 10)
-    _text(c, H, 136, 120, "This document gives the work instructions for sealing lids on the seam sealer.", 10)
+    _text(c, H, 136, 120, "This document gives the work instructions for assembling cabinets on the bench press.", 10)
     _text(c, H, 36, 150, "2.0", 10, "Helvetica-Bold")
     _text(c, H, 86, 150, "Procedure:", 10, "Helvetica-Bold")
     grid(170, 690, header=True)
     _text(c, H, 22, 196, "2.1", 10)
-    _text(c, H, 54, 196, "Check oven", 10)
+    _text(c, H, 54, 196, "Check gauge", 10)
     _text(c, H, 54, 208, "calibration", 10)
-    bullets(156, 196, [["The calibration stickers are on the", "left and right oven doors."],
-                       ["Do not use an oven whose sticker", "has expired."]])
+    bullets(156, 196, [["The calibration stickers are on the", "left and right gauges."],
+                       ["Do not use a gauge whose sticker", "has expired."]])
     c.drawImage(str(pics["sign"]), 350, H - 330, width=200, height=140)
     _text(c, H, 54, 380, "Log in (as required)", 10)
-    bullets(156, 380, [["Start the sealer software from the", "desktop shortcut."], ["Enter the user name and password", "shown in the table."]])
-    for r, row in enumerate([["System", "User ID", "Password"], ["SM8500", "operator", "oper"]]):
+    bullets(156, 380, [["Start the press software from the", "desktop shortcut."], ["Enter the user name and password", "shown in the table."]])
+    for r, row in enumerate([["System", "User ID", "Password"], ["BP-200", "operator", "oper"]]):
         for k, val in enumerate(row):
             c.rect(350 + 75 * k, H - 380 - 14 * (r + 1), 75, 14)
             _text(c, H, 353 + 75 * k, 380 + 14 * r + 11, val, 10)
     c.drawImage(str(pics["plain"]), 360, H - 620, width=180, height=130)
-    _text(c, H, 156, 668, "Note: should the E stop paddle be pressed by mistake or otherwise", 10)
+    _text(c, H, 156, 668, "Note: should the emergency stop be pressed by mistake or otherwise", 10)
     c.showPage()
 
     # page 3: the grid carries on with no header row
@@ -422,26 +422,26 @@ def procedure_pdf(path: Path, pics: dict[str, Path]) -> Path:
     _text(c, H, 156, 96, "see section 2.3 before restarting.", 10)
     c.line(20, H - 120, 592, H - 120)
     _text(c, H, 22, 136, "2.2", 10)
-    _text(c, H, 54, 136, "Load the oven", 10)
-    y = bullets(156, 136, [["Place lids and headers on a metal tray."], ["Close the outer door and hold it until", "the latch closes."],
-                           ["Select the four hour bake schedule."]])
+    _text(c, H, 54, 136, "Load the press", 10)
+    y = bullets(156, 136, [["Place covers and frames on a metal tray."], ["Close the outer door and hold it until", "the latch closes."],
+                           ["Select the standard pressing program."]])
     c.drawImage(str(pics["plain2"]), 360, H - 300, width=200, height=150)
     c.setFillColorRGB(0.8, 0, 0)
-    _text(c, H, 340, 330, "DO NOT SEAL PARTS IF THE INDICATORS ARE RED", 8, "Helvetica-Bold")
+    _text(c, H, 340, 330, "DO NOT PRESS PARTS IF THE INDICATORS ARE RED", 8, "Helvetica-Bold")
     c.setFillColorRGB(0, 0, 0)
     _text(c, H, 22, 420, "2.3", 10)                      # a new step part-way down the same cell
     _text(c, H, 54, 420, "Finish up.", 10)
-    bullets(156, 420, [["Remove completed parts through the", "oven pass-through."], ["Record the lot on the traveler."]])
+    bullets(156, 420, [["Remove completed parts from the", "output tray."], ["Record the lot on the job sheet."]])
     c.showPage()
 
     # page 4: the last part of the grid, then ordinary text again
     _frame(c, H, 4, pages, title, spec, rev)
     grid(80, 260)
-    bullets(156, 96, [["Wipe down the glove box floor."], ["Log out of the sealer software."]])
+    bullets(156, 96, [["Wipe down the work cell floor."], ["Log out of the press software."]])
     _text(c, H, 36, 300, "3.0", 10, "Helvetica-Bold")
     _text(c, H, 86, 300, "Records:", 10, "Helvetica-Bold")
     _text(c, H, 86, 320, "3.1", 10)
-    _text(c, H, 136, 320, "Seal records are kept for five years.", 10)
+    _text(c, H, 136, 320, "Assembly records are kept for five years.", 10)
     c.showPage()
     c.save()
     return path
@@ -497,15 +497,15 @@ def visio_pdf(path: Path) -> Path:
         c.drawPath(p, stroke=1, fill=1)
         c.setFillColorRGB(0, 0, 0)
 
-    _text(c, H, 60, 60, "Leak failure review", 13, "Helvetica-Bold")
-    box(70, 90, 120, 34, ["Review the failure"])
-    box(70, 160, 120, 60, ["Out of family", "before test?"], "diamond")
-    box(260, 172, 130, 36, ["Check earlier data", "for outliers"], highlight=True)
-    box(70, 270, 120, 36, ["Review work order", "history"])
-    box(260, 270, 130, 36, ["Consider a rescreen"])
-    box(70, 350, 120, 36, ["Send part for", "inspection"])
+    _text(c, H, 60, 60, "Returned unit review", 13, "Helvetica-Bold")
+    box(70, 90, 120, 34, ["Review the return"])
+    box(70, 160, 120, 60, ["Seen this fault", "before?"], "diamond")
+    box(260, 172, 130, 36, ["Check the service", "log"], highlight=True)
+    box(70, 270, 120, 36, ["Review the order", "history"])
+    box(260, 270, 130, 36, ["Consider a replacement"])
+    box(70, 350, 120, 36, ["Send unit for", "inspection"])
     box(470, 420, 80, 30, ["End"])
-    note(410, 160, 150, 48, ["Check the calculation and the", "package type before deciding."])
+    note(410, 160, 150, 48, ["Check the model and the", "serial number before deciding."])
     pentagon(250, 350)
     c.setStrokeColorRGB(0.42, 0.68, 0.18)
     c.setFillColorRGB(0.42, 0.68, 0.18)
@@ -555,7 +555,7 @@ def ruled_table_pdf(path: Path) -> Path:
         c.line(72, H - y - 4, 540, H - y - 4)
         y += 16
         for _ in range(12):
-            row = [f"L26-{3000 + n}", ["Seal", "Leak", "Burn-in"][n % 3], ["J. Ruiz", "A. Chen"][n % 2], "Pass" if n % 5 else "Fail"]
+            row = [f"L26-{3000 + n}", ["Seal", "Leak", "Run-in"][n % 3], ["J. Ruiz", "A. Chen"][n % 2], "Pass" if n % 5 else "Fail"]
             for x, t in zip(xs, row):
                 _text(c, H, x + 3, y, t, 9)
             for x in xs:
@@ -572,5 +572,5 @@ def make_documents(root: Path) -> dict[str, Path]:
     root.mkdir(parents=True, exist_ok=True)
     pics = {"sign": photo(root / "sign.png", "CAUTION HOT"), "plain": photo(root / "plain.png"),
             "plain2": photo(root / "plain2.png", size=(400, 300))}
-    return {"procedure": procedure_pdf(root / "Lid Seal WI.pdf", pics), "visio": visio_pdf(root / "Leak review.pdf"),
+    return {"procedure": procedure_pdf(root / "Cabinet Assembly WI.pdf", pics), "visio": visio_pdf(root / "Leak review.pdf"),
             "ruled": ruled_table_pdf(root / "Lot history.pdf")}

@@ -143,7 +143,7 @@ class Crawler:
             return "skip_pattern"
         if self.languages and (guess is None or guess == "html"):
             # Locale folders reliably mean translated web pages; documents are judged by
-            # their text instead (Siemens files English PDFs under /media/global/de/ etc.).
+            # their text instead (sites often file English PDFs under /media/global/de/ etc.).
             lang = url_language(url)
             if lang and lang not in self.languages:
                 return "language_url"

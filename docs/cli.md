@@ -81,10 +81,10 @@ Workspaces you create in the app live in its data folder:
 Build a knowledge base from folders, then export it:
 
 ```
-rag init plant-kb
-rag build plant-kb "D:\KB\Procedures" "D:\KB\Specs"
-rag status plant-kb
-rag export plant-kb plant-kb.ragpack
+rag init docs-kb
+rag build docs-kb "D:\KB\Procedures" "D:\KB\Specs"
+rag status docs-kb
+rag export docs-kb docs-kb.ragpack
 ```
 
 Run `rag build` again after documents change: only new and changed files are processed.
@@ -93,23 +93,23 @@ Add `--prune` to drop documents whose files were deleted.
 Search, the way the agent will:
 
 ```
-rag search plant-kb.ragpack "minimum pull strength for 5 mil aluminum wire"
-rag search plant-kb.ragpack "seal leak limits" --type pdf -k 10
-rag search plant-kb.ragpack "seal leak limits" --json
+rag search docs-kb.ragpack "minimum clamp pull force for a 10 mm hose"
+rag search docs-kb.ragpack "pressure test limits" --type pdf -k 10
+rag search docs-kb.ragpack "pressure test limits" --json
 ```
 
 Search one document, by its number or part of its file name:
 
 ```
-rag search plant-kb "inner door won't open" --doc D02
-rag search plant-kb "fixture for TO-39" --doc WI-2210 --doc MF164
+rag search docs-kb "filter won't seat" --doc DOC-12
+rag search docs-kb "torque for the cover screws" --doc WI-0300 --doc FX-100
 ```
 
 ### Procedures and the spots file
 
 Every build also writes `structure.spots` next to `rag.db`: which chunks make up each procedure
 and its steps (and the sub-steps of long steps), the warnings in each step, references ("see
-Section 8.4", "see MF164"), and each document's number and revision. With it, a search that hits
+Section 8.4", "see FX-100"), and each document's number and revision. With it, a search that hits
 one step of a procedure returns more of the procedure, as much as fits in `[search]
 procedure_tokens` (1500 by default):
 
@@ -127,8 +127,8 @@ A knowledge base built before 0.4.1 has no spots file. Make one from its stored 
 read or embedded again, and it takes seconds:
 
 ```
-rag spots plant-kb
-rag spots plant-kb --check
+rag spots docs-kb
+rag spots docs-kb --check
 ```
 
 Packs exported from 0.4.1 carry the spots file; the retrieval server uses it when it's there and
@@ -138,20 +138,20 @@ numbered list or flowchart read as instructions, so manuals and web pages stay p
 Query tables from spreadsheets and documents:
 
 ```
-rag tables plant-kb.ragpack
-rag describe plant-kb.ragpack t_burnin_results_2025q3
-rag sql plant-kb.ragpack "SELECT part_number, SUM(qty_fail) FROM t_burnin_results_2025q3 GROUP BY part_number"
+rag tables docs-kb.ragpack
+rag describe docs-kb.ragpack t_runin_results_2025q3
+rag sql docs-kb.ragpack "SELECT part_number, SUM(qty_fail) FROM t_runin_results_2025q3 GROUP BY part_number"
 ```
 
 Combine knowledge bases built with the same model, without embedding anything again:
 
 ```
-rag merge plant-all line-a.ragpack line-b.ragpack --dry-run
-rag merge plant-all line-a.ragpack line-b.ragpack
-rag export plant-all plant-all.ragpack
+rag merge all-docs line-a.ragpack line-b.ragpack --dry-run
+rag merge all-docs line-a.ragpack line-b.ragpack
+rag export all-docs all-docs.ragpack
 ```
 
-`plant-all` is created if it doesn't exist. Files already there are skipped; when the same
+`all-docs` is created if it doesn't exist. Files already there are skipped; when the same
 file differs, the newer build wins (`--on-conflict keep` or `replace` to choose); a file
 whose content is already there under another path is skipped (`--keep-copies` adds it).
 Packs or workspaces embedded with a different model or vector size are refused.
@@ -159,13 +159,13 @@ Packs or workspaces embedded with a different model or vector size are refused.
 Measure retrieval with known answers:
 
 ```
-rag eval plant-kb.ragpack golden.jsonl --report eval.md
+rag eval docs-kb.ragpack golden.jsonl --report eval.md
 ```
 
 Install a pack on the retrieval server (checks every file's checksum):
 
 ```
-rag unpack plant-kb.ragpack D:\RAG\plant-kb
+rag unpack docs-kb.ragpack D:\RAG\docs-kb
 ```
 
 ## Command reference
@@ -184,7 +184,7 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 | `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |
 | `rag compact WS` | Rewrite `vectors.shammy` without deleted rows. Builds do this on their own when a quarter of the rows are deleted. |
 | `rag spots WS [--check] [--json]` | Build the spots file (procedures, steps, references) from the stored chunks; `--check` only says whether it's there and current. Builds, merges and exports do this on their own. |
-| `rag search WS\|PACK "question" [-k N] [--type pdf] [--doc D02] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--doc` (repeatable) keeps only those documents, by number or part of the path. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8082`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
+| `rag search WS\|PACK "question" [-k N] [--type pdf] [--doc DOC-12] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--doc` (repeatable) keeps only those documents, by number or part of the path. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8082`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
 | `rag tables WS\|PACK` | List tables. |
 | `rag describe WS\|PACK TABLE` | A table's columns, value ranges and sample rows. |
 | `rag sql WS\|PACK "SELECT ..." [--json]` | Read-only SQL over the tables, as the agent runs it. |
@@ -198,8 +198,8 @@ rag unpack plant-kb.ragpack D:\RAG\plant-kb
 One JSON object per line. `expect` says where the answer is; any match counts.
 
 ```
-{"id": "q1", "type": "spec", "question": "What is the helium leak limit for TO-39?", "expect": [{"file": "*SOP-0412*", "page": 3, "contains": "5e-8"}]}
-{"id": "q2", "question": "What does a wire bonder cost?", "expect": []}
+{"id": "q1", "type": "spec", "question": "What is the pressure test limit for the H-39 housing?", "expect": [{"file": "*SOP-0412*", "page": 3, "contains": "0.5 bar"}]}
+{"id": "q2", "question": "What does a replacement pump cost?", "expect": []}
 ```
 
 `file` is a glob on the document's path. Optional keys: `page`, `sheet`, `line`, `kind`

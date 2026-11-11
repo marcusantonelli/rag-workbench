@@ -74,7 +74,7 @@ longer than a 0.6B one; serving it from the GPU inference server is the alternat
 ## Use
 
 ```bash
-rag init my-ws --name "Plant docs"            # writes my-ws/config.toml; review it
+rag init my-ws --name "Product docs"            # writes my-ws/config.toml; review it
 rag build my-ws "D:\KB\Procedures" "D:\KB\Code" --prune
 rag status my-ws
 rag search my-ws "minimum pull strength for 5 mil aluminum wire"
@@ -82,7 +82,7 @@ rag tables my-ws
 rag describe my-ws t_burn_in_yields_q3_yields
 rag sql my-ws "SELECT device, SUM(test_fail) FROM t_burn_in_yields_q3_yields GROUP BY device"
 rag export my-ws kb.ragpack
-rag search kb.ragpack "seal leak root cause"   # works on packs too
+rag search kb.ragpack "pump leak root cause"   # works on packs too
 rag eval my-ws examples/golden.example.jsonl
 rag eval my-ws golden.jsonl --report eval.md --out eval.json   # + the chunks each question retrieved
 rag merge all-ws line-a.ragpack line-b.ragpack  # combine compatible packs/workspaces, no re-embedding
@@ -238,8 +238,8 @@ For scripts, `rag build WS PATH... --json` prints one JSON object per line: `sta
 
 ## Test corpus with known answers
 
-`tools/make_test_corpus.py` writes a fictional semiconductor back-end plant's
-documents (Halden Microsystems: 29 ingestible files across every type, plus files
+`tools/make_test_corpus.py` writes a fictional pump maker's
+documents (Halden Pumpworks: 29 ingestible files across every type, plus files
 that must be excluded) with 47 questions, expected answers, answer locations and,
 for table questions, the SQL that returns the answer:
 
@@ -263,9 +263,10 @@ a semicolon CSV, and generated code that must be skipped.
 Builder reads, until it reaches a size target:
 
 ```bash
-rag-crawl run --preset opcenter-semiconductor opcenter-semi --budget 2GB
-rag-crawl report opcenter-semi --top 20
-rag build my-ws opcenter-semi/files
+rag-crawl preset example > my-topic.toml       # a template: edit the topic, terms and seeds
+rag-crawl run my-topic.toml my-topic --budget 2GB
+rag-crawl report my-topic --top 20
+rag build my-ws my-topic/files
 ```
 
 - **Budget:** `--budget` is the target; the crawl stops starting new downloads
@@ -277,8 +278,7 @@ rag build my-ws opcenter-semi/files
   file's source URL, size, title and relevance.
 - **Quality:** a file is kept only if it mentions the topic terms enough
   (`topic.terms`, `min_term_hits`) and, if set, a second subject too
-  (`topic.also_required`, used by the semiconductor preset to drop Medical
-  Device and Process material). Thin pages, listing/tag pages, non-English
+  (`topic.also_required`, for narrowing a broad product name to one edition). Thin pages, listing/tag pages, non-English
   pages, unreadable files and duplicates (same bytes, or same article text at
   another URL) are skipped.
 - **Focus:** links whose URL or anchor text names a term are always followed;
@@ -297,15 +297,13 @@ rag build my-ws opcenter-semi/files
   environment variable (Brave Search API, free tier), or point
   `provider = "searxng"` at your own SearXNG instance.
 
-Presets: `opcenter-semiconductor` (Opcenter Execution Semiconductor / Camstar
-Semiconductor Suite) and `opcenter` (all of Opcenter). Print one with
-`rag-crawl preset opcenter-semiconductor > semi.toml`, edit it, and run
-`rag-crawl run semi.toml OUT --budget 2GB`.
+Preset: `example`, a template that collects a fictional product's documentation from
+example.com. Print it with `rag-crawl preset example > my-topic.toml`, put in your own topic
+name, terms, seeds and allowed domains, and run `rag-crawl run my-topic.toml OUT --budget 2GB`.
 
-What it cannot reach: the Opcenter manuals on docs.sw.siemens.com (crawlers are
-disallowed there) and anything in the Siemens Support Center (login). Public
-material (fact sheets, what's-new sheets, white papers, case studies, blog posts,
-trade press) is likely a few hundred MB to a few GB, not tens of GB.
+What it cannot reach: sites whose robots.txt disallows crawlers, and anything behind a login.
+For a single product, public material (fact sheets, release notes, white papers, case studies,
+blog posts) is usually a few hundred MB to a few GB, not tens of GB.
 
 Size planning: 1 GB of PDFs is very roughly 30,000-60,000 chunks. Measure your
 embedding rate with `rag check-embedder` and a small build before embedding a

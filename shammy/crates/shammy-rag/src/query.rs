@@ -120,7 +120,7 @@ mod tests {
         assert_eq!(s("GetLotYield"), "get lot yield");
         assert_eq!(s("HTTPServer2"), "http server 2");
         assert_eq!(s("lot_id"), "lot id");
-        assert_eq!(s("mes-cli"), "mes cli");
+        assert_eq!(s("track-cli"), "track cli");
         assert_eq!(s("ABC"), "abc");
         assert_eq!(s("aB"), "a b");
         assert_eq!(s("XMLHttpRequest"), "xml http request");
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn query_tokens() {
-        assert_eq!(query_identifiers("what does GetLotYield return for E42 in mes-cli v2.1?"), ["GetLotYield", "E42", "mes-cli", "v2.1"]);
+        assert_eq!(query_identifiers("what does GetLotYield return for E42 in track-cli v2.1?"), ["GetLotYield", "E42", "track-cli", "v2.1"]);
         assert_eq!(query_identifiers("a b c"), Vec::<String>::new());
         assert_eq!(fts_query("How do I reset the E42 error?"), "\"E42\" OR \"e 42\" OR \"reset\" OR \"e42\" OR \"error\"");
         assert_eq!(fts_query("the of and"), "");

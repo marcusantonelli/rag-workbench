@@ -17,8 +17,8 @@ import pytest
 from rag.crawl.config import load_config
 from rag.crawl.crawler import Crawler
 
-WORDS = ("Opcenter Execution manages work in process, genealogy and holds on the shop floor. "
-         "The Camstar heritage brings modeling of products, specifications and workflows. ")
+WORDS = ("Nimbus Execution manages work in process, genealogy and holds on the shop floor. "
+         "The Stratus heritage brings modeling of products, specifications and workflows. ")
 
 
 def article(title: str, body: str, links: list[tuple[str, str]] = (), n: int = 12) -> bytes:
@@ -67,9 +67,9 @@ def docx_bytes() -> bytes:
     import docx
 
     d = docx.Document()
-    d.add_heading("Opcenter work instruction", 1)
+    d.add_heading("Nimbus work instruction", 1)
     for i in range(8):
-        d.add_paragraph(WORDS + f"Step {i} of the Camstar container move procedure.")
+        d.add_paragraph(WORDS + f"Step {i} of the Stratus container move procedure.")
     buf = io.BytesIO()
     d.save(buf)
     return buf.getvalue()
@@ -80,16 +80,16 @@ def xlsx_bytes() -> bytes:
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(["Opcenter object", "Camstar name", "Notes"])
+    ws.append(["Nimbus object", "Stratus name", "Notes"])
     for i in range(40):
-        ws.append([f"Opcenter spec {i}", f"Camstar spec {i}", "used in the MES model"])
+        ws.append([f"Nimbus spec {i}", f"Stratus spec {i}", "used in the tracking system model"])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-FRENCH = ("Opcenter Execution est le système de gestion de la production de Siemens. Les opérateurs de "
-          "l'atelier utilisent Opcenter pour suivre les lots, les arrêts et la généalogie des produits "
+FRENCH = ("Nimbus Execution est le système de gestion de la production de Example Corp. Les opérateurs de "
+          "l'atelier utilisent Nimbus pour suivre les lots, les arrêts et la généalogie des produits "
           "dans les usines du groupe. ")
 
 
@@ -155,92 +155,92 @@ def web():
     a.file("/sitemap_index.xml", "application/xml",
            f'<?xml version="1.0"?><sitemapindex><sitemap><loc>{A}/sitemap-posts.xml.gz</loc></sitemap></sitemapindex>'.encode())
     a.file("/sitemap-posts.xml.gz", "application/gzip", gzip.compress(
-        (f'<?xml version="1.0"?><urlset><url><loc>{A}/blog/opcenter-sitemap-only-post/</loc></url>'
+        (f'<?xml version="1.0"?><urlset><url><loc>{A}/blog/nimbus-sitemap-only-post/</loc></url>'
          f'<url><loc>{A}/blog/unrelated-post/</loc></url>'
-         f'<url><loc>{A}/de-DE/opcenter-uebersicht/</loc></url></urlset>').encode()))
+         f'<url><loc>{A}/de-DE/nimbus-uebersicht/</loc></url></urlset>').encode()))
 
     links = [
-        ("/blog/opcenter-execution-overview/", "Overview"),
-        ("/blog/opcenter-execution-overview/?utm_source=newsletter", "Overview again"),
+        ("/blog/nimbus-execution-overview/", "Overview"),
+        ("/blog/nimbus-execution-overview/?utm_source=newsletter", "Overview again"),
         ("/blog/?p=12", "Short link"),
         ("/blog/copy-of-overview/", "Copy"),
         ("/blog/cooking-pasta/", "Pasta recipes"),
-        ("/tag/opcenter/", "Tag"),
-        ("/private/opcenter-secret.pdf", "Secret"),
-        ("/support/opcenter-manual.pdf", "Manual"),
-        ("/downloads/opcenter-factsheet.pdf", "Fact sheet"),
-        ("/downloads/opcenter-factsheet-copy.pdf", "Fact sheet copy"),
-        ("/downloads/scanned-opcenter.pdf", "Scanned"),
+        ("/tag/nimbus/", "Tag"),
+        ("/private/nimbus-secret.pdf", "Secret"),
+        ("/support/nimbus-manual.pdf", "Manual"),
+        ("/downloads/nimbus-factsheet.pdf", "Fact sheet"),
+        ("/downloads/nimbus-factsheet-copy.pdf", "Fact sheet copy"),
+        ("/downloads/scanned-nimbus.pdf", "Scanned"),
         ("/downloads/brochure.pdf", "Brochure"),
-        ("/downloads/opcenter-huge.pdf", "Huge"),
-        ("/downloads/opcenter-wi.docx", "Work instruction"),
-        ("/downloads/opcenter-config.xlsx", "Config"),
-        ("/downloads/opcenter-hold-codes.csv", "Hold codes"),
-        ("/code/OpcenterClient.cs", "Client"),
-        ("/code/camstar_export.py", "Export script"),
-        ("/code/opcenter_views.sql", "Views"),
-        ("/images/opcenter-diagram.png", "Diagram"),
-        ("/downloads/opcenter-slides.pptx", "Slides"),
-        ("/flaky/opcenter-rate-limited.pdf", "Rate limited"),
-        ("/fr/opcenter-presentation/", "Français"),
-        ("/blog/opcenter-francais/", "Article"),
-        (f"{B}/opcenter-partner-article/", "Partner article"),
+        ("/downloads/nimbus-huge.pdf", "Huge"),
+        ("/downloads/nimbus-wi.docx", "Work instruction"),
+        ("/downloads/nimbus-config.xlsx", "Config"),
+        ("/downloads/nimbus-hold-codes.csv", "Hold codes"),
+        ("/code/NimbusClient.cs", "Client"),
+        ("/code/stratus_export.py", "Export script"),
+        ("/code/nimbus_views.sql", "Views"),
+        ("/images/nimbus-diagram.png", "Diagram"),
+        ("/downloads/nimbus-slides.pptx", "Slides"),
+        ("/flaky/nimbus-rate-limited.pdf", "Rate limited"),
+        ("/fr/nimbus-presentation/", "Français"),
+        ("/blog/nimbus-francais/", "Article"),
+        (f"{B}/nimbus-partner-article/", "Partner article"),
         (f"{B}/random/", "Random external"),
-        ("https://www.scribd.com/document/1/opcenter-guide", "Scribd copy"),
+        ("https://www.scribd.com/document/1/nimbus-guide", "Scribd copy"),
         ("mailto:someone@example.com", "Mail"),
     ]
-    a.html("/", article("Opcenter home", WORDS, links))
-    overview = article("Opcenter Execution overview", WORDS, [("/blog/opcenter-quality-notes/", "Quality notes")])
-    a.html("/blog/opcenter-execution-overview/", overview)
-    a.routes["/blog/?p=12"] = (301, {"Location": f"{A}/blog/opcenter-execution-overview/"}, b"")
+    a.html("/", article("Nimbus home", WORDS, links))
+    overview = article("Nimbus Execution overview", WORDS, [("/blog/nimbus-quality-notes/", "Quality notes")])
+    a.html("/blog/nimbus-execution-overview/", overview)
+    a.routes["/blog/?p=12"] = (301, {"Location": f"{A}/blog/nimbus-execution-overview/"}, b"")
     a.html("/blog/copy-of-overview/", overview.replace(b"<nav><a href='/'>Home</a></nav>", b"<nav>Other nav</nav>"))
     a.html("/blog/cooking-pasta/", article(
         "Pasta", "Boil water, add salt and cook the pasta for ten minutes before you drain it. ",
-        [("/blog/deep-unrelated/", "More"), ("/docs/camstar-guide.pdf", "Guide")]))
+        [("/blog/deep-unrelated/", "More"), ("/docs/stratus-guide.pdf", "Guide")]))
     a.html("/blog/deep-unrelated/", article("Deep", "Nothing to see here at all, just words. "))
-    a.file("/docs/camstar-guide.pdf", "application/pdf",
-           pdf_bytes([f"Camstar guide line {i}: Opcenter modeling of specs and workflows." for i in range(60)]))
-    a.html("/tag/opcenter/", article("Tag opcenter", WORDS, [("/blog/opcenter-quality-notes/", "Quality")], n=1))
-    a.html("/blog/opcenter-quality-notes/", article("Opcenter Quality notes", WORDS))
-    a.html("/blog/opcenter-sitemap-only-post/", article("Opcenter from sitemap", WORDS))
+    a.file("/docs/stratus-guide.pdf", "application/pdf",
+           pdf_bytes([f"Stratus guide line {i}: Nimbus modeling of specs and workflows." for i in range(60)]))
+    a.html("/tag/nimbus/", article("Tag nimbus", WORDS, [("/blog/nimbus-quality-notes/", "Quality")], n=1))
+    a.html("/blog/nimbus-quality-notes/", article("Nimbus Quality notes", WORDS))
+    a.html("/blog/nimbus-sitemap-only-post/", article("Nimbus from sitemap", WORDS))
     a.html("/blog/unrelated-post/", article("Unrelated", "Gardening in spring. "))
-    a.file("/private/opcenter-secret.pdf", "application/pdf", pdf_bytes(["secret opcenter"] * 60))
-    a.routes["/support/opcenter-manual.pdf"] = (302, {"Location": f"{A}/login?next=/support/opcenter-manual.pdf"}, b"")
-    factsheet = pdf_bytes([f"Opcenter Execution fact sheet line {i}: MES capabilities for discrete and process "
-                           f"industries with Camstar heritage." for i in range(80)])
-    a.file("/downloads/opcenter-factsheet.pdf", "application/pdf", factsheet)
-    a.file("/downloads/opcenter-factsheet-copy.pdf", "application/octet-stream", factsheet)
-    a.file("/downloads/scanned-opcenter.pdf", "application/pdf", scanned_pdf())
+    a.file("/private/nimbus-secret.pdf", "application/pdf", pdf_bytes(["secret nimbus"] * 60))
+    a.routes["/support/nimbus-manual.pdf"] = (302, {"Location": f"{A}/login?next=/support/nimbus-manual.pdf"}, b"")
+    factsheet = pdf_bytes([f"Nimbus Execution fact sheet line {i}: tracking system capabilities for discrete and process "
+                           f"industries with Stratus heritage." for i in range(80)])
+    a.file("/downloads/nimbus-factsheet.pdf", "application/pdf", factsheet)
+    a.file("/downloads/nimbus-factsheet-copy.pdf", "application/octet-stream", factsheet)
+    a.file("/downloads/scanned-nimbus.pdf", "application/pdf", scanned_pdf())
     a.file("/downloads/brochure.pdf", "application/pdf",
            pdf_bytes([f"Garden furniture brochure line {i}, teak and steel." for i in range(80)]))
-    a.file("/downloads/opcenter-huge.pdf", "application/pdf", b"%PDF-1.4\n" + b"0" * 300_000)
-    a.file("/downloads/opcenter-wi.docx",
+    a.file("/downloads/nimbus-huge.pdf", "application/pdf", b"%PDF-1.4\n" + b"0" * 300_000)
+    a.file("/downloads/nimbus-wi.docx",
            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx_bytes())
-    a.file("/downloads/opcenter-config.xlsx",
+    a.file("/downloads/nimbus-config.xlsx",
            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xlsx_bytes())
-    a.file("/downloads/opcenter-hold-codes.csv", "text/csv",
-           ("code,description\n" + "".join(f"H{i},Opcenter hold reason {i} from Camstar\n" for i in range(60))).encode())
-    a.file("/code/OpcenterClient.cs", "text/plain", (
-        "// Client for the Opcenter Execution web services (Camstar API)\n"
-        + "".join(f"public class OpcenterThing{i} {{ public string Camstar{i} => \"x\"; }}\n" for i in range(60))).encode())
-    a.file("/code/camstar_export.py", "application/octet-stream", (
-        '"""Export Camstar containers into Opcenter."""\n'
-        + "".join(f"def export_{i}():\n    return 'opcenter camstar {i}'\n" for i in range(60))).encode())
-    a.file("/code/opcenter_views.sql", "application/sql", (
-        "-- Opcenter reporting views over the Camstar ODS\n"
-        + "".join(f"CREATE VIEW v{i} AS SELECT 'opcenter' AS a;\n" for i in range(60))).encode())
-    a.file("/images/opcenter-diagram.png", "image/png", b"\x89PNG....")
-    a.file("/downloads/opcenter-slides.pptx", "application/vnd.ms-powerpoint", b"PK\x03\x04....")
-    flaky_pdf = pdf_bytes([f"Opcenter rate limited document line {i}, Camstar too." for i in range(60)])
-    a.routes["/flaky/opcenter-rate-limited.pdf"] = lambda n: (
+    a.file("/downloads/nimbus-hold-codes.csv", "text/csv",
+           ("code,description\n" + "".join(f"H{i},Nimbus hold reason {i} from Stratus\n" for i in range(60))).encode())
+    a.file("/code/NimbusClient.cs", "text/plain", (
+        "// Client for the Nimbus Execution web services (Stratus API)\n"
+        + "".join(f"public class NimbusThing{i} {{ public string Stratus{i} => \"x\"; }}\n" for i in range(60))).encode())
+    a.file("/code/stratus_export.py", "application/octet-stream", (
+        '"""Export Stratus containers into Nimbus."""\n'
+        + "".join(f"def export_{i}():\n    return 'nimbus stratus {i}'\n" for i in range(60))).encode())
+    a.file("/code/nimbus_views.sql", "application/sql", (
+        "-- Nimbus reporting views over the Stratus ODS\n"
+        + "".join(f"CREATE VIEW v{i} AS SELECT 'nimbus' AS a;\n" for i in range(60))).encode())
+    a.file("/images/nimbus-diagram.png", "image/png", b"\x89PNG....")
+    a.file("/downloads/nimbus-slides.pptx", "application/vnd.ms-powerpoint", b"PK\x03\x04....")
+    flaky_pdf = pdf_bytes([f"Nimbus rate limited document line {i}, Stratus too." for i in range(60)])
+    a.routes["/flaky/nimbus-rate-limited.pdf"] = lambda n: (
         (429, {"Retry-After": "1", "Content-Type": "text/plain"}, b"slow down") if n == 1
         else (200, {"Content-Type": "application/pdf"}, flaky_pdf))
-    a.html("/fr/opcenter-presentation/", article("Opcenter FR", FRENCH))
-    a.html("/blog/opcenter-francais/", article("Opcenter en France", FRENCH * 3))
-    b.html("/opcenter-partner-article/", article("Partner on Opcenter", WORDS,
-                                                 [(f"{B}/opcenter-partner-2/", "Second"),
-                                                  (f"{A}/blog/opcenter-quality-notes/", "Back home")]))
-    b.html("/opcenter-partner-2/", article("Partner 2 Opcenter", WORDS))
+    a.html("/fr/nimbus-presentation/", article("Nimbus FR", FRENCH))
+    a.html("/blog/nimbus-francais/", article("Nimbus en France", FRENCH * 3))
+    b.html("/nimbus-partner-article/", article("Partner on Nimbus", WORDS,
+                                                 [(f"{B}/nimbus-partner-2/", "Second"),
+                                                  (f"{A}/blog/nimbus-quality-notes/", "Back home")]))
+    b.html("/nimbus-partner-2/", article("Partner 2 Nimbus", WORDS))
     b.html("/random/", article("Random", "Random words. "))
     yield a, b
     a.close()
@@ -249,7 +249,7 @@ def web():
 
 def make_cfg(a, **crawl):
     over = {
-        "topic": {"name": "test", "terms": ["opcenter", "camstar"], "related": ["mes"], "min_term_hits": 2},
+        "topic": {"name": "test", "terms": ["nimbus", "stratus"], "related": ["tracking"], "min_term_hits": 2},
         "crawl": {"seeds": [a.base + "/"], "allowed_domains": ["127.0.0.1"], "delay_s": 0.05, "workers": 3,
                   "timeout_s": 5, "max_file_mb": 0.2, "min_file_kb": 0.5, "html_min_words": 100, **crawl},
     }
@@ -275,31 +275,31 @@ def test_full_crawl_behaviour(web, tmp_path):
     summary, _ = run(make_cfg(a), tmp_path / "out")
     saved = saved_paths(tmp_path / "out")
     expected = {
-        "/", "/blog/opcenter-execution-overview/", "/blog/opcenter-quality-notes/",
-        "/blog/opcenter-sitemap-only-post/", "/docs/camstar-guide.pdf",
-        "/downloads/opcenter-factsheet.pdf", "/downloads/scanned-opcenter.pdf",
-        "/downloads/opcenter-wi.docx", "/downloads/opcenter-config.xlsx", "/downloads/opcenter-hold-codes.csv",
-        "/code/OpcenterClient.cs", "/code/camstar_export.py", "/code/opcenter_views.sql",
-        "/flaky/opcenter-rate-limited.pdf", "/opcenter-partner-article/",
+        "/", "/blog/nimbus-execution-overview/", "/blog/nimbus-quality-notes/",
+        "/blog/nimbus-sitemap-only-post/", "/docs/stratus-guide.pdf",
+        "/downloads/nimbus-factsheet.pdf", "/downloads/scanned-nimbus.pdf",
+        "/downloads/nimbus-wi.docx", "/downloads/nimbus-config.xlsx", "/downloads/nimbus-hold-codes.csv",
+        "/code/NimbusClient.cs", "/code/stratus_export.py", "/code/nimbus_views.sql",
+        "/flaky/nimbus-rate-limited.pdf", "/nimbus-partner-article/",
     }
     assert saved == expected, (saved - expected, expected - saved)
     assert "frontier exhausted" in summary.stop_reason
 
     pa, pb = a.paths(), b.paths()
     # robots, login walls, languages, wrong types and blocked domains are never requested
-    for never in ("/private/opcenter-secret.pdf", "/login?next=%2Fsupport%2Fopcenter-manual.pdf",
-                  "/images/opcenter-diagram.png", "/downloads/opcenter-slides.pptx",
-                  "/fr/opcenter-presentation/", "/de-DE/opcenter-uebersicht/", "/blog/unrelated-post/"):
+    for never in ("/private/nimbus-secret.pdf", "/login?next=%2Fsupport%2Fnimbus-manual.pdf",
+                  "/images/nimbus-diagram.png", "/downloads/nimbus-slides.pptx",
+                  "/fr/nimbus-presentation/", "/de-DE/nimbus-uebersicht/", "/blog/unrelated-post/"):
         assert never not in pa, never
     assert not any(p.startswith("/login") for p in pa)
     # focus: one hop of off-topic tunnelling, not two
     assert "/blog/cooking-pasta/" in pa and "/blog/deep-unrelated/" not in pa
     # external: one hop only, and only for links that name a term
-    assert "/opcenter-partner-article/" in pb and "/opcenter-partner-2/" not in pb and "/random/" not in pb
+    assert "/nimbus-partner-article/" in pb and "/nimbus-partner-2/" not in pb and "/random/" not in pb
     # each URL fetched once, except the retried 429 and the tracking-parameter variant collapsed
-    assert a.hits["/flaky/opcenter-rate-limited.pdf"] == 2
-    assert a.hits.get("/blog/opcenter-execution-overview/?utm_source=newsletter") is None
-    assert a.hits["/blog/opcenter-execution-overview/"] == 1
+    assert a.hits["/flaky/nimbus-rate-limited.pdf"] == 2
+    assert a.hits.get("/blog/nimbus-execution-overview/?utm_source=newsletter") is None
+    assert a.hits["/blog/nimbus-execution-overview/"] == 1
     # politeness: requests to one host never overlap and keep the delay
     times = sorted(t for p, t, _ in a.log if not p.startswith(("/robots", "/sitemap")))
     gaps = [t2 - t1 for t1, t2 in zip(times, times[1:])]
@@ -313,7 +313,7 @@ def test_full_crawl_behaviour(web, tmp_path):
     # files on disk match the manifest, named under their host
     files = [f for f in (tmp_path / "out" / "files").rglob("*") if f.is_file()]
     assert len(files) == len(expected)
-    assert any(f.name.startswith("opcenter-factsheet-") and f.suffix == ".pdf" for f in files)
+    assert any(f.name.startswith("nimbus-factsheet-") and f.suffix == ".pdf" for f in files)
 
 
 def test_duplicates_and_reasons(web, tmp_path):
@@ -324,12 +324,12 @@ def test_duplicates_and_reasons(web, tmp_path):
     db = sqlite3.connect(tmp_path / "out" / "crawl.db")
     reason = dict(db.execute("SELECT url, reason FROM urls").fetchall())
     A = a.base
-    assert reason[f"{A}/downloads/opcenter-factsheet-copy.pdf"] == "duplicate_content" or \
-        reason[f"{A}/downloads/opcenter-factsheet.pdf"] == "duplicate_content"
+    assert reason[f"{A}/downloads/nimbus-factsheet-copy.pdf"] == "duplicate_content" or \
+        reason[f"{A}/downloads/nimbus-factsheet.pdf"] == "duplicate_content"
     assert reason[f"{A}/blog/copy-of-overview/"] == "duplicate_content" or \
-        reason[f"{A}/blog/opcenter-execution-overview/"] == "duplicate_content"
-    assert "listing_page" in reason[f"{A}/tag/opcenter/"]
-    assert "not_english" in reason[f"{A}/blog/opcenter-francais/"]
+        reason[f"{A}/blog/nimbus-execution-overview/"] == "duplicate_content"
+    assert "listing_page" in reason[f"{A}/tag/nimbus/"]
+    assert "not_english" in reason[f"{A}/blog/nimbus-francais/"]
     assert "off_topic" in reason[f"{A}/blog/cooking-pasta/"]
     assert reason[f"{A}/blog/?p=12"] == "redirect 301"
 
@@ -360,17 +360,17 @@ def test_hard_cap_never_exceeded_with_parallel_workers(web, tmp_path):
 def test_search_provider_seeds(web, tmp_path, monkeypatch):
     a, b = web
     A = a.base
-    a.file("/hidden/opcenter-only-in-search.pdf", "application/pdf",
-           pdf_bytes([f"Opcenter document found only by search, line {i}, Camstar." for i in range(60)]))
-    b.routes["/brave?q=Opcenter+pdf&count=20&offset=0"] = (200, {"Content-Type": "application/json"}, json.dumps(
-        {"web": {"results": [{"url": f"{A}/hidden/opcenter-only-in-search.pdf", "title": "Opcenter doc",
-                              "description": "Opcenter Camstar"}]}}).encode())
+    a.file("/hidden/nimbus-only-in-search.pdf", "application/pdf",
+           pdf_bytes([f"Nimbus document found only by search, line {i}, Stratus." for i in range(60)]))
+    b.routes["/brave?q=Nimbus+pdf&count=20&offset=0"] = (200, {"Content-Type": "application/json"}, json.dumps(
+        {"web": {"results": [{"url": f"{A}/hidden/nimbus-only-in-search.pdf", "title": "Nimbus doc",
+                              "description": "Nimbus Stratus"}]}}).encode())
     monkeypatch.setenv("BRAVE_API_KEY", "test-key")
     cfg = make_cfg(a)
-    cfg["search"].update({"provider": "brave", "brave_url": f"{b.base}/brave", "queries": ["Opcenter pdf"],
+    cfg["search"].update({"provider": "brave", "brave_url": f"{b.base}/brave", "queries": ["Nimbus pdf"],
                           "pages_per_query": 1, "delay_s": 0})
     run(cfg, tmp_path / "out")
-    assert "/hidden/opcenter-only-in-search.pdf" in saved_paths(tmp_path / "out")
+    assert "/hidden/nimbus-only-in-search.pdf" in saved_paths(tmp_path / "out")
     brave_req = next(h for p, _, h in b.log if p.startswith("/brave"))
     assert brave_req.get("X-Subscription-Token") == "test-key"
 
@@ -383,7 +383,7 @@ def test_size_parsing_and_cli_report(web, tmp_path, capsys):
     a, _ = web
     cfg_path = tmp_path / "t.toml"
     cfg_path.write_text(
-        '[topic]\nterms = ["opcenter", "camstar"]\n[crawl]\n'
+        '[topic]\nterms = ["nimbus", "stratus"]\n[crawl]\n'
         f'seeds = ["{a.base}/"]\nallowed_domains = ["127.0.0.1"]\ndelay_s = 0.02\nmin_file_kb = 0.5\n'
         'html_min_words = 100\nmax_file_mb = 0.2\n[sitemaps]\nenabled = false\n', encoding="utf-8")
     assert main(["run", str(cfg_path), str(tmp_path / "o"), "--budget", "40KB", "--quiet"]) == 0
@@ -400,8 +400,8 @@ def test_unreachable_host_is_dropped_quickly_with_a_clear_reason(tmp_path):
     port = s.getsockname()[1]
     s.close()   # nothing listens here
     cfg = load_config(None, {
-        "topic": {"terms": ["opcenter"]},
-        "crawl": {"seeds": [f"http://127.0.0.1:{port}/opcenter/", f"http://127.0.0.1:{port}/opcenter/b.pdf"],
+        "topic": {"terms": ["nimbus"]},
+        "crawl": {"seeds": [f"http://127.0.0.1:{port}/nimbus/", f"http://127.0.0.1:{port}/nimbus/b.pdf"],
                   "allowed_domains": ["127.0.0.1"], "delay_s": 0.01, "timeout_s": 2,
                   "retry_unreachable_s": 0.05},
         "sitemaps": {"enabled": False},
@@ -435,8 +435,8 @@ def test_site_down_on_first_run_is_collected_on_the_next(tmp_path):
     port = sock.getsockname()[1]
     sock.close()
     cfg = load_config(None, {
-        "topic": {"terms": ["opcenter"]},
-        "crawl": {"seeds": [f"http://127.0.0.1:{port}/opcenter/"], "allowed_domains": ["127.0.0.1"],
+        "topic": {"terms": ["nimbus"]},
+        "crawl": {"seeds": [f"http://127.0.0.1:{port}/nimbus/"], "allowed_domains": ["127.0.0.1"],
                   "delay_s": 0.01, "timeout_s": 2, "retry_unreachable_s": 0.05},
     })
     first, _ = run(cfg, tmp_path / "out")
@@ -445,12 +445,12 @@ def test_site_down_on_first_run_is_collected_on_the_next(tmp_path):
     site = Site("127.0.0.1", port)
     try:
         site.routes["/robots.txt"] = (200, {"Content-Type": "text/plain"}, b"User-agent: *\nAllow: /\n")
-        site.html("/opcenter/", article("Opcenter overview", WORDS))
+        site.html("/nimbus/", article("Nimbus overview", WORDS))
         second, _ = run(cfg, tmp_path / "out")
     finally:
         site.close()
     assert second.saved_files == 1
-    assert "/opcenter/" in site.paths()
+    assert "/nimbus/" in site.paths()
 
 
 def test_crawl_output_builds_into_a_pack(web, tmp_path):
@@ -468,23 +468,23 @@ def test_crawl_output_builds_into_a_pack(web, tmp_path):
     assert stats.added == 15
 
 
-def test_also_required_narrows_to_semiconductor():
+def test_also_required_narrows_to_one_edition():
     from rag.crawl.content import Relevance
 
-    r = Relevance(["opcenter", "camstar"], [], 2, ["semiconductor", "wafer", "fab"], 2)
-    semi = "Opcenter Execution Semiconductor tracks every wafer through the fab. Camstar heritage."
-    med = "Opcenter Execution Medical Device keeps the device history record. Camstar heritage."
-    assert r.content_ok("", semi)[0] and not r.content_ok("", med)[0]
-    assert r.link_score("https://x/opcenter-execution-semiconductor/") > r.link_score("https://x/opcenter-medical/")
+    r = Relevance(["nimbus", "stratus"], [], 2, ["warehouse", "pallet", "forklift"], 2)
+    warehouse = "Nimbus Warehouse tracks every pallet through the warehouse. Stratus heritage."
+    retail = "Nimbus Retail keeps the store's sales history. Stratus heritage."
+    assert r.content_ok("", warehouse)[0] and not r.content_ok("", retail)[0]
+    assert r.link_score("https://x/nimbus-warehouse/") > r.link_score("https://x/nimbus-retail/")
 
 
 def test_document_urls_in_locale_folders_are_judged_by_content(tmp_path):
-    cfg = load_config(None, {"topic": {"terms": ["opcenter"]}, "crawl": {"seeds": []}})
+    cfg = load_config(None, {"topic": {"terms": ["nimbus"]}, "crawl": {"seeds": []}})
     c = Crawler(cfg, tmp_path / "o", budget=1000, hard_cap=1000, log=lambda m: None)
     try:
-        assert c._rejected("https://www.plm.automation.siemens.com/media/global/de/Opcenter_FS.pdf") is None
-        assert c._rejected("https://www.siemens.com/de-ch/products/opcenter/") == "language_url"
-        assert c._rejected("https://www.siemens.com/en-us/products/opcenter/") is None
+        assert c._rejected("https://files.example.com/media/global/de/Nimbus_FS.pdf") is None
+        assert c._rejected("https://www.example.com/de-ch/products/nimbus/") == "language_url"
+        assert c._rejected("https://www.example.com/en-us/products/nimbus/") is None
     finally:
         c.close()
 
@@ -493,6 +493,6 @@ def test_presets_load():
     from rag.crawl.cli import _preset_text
     import tomllib
 
-    for name in ("opcenter", "opcenter-semiconductor"):
+    for name in ("example",):
         cfg = load_config(None, tomllib.loads(_preset_text(name)))
         assert cfg["topic"]["terms"] and cfg["crawl"]["seeds"]

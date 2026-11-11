@@ -111,7 +111,7 @@ pub struct Request {
     /// places nothing else took.
     #[serde(default = "d_proc_hits")]
     pub procedure_hits: usize,
-    /// Only these documents: a document number ("D02", needs the spots file) or part of the path.
+    /// Only these documents: a document number ("DOC-12", needs the spots file) or part of the path.
     #[serde(default)]
     pub documents: Vec<String>,
 }
@@ -853,7 +853,7 @@ fn nonempty(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
-/// "8.0 Electrode Replacement: (steps 8.1-8.2 of 4)" for a result's source line.
+/// "8.0 Filter Replacement: (steps 8.1-8.2 of 4)" for a result's source line.
 fn procedure_note(p: &Value) -> String {
     let name = nonempty(&p["title"]).or_else(|| nonempty(&p["label"])).unwrap_or_else(|| "procedure".into());
     let n = p["steps"].as_i64().unwrap_or(0);

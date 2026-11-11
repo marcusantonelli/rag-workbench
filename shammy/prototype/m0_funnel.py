@@ -13,7 +13,7 @@ and compares what comes out with an exact float32 search. It answers the open de
 centroid or no centroid, block-wise or full rotation, sketch width, 8-bit or 6-bit, and how many
 candidates each stage must keep.
 
-    python m0_funnel.py siemens-kb.ragpack
+    python m0_funnel.py my-kb.ragpack
     python m0_funnel.py my-workspace --golden golden.jsonl --embed-url http://127.0.0.1:8081
 
 Needs: Python 3.10+, numpy, sqlite-vec (pip install numpy sqlite-vec). No GPU, no model, unless

@@ -15,13 +15,13 @@ def fillable_pdf(path: Path) -> Path:
     c = canvas.Canvas(str(path), pagesize=letter)
     f = c.acroForm
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(72, H - 72, "Lot Traveler")
+    c.drawString(72, H - 72, "Job Sheet")
     c.setFont("Helvetica", 10)
     c.drawString(72, H - 110, "Lot number:")
     f.textfield(name="lot_no", value="L26-3007", x=160, y=H - 116, width=120, height=18)
     c.drawString(300, H - 110, "Date:")
     f.textfield(name="date", value="2026-11-03", x=340, y=H - 116, width=100, height=18)
-    c.drawString(72, H - 145, "Seal ring inspected")
+    c.drawString(72, H - 145, "Gasket inspected")
     f.checkbox(name="seal_ok", x=200, y=H - 150, size=14, checked=True)
     c.drawString(240, H - 145, "Rework required")
     f.checkbox(name="rework", x=340, y=H - 150, size=14, checked=False)
@@ -40,7 +40,7 @@ def fillable_pdf(path: Path) -> Path:
     c.setFont("Helvetica-Bold", 11)
     c.drawString(72, H - 330, "Leak test results")
     c.setFont("Helvetica", 9)
-    heads, top = ["Unit", "Fine leak (atm cc/s)", "Gross leak"], H - 345
+    heads, top = ["Unit", "Slow leak (atm cc/s)", "Fast leak"], H - 345
     for k, hd in enumerate(heads):
         c.rect(72 + 150 * k, top - 20, 150, 20)
         c.drawString(76 + 150 * k, top - 14, hd)
@@ -57,24 +57,24 @@ def fillable_pdf(path: Path) -> Path:
 
 
 def grid_form_pdf(path: Path) -> Path:
-    """A printed (flattened) traveler header: label cells with values beside them."""
+    """A printed (flattened) job sheet header: label cells with values beside them."""
     from reportlab.lib.pagesizes import letter
     from reportlab.pdfgen import canvas
 
     W, H = letter
     c = canvas.Canvas(str(path), pagesize=letter)
     c.setFont("Helvetica-Bold", 14)
-    c.drawString(72, H - 72, "Seal Traveler")
+    c.drawString(72, H - 72, "Assembly Job Sheet")
     c.setFont("Helvetica", 9)
     rows = [["Lot number:", "L26-3011", "Date:", "2026-11-04"],
-            ["Part number:", "IRHM-7250", "Quantity:", "48"],
+            ["Part number:", "PX-7250", "Quantity:", "48"],
             ["Operator:", "J. Ruiz", "Shift:", "2"]]
     for r, row in enumerate(rows):
         for k, val in enumerate(row):
             x, y = 72 + 117 * k, H - 100 - 20 * r
             c.rect(x, y - 20, 117, 20)
             c.drawString(x + 4, y - 14, val)
-    c.drawString(72, H - 190, "Seal the lot within four hours of the traveler date.")
+    c.drawString(72, H - 190, "Assemble the lot within four hours of the job sheet date.")
     c.showPage()
     c.save()
     return path
@@ -138,7 +138,7 @@ def word_form(path: Path) -> Path:
         _el("name", {"val": "Check1"}), _el("checkBox", children=[_el("sizeAuto"), _el("default", {"val": "1"})])])])
     add(_el("p", children=[_el("r", children=[begin]), _el("r", children=[_el("instrText", text=" FORMCHECKBOX ")]),
                            _el("r", children=[_el("fldChar", {"fldCharType": "end"})]),
-                           _run(" Nitrogen flow verified")]))
+                           _run(" Air flow verified")]))
     # 3. tracked changes: inserted text kept, deleted text dropped
     add(_el("p", children=[_run("Bake time: "), _el("del", {"id": "1", "author": "a", "date": "2026-01-01T00:00:00Z"},
                                                     children=[_el("r", children=[_el("delText", text="2 hours")])]),
@@ -159,6 +159,6 @@ def word_form(path: Path) -> Path:
 
 def make_forms(root: Path) -> dict[str, Path]:
     root.mkdir(parents=True, exist_ok=True)
-    return {"fillable": fillable_pdf(root / "Traveler fillable.pdf"),
-            "grid": grid_form_pdf(root / "Traveler printed.pdf"),
+    return {"fillable": fillable_pdf(root / "Job sheet fillable.pdf"),
+            "grid": grid_form_pdf(root / "Job sheet printed.pdf"),
             "word": word_form(root / "Bake record.docx")}

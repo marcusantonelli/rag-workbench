@@ -127,7 +127,7 @@ def _words(text: str) -> list[str]:
 
 def confirmed_text(ocr: str, description: str) -> str:
     """The lines of a picture's OCR text that its description confirms. OCR reads glyph by glyph
-    and invents words on glare, engraving and small screen text ("Hot Sutace", "TaskMunage"); the
+    and invents words on glare, engraving and small screen text ("Hot Surfcae", "MotorOverlaod"); the
     vision model reads the picture as a whole and copies its labels. A line is kept when most of
     its words are also in the description, so what remains is text both readers saw."""
     said = set(_words(description))

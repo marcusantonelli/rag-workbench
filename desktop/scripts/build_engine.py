@@ -127,14 +127,14 @@ def smoke_cli(cli: Path) -> int:
 
         (docs / "note.md").write_text(
             "# Leak test\n\n"
-            "Helium leak rate limit is 5e-8 atm cc/s for TO-39 packages.\n",
+            "Air leak rate limit is 5e-8 atm cc/s for H-39 packages.\n",
             encoding="utf-8",
         )
 
         run("init", str(ws), "--embedder", "hash-test")
         run("build", str(ws), str(docs))
 
-        found = run("search", str(ws), "helium leak rate")
+        found = run("search", str(ws), "air leak rate")
 
         assert "5e-8" in found, found
 
@@ -153,7 +153,7 @@ def smoke(exe: Path) -> int:
 
         (docs / "note.md").write_text(
             "# Leak test\n\n"
-            "Helium leak rate limit is 5e-8 atm cc/s for TO-39 packages.\n",
+            "Air leak rate limit is 5e-8 atm cc/s for H-39 packages.\n",
             encoding="utf-8",
         )
 
@@ -295,7 +295,7 @@ def smoke(exe: Path) -> int:
                 hits = call(
                     4,
                     "kb.search",
-                    {"kb": kb["id"], "query": "helium leak rate"},
+                    {"kb": kb["id"], "query": "air leak rate"},
                 )["results"]
 
                 assert hits and "5e-8" in hits[0]["text"], hits

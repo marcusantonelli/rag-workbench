@@ -1,10 +1,10 @@
 # One question per line. Label answers by location, not chunk id, so labels survive re-chunking.
 # Fields in "expect": file (glob), page, sheet, line, kind (prose|table|figure|code|sql|table_card|rows), contains.
 # "expect": [] marks a question the corpus cannot answer (scored end to end, not here).
-{"id": "pull-1", "type": "doc_table", "question": "What is the minimum pull strength for 5 mil aluminum wire?", "expect": [{"file": "*QP-114*", "page": 1}]}
-{"id": "scan-1", "type": "scan", "question": "What was the root cause of the seal leak failures on lot 24A-0193?", "expect": [{"file": "*DR-2291*"}]}
+{"id": "pull-1", "type": "doc_table", "question": "What is the minimum pull strength for 5 mm silicone hose?", "expect": [{"file": "*QP-114*", "page": 1}]}
+{"id": "scan-1", "type": "scan", "question": "What was the root cause of the pressure leak failures on lot 24A-0193?", "expect": [{"file": "*DR-2291*"}]}
 {"id": "fig-1", "type": "figure", "question": "Which fixture holds the device for pull testing?", "expect": [{"file": "*QP-114*", "kind": "figure"}]}
-{"id": "sheet-1", "type": "sheet", "question": "Which lots had the most burn-in failures?", "expect": [{"file": "*Burn-in*", "kind": "table_card"}]}
+{"id": "sheet-1", "type": "sheet", "question": "Which lots had the most run-in failures?", "expect": [{"file": "*Run-in*", "kind": "table_card"}]}
 {"id": "code-1", "type": "code", "question": "Where is the release decision based on minimum yield made?", "expect": [{"file": "*LotReleaseService.cs", "contains": "CanRelease"}]}
 {"id": "sql-1", "type": "sql", "question": "Which stored procedure computes lot yield?", "expect": [{"file": "*lots.sql", "contains": "GetLotYield"}]}
 {"id": "none-1", "type": "not_found", "question": "What is the cafeteria menu on Friday?", "expect": []}

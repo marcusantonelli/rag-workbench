@@ -510,7 +510,7 @@ class PageRead:
 
 def ocr_page(image: Image.Image, *, tables: bool = True) -> PageRead:
     """Read a scanned page: paragraphs and headings, and tables where runs of rows line up in
-    columns (a traveler's data block, a printed spreadsheet)."""
+    columns (a job sheet's data block, a printed spreadsheet)."""
     frags = ocr_fragments(image)
     if not frags:
         return PageRead([], 0.0)

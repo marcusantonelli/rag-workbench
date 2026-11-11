@@ -457,7 +457,7 @@ def cmd_check_embedder(args) -> int:
     ws = Workspace.open(Path(args.workspace))
     emb = make_embedder(ws.config["embedding"])
     t0 = time.monotonic()
-    d = emb.embed_documents(["Wire bond pull test minimum strength for 5 mil aluminum wire."])
+    d = emb.embed_documents(["Minimum clamp pull force for a 10 mm silicone hose."])
     t1 = time.monotonic()
     q = emb.embed_query("What is the minimum pull strength?")
     t2 = time.monotonic()
@@ -567,7 +567,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("-k", type=int)
     s.add_argument("--type", help="only this file type, e.g. pdf")
     s.add_argument("--doc", action="append", metavar="DOC",
-                   help="only this document: its number (e.g. D02, from the spots file) or part of its path; repeatable")
+                   help="only this document: its number (e.g. DOC-12, from the spots file) or part of its path; repeatable")
     s.add_argument("--json", action="store_true")
     s.add_argument("--rerank", action=argparse.BooleanOptionalAction, default=None,
                    help="reorder the best candidates with the reranker model (default: the workspace's [rerank] setting)")

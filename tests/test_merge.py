@@ -48,8 +48,8 @@ def _search(ws: Workspace, query: str, k: int = 5):
 @pytest.fixture()
 def two_kbs(tmp_path, corpus):
     """Two knowledge bases with no files in common, one exported as a pack."""
-    a = _ws(tmp_path / "a", corpus / "QP-114 Pull Test.pdf", corpus / "Burn-in Yields Q3.xlsx", corpus / "handoff.txt")
-    b = _ws(tmp_path / "b", corpus / "Die Attach WI.docx", corpus / "calibration.csv", corpus / "code")
+    a = _ws(tmp_path / "a", corpus / "QP-114 Pull Test.pdf", corpus / "Run-in Yields Q3.xlsx", corpus / "handoff.txt")
+    b = _ws(tmp_path / "b", corpus / "Motor Mount WI.docx", corpus / "calibration.csv", corpus / "code")
     pack_b = tmp_path / "b.ragpack"
     export_pack(b, pack_b, name="Line B")
     return a, b, pack_b
@@ -72,14 +72,14 @@ def test_merge_packs_and_workspaces_into_a_new_workspace(tmp_path, two_kbs):
     # Both halves are searchable, by vector and keyword, with the copied vectors.
     files = [r["source"]["file"] for r in _search(ws, "minimum pull strength aluminum wire").results]
     assert any(f.endswith("QP-114 Pull Test.pdf") for f in files)
-    files = [r["source"]["file"] for r in _search(ws, "CanRelease minimum burn-in yield").results]
+    files = [r["source"]["file"] for r in _search(ws, "CanRelease minimum run-in yield").results]
     assert any(f.endswith("LotReleaseService.cs") for f in files)
 
     # Tables from both, queryable, with their cards pointing at real chunks.
     t = TablesStore(ws.tables_db, readonly=True)
     cat = {r["table_name"]: r for r in t.catalog()}
     t.close()
-    assert {"t_burn_in_yields_q3_yields", "t_calibration"} <= set(cat)
+    assert {"t_run_in_yields_q3_yields", "t_calibration"} <= set(cat)
     assert run_query(ws.tables_db, "SELECT COUNT(*) FROM t_calibration")["rows"][0][0] > 0
     s = RagStore(ws.rag_db, readonly=True)
     for name, row in cat.items():
@@ -116,7 +116,7 @@ def test_dry_run_changes_nothing(tmp_path, two_kbs):
 
 def test_different_embeddings_are_refused(tmp_path, corpus, two_kbs):
     a, *_ = two_kbs
-    small = _ws(tmp_path / "small", corpus / "Seal Leak.md",
+    small = _ws(tmp_path / "small", corpus / "Pressure Leak.md",
                 overrides={"embedding": {**TEST_EMBEDDING["embedding"], "dims": 128}})
     before = _counts(a)
     res = merge(a.root, [small.root])
@@ -155,9 +155,9 @@ def test_conflicts_and_copies(tmp_path, corpus):
     src = tmp_path / "docs"
     src.mkdir()
     f = src / "notes.txt"
-    f.write_text("Bonder 4 capillary changed every 500k bonds.\n", encoding="utf-8")
+    f.write_text("Crimper 4 jaw changed every 500k crimps.\n", encoding="utf-8")
     old = _ws(tmp_path / "old", f)
-    f.write_text("Bonder 4 capillary changed every 350k bonds after the October review.\n", encoding="utf-8")
+    f.write_text("Crimper 4 jaw changed every 350k crimps after the October review.\n", encoding="utf-8")
     os.utime(f, (f.stat().st_mtime + 60,) * 2)
     new = _ws(tmp_path / "new", f)
 
@@ -167,7 +167,7 @@ def test_conflicts_and_copies(tmp_path, corpus):
     assert res["kept"] == 1
     res = merge(old.root, [new.root])["sources"][0]          # and a newer one wins
     assert res["replace"] == 1 and _counts(old)["docs"] == 1
-    assert "350k" in _search(old, "capillary change interval").results[0]["text"]
+    assert "350k" in _search(old, "jaw change interval").results[0]["text"]
 
     # The same content under another path is skipped unless asked for.
     other = tmp_path / "elsewhere"

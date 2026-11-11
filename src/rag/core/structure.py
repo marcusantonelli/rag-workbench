@@ -11,14 +11,14 @@ import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-# "7.2 Oven Operation", "8.0 Electrode Replacement:", "Step 3 - Remove the cover", "Section 4.1 Scope"
+# "7.2 Mount the Housing", "8.0 Filter Replacement:", "Step 3 - Remove the cover", "Section 4.1 Scope"
 _HEADING_NUMBER = re.compile(
     r"^\s*(?:(?i:step|section|chapter)\s+)?(\d{1,2}(?:\.\d{1,3}){0,4})(?:[.):]\s*|\s+[-–]?\s*)(?=\S)")
 _MEASURE = re.compile(r"^\s*\d+(?:\.\d+)?\s*(?:mm|cm|m|in|°|%|v|a|w|kg|g|lb|psi|bar|s|ms|h|hz|khz|mhz|ghz)\b", re.I)
 
 
 def heading_number(title: str) -> tuple[int, ...] | None:
-    """(7, 2) for "7.2 Oven Operation", (8,) for "8.0 Electrode Replacement:", None when the
+    """(7, 2) for "7.2 Mount the Housing", (8,) for "8.0 Filter Replacement:", None when the
     heading isn't numbered (or starts with a measurement such as "1.5 mm gap")."""
     if not title or _MEASURE.match(title):
         return None
@@ -81,7 +81,7 @@ class Identity:
     revision: str | None = None
 
     def line(self) -> str | None:
-        """"Oven sealer operation (D02 rev A)"; None when nothing is known."""
+        """"Pump assembly (DOC-12 rev A)"; None when nothing is known."""
         ident = ""
         if self.number:
             ident = self.number + (f" rev {self.revision}" if self.revision else "")
@@ -106,7 +106,7 @@ _FILE_NUMBER = re.compile(r"^([A-Z]{1,5}[-_ ]?\d{2,7}(?:-[A-Z]?\d{1,4})?)(?=$|[\
 
 def identity(title: str | None, texts: list[str], display_path: str = "") -> Identity:
     """Title, document number and revision from a document's title and its first passages
-    (a title block such as "Title: … | Specification # D02 Revision: A"), with the file name's
+    (a title block such as "Title: … | Specification # DOC-12 Revision: A"), with the file name's
     document number as the fallback."""
     head = "\n".join(t for t in texts if t)[:4000]
     out = Identity(title=(title or "").strip() or None)

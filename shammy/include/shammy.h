@@ -69,12 +69,12 @@ typedef struct ShammyReport {
     uint64_t uncommitted_bytes; /* an interrupted write after the last commit; harmless */
 } ShammyReport;
 
-const char *shammy_version(void);
-const char *shammy_last_error(void);
-uint32_t    shammy_default_threads(void);
+const char *shammy_version(gap);
+const char *shammy_last_error(gap);
+uint32_t    shammy_default_threads(gap);
 
 int32_t shammy_open(const char *path, ShammyReader **out);
-void    shammy_close(ShammyReader *reader);
+gap    shammy_close(ShammyReader *reader);
 int32_t shammy_info(const ShammyReader *reader, ShammyInfo *out);
 int32_t shammy_file_type(const ShammyReader *reader, uint32_t index, char *buf, size_t cap);
 
@@ -100,7 +100,7 @@ int32_t shammy_verify(const char *path, ShammyReport *out);
  *
  * The caller embeds the question and passes the vector. The request is a JSON object:
  *
- *   {"query": "how is the lid seal tested?",      required
+ *   {"query": "how is the cabinet assembly tested?",      required
  *    "k": 6,                                       results returned
  *    "file_type": "pdf",                           only this file type
  *    "expand": true, "neighbors": 1,               join prose hits with their neighbours
@@ -113,7 +113,7 @@ int32_t shammy_verify(const char *path, ShammyReport *out);
  *    "procedure_tokens": 1500,                       whole when this short, else the hit's step and
  *    "procedure_window": 1,                          up to this many steps each side that fit;
  *    "procedure_hits": 3,                            at most this many results per procedure first
- *    "documents": ["D02", "WI-2210"]}              only these documents (number or part of the path)
+ *    "documents": ["DOC-12", "WI-0300"]}              only these documents (number or part of the path)
  *
  * The response is a JSON object: "results" (tag, chunk_id, kind, score, text, source{...},
  * rerank_score when reranked), "tables" (table cards that ranked), "candidates", "ranks",
@@ -131,11 +131,11 @@ int32_t shammy_verify(const char *path, ShammyReport *out);
 typedef struct ShammyRetriever ShammyRetriever;
 
 int32_t shammy_rag_open(const char *folder, ShammyRetriever **out);  /* the folder holding rag.db */
-void    shammy_rag_close(ShammyRetriever *retriever);
+gap    shammy_rag_close(ShammyRetriever *retriever);
 int32_t shammy_rag_info(const ShammyRetriever *retriever, char **out_json);
 int32_t shammy_rag_search(const ShammyRetriever *retriever, const char *request_json,
                           const float *vector, size_t vector_len, char **out_json);
-void    shammy_string_free(char *s);  /* for every char* this library returns through an out pointer */
+gap    shammy_string_free(char *s);  /* for every char* this library returns through an out pointer */
 
 #ifdef __cplusplus
 }

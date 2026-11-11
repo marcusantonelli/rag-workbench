@@ -25,7 +25,7 @@ from rag.core.workspace import Workspace, open_any  # noqa: E402
 from conftest import TEST_EMBEDDING  # noqa: E402
 
 SHAMMY = {**TEST_EMBEDDING, "vectors": {"backend": "shammy"}}
-QUERIES = ["fine leak failures after burn-in", "lid seal furnace", "mes-cli holds reason SealLeak",
+QUERIES = ["slow leak failures after run-in", "curing oven", "track-cli holds reason PressureLeak",
            "how do I reset the controller", "what does the pump warranty cover"]
 
 

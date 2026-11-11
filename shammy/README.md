@@ -83,7 +83,7 @@ shammy bench kb.shammy                                  # recall and ms per sear
 
 ## Status
 
-- **Milestone 0 (done):** on the 651-chunk Siemens pack (Qwen3-Embedding-8B, 4096 dims) the
+- **Milestone 0 (done):** on the 651-chunk pack of public product documents (Qwen3-Embedding-8B, 4096 dims) the
   8-bit code alone finds 99.8% of the exact top 20 and the 1-bit code 91%; block rotation costs
   nothing against a full rotation; a centroid doesn't help. The pack is too small to say how
   few candidates stage 1 can keep at a million chunks; `shammy bench` (milestone 2) will measure

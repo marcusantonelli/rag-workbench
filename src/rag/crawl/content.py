@@ -233,7 +233,7 @@ def _term_re(term: str) -> re.Pattern[str]:
 
 class Relevance:
     """terms: the subject (needed min_hits times); also_required: a second subject that
-    must also appear (e.g. "semiconductor" next to "Opcenter"); related: score only."""
+    must also appear (e.g. an edition next to a product name); related: score only."""
 
     def __init__(self, terms: list[str], related: list[str], min_hits: int,
                  also_required: list[str] | None = None, also_min_hits: int = 1):

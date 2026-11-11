@@ -276,7 +276,7 @@ class Retriever:
     code runs behind the C interface, so every caller gets the same results.
 
         r = shammy.Retriever("path/to/workspace")
-        out = r.search("how is the lid seal tested?", query_vector, k=6,
+        out = r.search("how is the cabinet assembly tested?", query_vector, k=6,
                        rerank={"enabled": True, "url": "http://127.0.0.1:8082"})
         for hit in out["results"]: ...
 

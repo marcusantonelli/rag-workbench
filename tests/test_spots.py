@@ -22,61 +22,61 @@ from rag.core.workspace import Workspace
 
 from conftest import TEST_EMBEDDING
 
-SEALER = """# Lid sealer operation
+PUMP = """# Pump assembly
 
-Title: Lid sealer operation | Specification # WI-2210 Revision: C
+Title: Pump assembly | Specification # WI-0300 Revision: C
 
 ## 1.0 Purpose
 
-1.1 This document gives the steps for running the lid sealer.
+1.1 This document gives the steps for assembling the pump.
 
 ## 7.0 Procedure
 
-### 7.1 Verify oven calibration
+### 7.1 Check the torque driver
 
-- Verify that the calibration sticker on the oven door has not expired.
+- Verify that the calibration sticker on the torque driver has not expired.
 - Record the calibration date in the log book.
 
-### 7.2 Load the oven
+### 7.2 Mount the housing
 
-- Place the carrier tray on the oven shelf.
-- Close the oven door and press START.
-- CAUTION: the door surface is hot.
+- Place the pump housing on the fixture plate.
+- Close the clamp and press START.
+- CAUTION: the clamp closes with force.
 
-### 7.3 Seal the lids
+### 7.3 Fit the impeller
 
-- Position the lid on the package and align the edges on the seal ring.
-- Press the weld button and hold it until the light turns green.
-- If the weld fails, see Section 8.2 and see MF164.
+- Position the impeller on the shaft and align the keyway.
+- Press the seat button and hold it until the light turns green.
+- If the impeller does not seat, see Section 8.2 and see FX-100.
 
-## 8.0 Electrode Replacement
+## 8.0 Filter Replacement
 
-### 8.1 Electrode removal
+### 8.1 Filter removal
 
-- Use the Allen wrench to unscrew the center screw and remove the electrode.
-- Inspect the white washer and replace it when damaged.
+- Use the Allen wrench to unscrew the cover screw and remove the filter.
+- Inspect the O-ring and replace it when damaged.
 
-### 8.2 Electrode installation
+### 8.2 Filter installation
 
-- Install the new electrode on the arbor and tighten the screw.
-- Rotate the electrode to check it turns freely.
+- Install the new filter in the housing and tighten the screw.
+- Rotate the filter to check it sits flat.
 """
 
-MANUAL = """# Sealer user manual
+MANUAL = """# Pump user manual
 
 ## 1 Overview
 
-The sealer joins lids to packages in a dry nitrogen atmosphere. It has two ovens and a weld station.
+The pump moves water at up to 40 litres per minute. It has two inlets and a pressure gauge.
 
 ## 2 Specifications
 
 ### 2.1 Power
 
-The sealer runs on 208 V three-phase power and draws up to 30 A when both ovens heat.
+The pump runs on 230 V and draws up to 3 A at full speed.
 
-### 2.2 Gas
+### 2.2 Pressure
 
-Nitrogen at 60 psi feeds the glove box; the oxygen sensor reads in ppm.
+The outlet is rated at 6 bar; the gauge reads in bar.
 """
 
 LIST = """# Resetting the controller
@@ -95,10 +95,10 @@ The controller keeps its settings through a reset.
 @pytest.fixture(scope="module")
 def proc_corpus(tmp_path_factory):
     d = tmp_path_factory.mktemp("procs")
-    (d / "WI-2210 sealer.md").write_text(SEALER, encoding="utf-8")
+    (d / "WI-0300 pump.md").write_text(PUMP, encoding="utf-8")
     (d / "manual.md").write_text(MANUAL, encoding="utf-8")
     (d / "reset.md").write_text(LIST, encoding="utf-8")
-    (d / "MF164.md").write_text("# MF164 fixture list\n\nDocument # MF164\n\nFixture A fits TO-39, fixture B fits SMD-2.\n",
+    (d / "FX-100.md").write_text("# FX-100 fixture list\n\nDocument # FX-100\n\nFixture A fits H-39, fixture B fits HS-2.\n",
                                 encoding="utf-8")
     return d
 
@@ -117,12 +117,12 @@ def _searcher(w, engine="reference", **cfg):
 
 def test_heading_numbers_and_identity():
     assert heading_number("7.0 Procedure/Specification:") == (7,)
-    assert heading_number("8.1 Electrode Removal:") == (8, 1)
+    assert heading_number("8.1 Nozzle Removal:") == (8, 1)
     assert heading_number("Step 3 - Remove the cover") == (3,)
     assert heading_number("1.5 mm gap") is None
     assert heading_number("Start-up & Login") is None
-    i = identity(None, ["Title: | Specification # D02 Revision: A"], "docs/x.pdf")
-    assert (i.number, i.revision) == ("D02", "A")
+    i = identity(None, ["Title: | Specification # DOC-12 Revision: A"], "docs/x.pdf")
+    assert (i.number, i.revision) == ("DOC-12", "A")
     # a redacted number doesn't swallow the next field
     assert identity("T", ["Specification # Revision: E1"]).number is None
     assert identity(None, ["no title block"], "docs/WI-1234 Seal.pdf").number == "WI-1234"
@@ -131,23 +131,23 @@ def test_heading_numbers_and_identity():
 def test_numbered_headings_nest_by_their_numbers():
     doc = ExtractedDoc(file_type="pdf", title=None, blocks=[
         Block("heading", "7.0 Procedure", level=1), Block("heading", "7.1 Verify", level=2),
-        Block("paragraph", "Verify the sticker on the oven door has not expired today."),
-        Block("heading", "8.0 Electrode Replacement", level=2),     # the file got the level wrong
-        Block("heading", "8.1 Removal", level=3), Block("paragraph", "Remove the screw and lift the electrode out."),
+        Block("paragraph", "Verify the sticker on the torque driver has not expired today."),
+        Block("heading", "8.0 Nozzle Replacement", level=2),     # the file got the level wrong
+        Block("heading", "8.1 Removal", level=3), Block("paragraph", "Remove the screw and lift the nozzle out."),
     ])
     chunks = Chunker(ChunkSettings(), lambda t: len(t.split())).chunk(doc, "wi.pdf")
-    assert [c.heading_path for c in chunks] == ["7.0 Procedure › 7.1 Verify", "8.0 Electrode Replacement › 8.1 Removal"]
+    assert [c.heading_path for c in chunks] == ["7.0 Procedure › 7.1 Verify", "8.0 Nozzle Replacement › 8.1 Removal"]
 
 
 def test_context_two_names_the_document_and_one_is_unchanged():
-    doc = ExtractedDoc(file_type="pdf", title="Lid sealer", blocks=[
-        Block("paragraph", "Specification # WI-2210 Revision: C"), Block("heading", "Load", level=1),
-        Block("paragraph", "Place the carrier tray on the oven shelf and close the door.")])
+    doc = ExtractedDoc(file_type="pdf", title="Pump assembly", blocks=[
+        Block("paragraph", "Specification # WI-0300 Revision: C"), Block("heading", "Load", level=1),
+        Block("paragraph", "Place the pump housing on the fixture plate and close the clamp.")])
     count = lambda t: len(t.split())  # noqa: E731
     v1 = Chunker(ChunkSettings(context=1), count).chunk(doc, "a/wi.pdf")
     v2 = Chunker(ChunkSettings(context=2), count).chunk(doc, "a/wi.pdf")
     assert v1[-1].embed_text.startswith("a/wi.pdf › Load\n")
-    assert v2[-1].embed_text.startswith("Lid sealer (WI-2210 rev C)\na/wi.pdf › Load\n")
+    assert v2[-1].embed_text.startswith("Pump assembly (WI-0300 rev C)\na/wi.pdf › Load\n")
     assert [c.text_hash for c in v1] == [c.text_hash for c in v2]
 
 
@@ -182,11 +182,11 @@ def test_spot_finds_procedures_and_leaves_manuals_alone(ws):
         kinds = db.execute("SELECT kind, label, steps FROM procedures ORDER BY proc_id").fetchall()
         assert ("numbered", "7.0", 3) in kinds and ("numbered", "8.0", 2) in kinds
         assert any(k == "list" for k, _, _ in kinds)
-        assert len(kinds) == 3                                  # nothing from the manual or MF164
+        assert len(kinds) == 3                                  # nothing from the manual or FX-100
         numbers = dict(db.execute("SELECT number, revision FROM documents WHERE number IS NOT NULL").fetchall())
-        assert numbers.get("WI-2210") == "C" and "MF164" in numbers
+        assert numbers.get("WI-0300") == "C" and "FX-100" in numbers
         links = db.execute("SELECT kind, ref, doc_id IS NOT NULL FROM links ORDER BY rowid").fetchall()
-        assert ("section", "8.2", 0) in links and ("document", "MF164", 1) in links
+        assert ("section", "8.2", 0) in links and ("document", "FX-100", 1) in links
         roles = dict(db.execute("SELECT role, COUNT(*) FROM members GROUP BY role").fetchall())
         assert roles.get("caution") == 1
     finally:
@@ -199,13 +199,13 @@ def test_a_step_brings_its_procedure(ws, engine):
         pytest.importorskip("shammy")
     store, s = _searcher(ws, engine)
     try:
-        r = s.search("remove the electrode with the Allen wrench", k=1).to_dict()["results"][0]
+        r = s.search("remove the filter with the Allen wrench", k=1).to_dict()["results"][0]
         assert r["procedure"]["label"] == "8.0" and r["procedure"]["whole"]
-        assert "### 8.1 Electrode removal" in r["text"] and "### 8.2 Electrode installation" in r["text"]
-        assert r["source"]["document"] == "WI-2210" and r["source"]["revision"] == "C"
-        r = s.search("press the weld button until the light turns green", k=1).to_dict()["results"][0]
+        assert "### 8.1 Filter removal" in r["text"] and "### 8.2 Filter installation" in r["text"]
+        assert r["source"]["document"] == "WI-0300" and r["source"]["revision"] == "C"
+        r = s.search("press the seat button until the light turns green", k=1).to_dict()["results"][0]
         assert r["procedure"]["label"] == "7.0"
-        assert any(x["kind"] == "document" and x["ref"] == "MF164" and x["file"].endswith("/MF164.md") for x in r["related"])
+        assert any(x["kind"] == "document" and x["ref"] == "FX-100" and x["file"].endswith("/FX-100.md") for x in r["related"])
         assert any(x["kind"] == "section" and x["ref"] == "8.2" for x in r["related"])
     finally:
         s.close()
@@ -218,10 +218,10 @@ def test_a_long_procedure_gives_a_window_of_steps(ws, engine):
         pytest.importorskip("shammy")
     store, s = _searcher(ws, engine, procedure_tokens=60, procedure_window=1)
     try:
-        r = s.search("place the carrier tray on the oven shelf", k=1).to_dict()["results"][0]
+        r = s.search("place the pump housing on the fixture plate", k=1).to_dict()["results"][0]
         p = r["procedure"]
         assert not p["whole"] and p["from"] <= "7.2" <= p["to"] and (p["from"], p["to"]) != ("7.1", "7.3")
-        md = s.search("place the carrier tray on the oven shelf", k=1).to_markdown()
+        md = s.search("place the pump housing on the fixture plate", k=1).to_markdown()
         assert "7.0 Procedure (step" in md
     finally:
         s.close()
@@ -233,9 +233,9 @@ def test_engines_agree_with_structure(ws):
     store, ref = _searcher(ws, "reference")
     _, nat = _searcher(ws, "native")
     try:
-        for q in ("remove the electrode", "press the weld button", "reset the controller", "nitrogen psi",
-                  "fixture for TO-39", "oven calibration sticker"):
-            for kw in ({}, {"documents": ["WI-2210"]}, {"documents": ["manual"]}, {"documents": ["nothing-like-this"]},
+        for q in ("remove the filter", "press the seat button", "reset the controller", "pressure bar",
+                  "fixture for H-39", "torque driver calibration sticker"):
+            for kw in ({}, {"documents": ["WI-0300"]}, {"documents": ["manual"]}, {"documents": ["nothing-like-this"]},
                        {"expand": False}):
                 a, b = ref.search(q, k=4, **kw), nat.search(q, k=4, **kw)
                 ra, rb = a.to_dict()["results"], b.to_dict()["results"]
@@ -253,11 +253,11 @@ def test_engines_agree_with_structure(ws):
 def test_document_filter(ws):
     store, s = _searcher(ws)
     try:
-        files = {r["source"]["file"] for r in s.search("oven", k=6, documents=["wi 2210"]).to_dict()["results"]}
-        assert {f.split("/")[-1] for f in files} == {"WI-2210 sealer.md"}
-        files = {r["source"]["file"] for r in s.search("oven", k=6, documents=["manual"]).to_dict()["results"]}
+        files = {r["source"]["file"] for r in s.search("pump", k=6, documents=["wi 0300"]).to_dict()["results"]}
+        assert {f.split("/")[-1] for f in files} == {"WI-0300 pump.md"}
+        files = {r["source"]["file"] for r in s.search("pump", k=6, documents=["manual"]).to_dict()["results"]}
         assert {f.split("/")[-1] for f in files} == {"manual.md"}
-        assert s.search("oven", documents=["nothing-like-this"]).results == []
+        assert s.search("pump", documents=["nothing-like-this"]).results == []
     finally:
         s.close()
         store.close()
@@ -269,16 +269,16 @@ def test_a_stale_or_missing_spot_file_changes_nothing(ws, tmp_path):
     w = Workspace.open(copy)
     store, s = _searcher(w)
     try:
-        with_spot = s.search("remove the electrode", k=3).to_dict()["results"]
+        with_spot = s.search("remove the filter", k=3).to_dict()["results"]
         assert with_spot[0].get("procedure")
         db = sqlite3.connect(spots.spots_path(copy))
         db.execute("UPDATE spots_meta SET value = '0:0:0' WHERE key = 'chunks'")
         db.commit()
         db.close()
         assert not spots.status(copy)["current"]
-        stale = s.search("remove the electrode", k=3).to_dict()["results"]
+        stale = s.search("remove the filter", k=3).to_dict()["results"]
         spots.spots_path(copy).unlink()
-        none = s.search("remove the electrode", k=3).to_dict()["results"]
+        none = s.search("remove the filter", k=3).to_dict()["results"]
         assert stale == none and not any("procedure" in r or "related" in r for r in none)
     finally:
         s.close()
@@ -294,17 +294,17 @@ def test_packs_carry_the_structure(ws, tmp_path):
 
 
 def test_figure_text_keeps_what_the_description_confirms():
-    desc = "A yellow label reading CAUTION Hot Surface on the oven door, and a dialog titled EStop."
-    assert confirmed_text("CAUTION\n\nHot Sutace.\n\nEStop\n\nEmergencyStopButtonhasbeenpress", desc) == "CAUTION\n\nEStop"
-    assert confirmed_text("Oxygen (ppm) 12", "Settings screen: Oxygen (ppm) 12") == "Oxygen (ppm) 12"
+    desc = "A yellow label reading CAUTION Hot Surface on the pump motor, and a dialog titled Alarm."
+    assert confirmed_text("CAUTION\n\nHot Surfcae.\n\nAlarm\n\nMotorOverloadAlarmhasbeenraised", desc) == "CAUTION\n\nAlarm"
+    assert confirmed_text("Flow (L/min) 12", "Settings screen: Flow (L/min) 12") == "Flow (L/min) 12"
 
 
 def test_file_names_give_document_numbers_only_when_they_start_with_one():
     number = lambda name: identity(None, [""], name).number  # noqa: E731
     assert number("docs/WI-1234 Seal.pdf") == "WI-1234" and number("QP-114 Pull Test.pdf") == "QP-114"
     # a crawler's hash suffix, or an asset code inside a long name, is not a document number
-    assert number("x/whats-new-in-opcenter-execution-semiconductor-8-6-de595425.html") is None
-    assert number("Siemens-PLM-Whats-new-in-Camstar-Semiconductor-Suite-V7-SU6-fs-73745-A4_tcm84-46-eba9f644.pdf") is None
+    assert number("x/whats-new-in-nimbus-warehouse-8-6-de595425.html") is None
+    assert number("Example Corp-PLM-Whats-new-in-Stratus-Pump-Suite-V7-SU6-fs-73745-A4_tcm84-46-eba9f644.pdf") is None
     assert number("calibration.csv") is None
 
 
@@ -316,8 +316,8 @@ def test_other_sources_search_exactly_as_before(built_ws, tmp_path):
     shutil.copytree(built_ws.root, copy)
     w = Workspace.open(copy)
     store, s = _searcher(w)
-    queries = ["helium leak rate limit", "burn-in yield by lot", "calibration due date", "GetLotYield",
-               "die attach void limits", "gowning order", "SELECT lot_id FROM yields"]
+    queries = ["air leak rate limit", "run-in yield by lot", "calibration due date", "GetLotYield",
+               "motor mount gap limits", "safety order", "SELECT lot_id FROM yields"]
     try:
         with_spot = [s.search(q, k=6).to_dict()["results"] for q in queries]
         spots.spots_path(copy).unlink()
@@ -334,20 +334,20 @@ def test_other_sources_search_exactly_as_before(built_ws, tmp_path):
 # -- long procedures ------------------------------------------------------------------------------
 def _long_procedure() -> str:
     verbs = ["Verify", "Press", "Install", "Remove", "Inspect", "Record", "Align", "Tighten", "Clean", "Load"]
-    things = ["the seal ring", "the carrier tray", "the oven door", "the weld electrode", "the vacuum gauge",
-              "the nitrogen valve", "the fixture clamp", "the lid", "the header", "the traveler"]
+    things = ["the gasket", "the carrier tray", "the pump cover", "the spray nozzle", "the vacuum gauge",
+              "the air valve", "the fixture clamp", "the lid", "the header", "the job sheet"]
 
     def lines(seed: int, n: int) -> str:
         return "\n".join(f"- {verbs[(seed + i) % 10]} {things[(seed * 3 + i) % 10]} and confirm reading "
                          f"{seed * 31 + i} before the next action of step {seed}." for i in range(n))
 
-    out = ["# Furnace line operation", "", "Title: Furnace line operation | Specification # WI-5000 Revision: D", "",
+    out = ["# Pump line operation", "", "Title: Pump line operation | Specification # WI-5000 Revision: D", "",
            "## 7.0 Procedure", ""]
     for i in range(1, 41):
         out.append(f"### 7.{i} Operation step {i}: {verbs[i % 10]} {things[i % 10]}\n")
         if i == 20:        # a step far longer than procedure_tokens, with sub-steps
             for j in range(1, 16):
-                out.append(f"#### 7.20.{j} Bake profile segment {j}\n\n{lines(200 + j, 8)}\n")
+                out.append(f"#### 7.20.{j} Test cycle segment {j}\n\n{lines(200 + j, 8)}\n")
         elif i == 30:      # a step longer than procedure_tokens, without sub-steps
             out.append(lines(300, 90) + "\n")
         else:
@@ -358,7 +358,7 @@ def _long_procedure() -> str:
 @pytest.fixture(scope="module")
 def long_ws(tmp_path_factory):
     d = tmp_path_factory.mktemp("longproc")
-    (d / "WI-5000 Furnace line.md").write_text(_long_procedure(), encoding="utf-8")
+    (d / "WI-5000 Pump line.md").write_text(_long_procedure(), encoding="utf-8")
     w = Workspace.init(tmp_path_factory.mktemp("longws") / "ws", TEST_EMBEDDING)
     assert Builder(w).build([d]).failed == 0
     return w
@@ -392,7 +392,7 @@ def test_a_step_too_long_for_the_limit_keeps_its_place(long_ws, engine):
         r = s.search(_first_text(long_ws, "7.20.7 "), k=1).to_dict()["results"][0]
         p = r["procedure"]
         assert p["level"] == "substeps" and p["step"] == "7.20" and p["from"] <= "7.20.7" <= p["to"]
-        assert "#### 7.20.7 Bake profile segment 7" in r["text"]
+        assert "#### 7.20.7 Test cycle segment 7" in r["text"]
         r = s.search(_first_text(long_ws, "7.30 "), k=1).to_dict()["results"][0]
         assert r["procedure"]["level"] == "chunks" and r["procedure"]["step"] == "7.30"
         assert r["text"].startswith("### 7.30 Operation step 30")
@@ -447,7 +447,7 @@ def _chunk_in(store, like: str) -> int:
 def test_engines_agree_on_long_procedures(long_ws):
     pytest.importorskip("shammy")
     queries = [_first_text(long_ws, x) for x in ("7.3 ", "7.12 ", "7.20.2 ", "7.20.14 ", "7.30 ", "7.40 ")]
-    queries += ["confirm reading before the next action", "bake profile segment", "tighten the seal ring"]
+    queries += ["confirm reading before the next action", "test cycle segment", "tighten the gasket"]
     for cfg in ({}, {"procedure_tokens": 300}, {"procedure_tokens": 300, "procedure_window": 3},
                 {"procedure_hits": 1}, {"procedure_tokens": 100000}):
         store, ref = _searcher(long_ws, "reference", **cfg)

@@ -3,7 +3,7 @@
 * A fillable PDF keeps what was typed in its fields (AcroForm widgets), not in the page text, so
   a plain text read loses every value. ``inject_pdf_fields`` adds each field's value to the page
   as characters inside the field's box, so the rest of the reader (lines, tables, procedure
-  tables) sees it exactly as if it were printed there: "Lot number: L26-3007", "☒ Seal ring
+  tables) sees it exactly as if it were printed there: "Lot number: L26-3007", "☒ Gasket
   inspected", "○ Release ◉ MRB".
 * Checkbox and tick symbols set in Wingdings come out of a PDF or a Word file as stray letters
   ("þ", "o", "x") or private-use characters; ``checkbox_symbol`` turns them into ☐ ☑ ☒ ✓ ✗.

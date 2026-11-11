@@ -72,7 +72,7 @@ def fts_query(query: str) -> str:
 
 
 def procedure_note(p: dict[str, Any]) -> str:
-    """"8.0 Electrode Replacement: (steps 8.1-8.2 of 4)" for a result's source line."""
+    """"8.0 Filter Replacement: (steps 8.1-8.2 of 4)" for a result's source line."""
     name = p.get("title") or p.get("label") or "procedure"
     n = p.get("steps") or 0
     a, b = p.get("from") or "?", p.get("to") or "?"
@@ -249,7 +249,7 @@ class Searcher:
 
     def search(self, query: str, *, k: int | None = None, file_type: str | None = None,
                expand: bool = True, documents: list[str] | None = None) -> SearchResult:
-        """``documents``: only these documents, by document number ("D02") or part of the path."""
+        """``documents``: only these documents, by document number ("DOC-12") or part of the path."""
         s = self.cfg
         k = int(k or s["keep"])
         timings: dict[str, float] = {}
@@ -430,7 +430,7 @@ class Searcher:
         return span, "\n\n".join(blocks), info, outline, window, tokens
 
     def _related(self, spots: SpotsIndex, span: list[int], window: tuple[int, int, int] | None) -> list[dict[str, Any]]:
-        """References made in a result's chunks ("see Section 8.4", "see MF164"), except to steps
+        """References made in a result's chunks ("see Section 8.4", "see FX-100"), except to steps
         the result already holds."""
         out: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()

@@ -19,7 +19,7 @@ DEFAULTS: dict[str, Any] = {
         "related": [],
         "min_term_hits": 2,
         # Optional second subject: a file must also mention one of these (e.g. narrowing
-        # "Opcenter" to its semiconductor edition with ["semiconductor", "wafer", "fab"]).
+        # a broad product name to one of its editions).
         "also_required": [],
         "also_required_min_hits": 1,
         # Only English is detected; [] keeps every language.
@@ -27,7 +27,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "crawl": {
         "seeds": [],
-        # Domains crawled freely (suffix match: "siemens.com" covers blogs.sw.siemens.com).
+        # Domains crawled freely (suffix match: "example.com" covers docs.example.com).
         # Empty = the whole web, guided by relevance alone.
         "allowed_domains": [],
         "blocked_domains": [

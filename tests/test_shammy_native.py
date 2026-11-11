@@ -114,8 +114,8 @@ def test_c_interface_matches_python(fixture):
     assert lib.shammy_last_error()
 
 
-RAG_QUERIES = ["lid seal furnace profile", "mes-cli holds --reason SealLeak", "calibration due dates for the leak tester",
-               "what is the helium leak rate limit"]
+RAG_QUERIES = ["curing oven profile", "track-cli holds --reason PressureLeak", "calibration due dates for the leak tester",
+               "what is the air leak rate limit"]
 
 
 @pytest.fixture(scope="module")
