@@ -25,6 +25,33 @@ marker and `.ragpack` extension (read the old names forever), docs, and the GitH
   including odd/even and per-section variants; remove them from scanned pages too.
 - Word text boxes (DrawingML and VML), without reading AlternateContent twice.
 - Forms on scanned pages: label/value pairs and checkbox states from OCR.
+- Procedure retrieval (0.4.1):
+  - Step metadata as real fields: procedure id, step number, document number, revision.
+  - Return the whole procedure, or a window around the matched step (parent/child retrieval).
+  - Filters (document number, latest revision, type) and grouping of hits by procedure.
+  - Cross-document links ("see WI-2210") later.
+  - Compatibility: new columns are optional. 0.4.0 packs and knowledge bases open unchanged and
+    fall back to document + heading path; vectors are never rebuilt for this. An in-place
+    upgrade fills the fields from stored text. 0.4.0 must still open 0.4.1 packs. Test: 0.4.0
+    test packs give the same results under 0.4.1.
+- Auto-update (0.4.1):
+  - Tauri updater plugin; `latest.json` and signed installers on the GitHub releases
+    (`releases/latest/download/latest.json`). The repo is public.
+  - Signing key secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+  - Public key (minisign 76327FDFB6E9D185), for `tauri.conf.json`:
+    `dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2MzI3RkRGQjZFOUQxODUKUldTRjBlbTIzMzh5ZHJURmtmUDVJVUpFUUpzZE9ucWtTYTAyM3dzdHZDU2RBUzdtakdocDdnbHIK`
+  - Shows the version and notes first; never silent. Waits for a running build. Stops the engine
+    and helper models before installing. A Settings switch turns checking off.
+    `rag update --check` for the CLI.
+  - 0.4.1 is installed by hand once; later versions update themselves.
+- Build progress (0.4.1): no more "0 chunks" with nothing moving.
+  - Overall bar: files done of total, and pages done of total pages, with time elapsed and an
+    estimate.
+  - Per file, the current stage with its own progress: reading page 12/40, OCR, picture 3/9,
+    chunking, embedding 160/420 chunks, writing.
+  - Chunk counts climb as embedding batches finish, not only at the end.
+  - Recent activity list (finished, skipped as unchanged, failed with the reason). The same
+    progress shows in the CLI as a bar.
 
 ## To measure on real machines (0.4.0)
 
