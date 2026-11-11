@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "RAG Workbench",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "identifier": "com.ragworkbench.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -73,6 +73,17 @@
         "files": {
           "/usr/bin/rag": "linux/rag"
         }
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2MzI3RkRGQjZFOUQxODUKUldTRjBlbTIzMzh5ZHJURmtmUDVJVUpFUUpzZE9ucWtTYTAyM3dzdHZDU2RBUzdtakdocDdnbHIK",
+      "endpoints": [
+        "https://github.com/marcusantonelli/rag-workbench/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

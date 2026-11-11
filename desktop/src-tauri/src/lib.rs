@@ -195,6 +195,14 @@ async fn engine_call(engine: State<'_, Arc<Engine>>, method: String, params: Opt
 }
 
 /// .ragpack files the app was launched with (double-click / "Open with").
+/// Stop the engine and the model servers it runs, before an update replaces their files. The next
+/// engine call starts it again (if the update is cancelled or fails).
+#[tauri::command]
+async fn engine_stop(engine: State<'_, Arc<Engine>>) -> Result<(), String> {
+    let engine = Arc::clone(engine.inner());
+    tauri::async_runtime::spawn_blocking(move || engine.shutdown()).await.map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn startup_paths() -> Vec<String> {
     std::env::args()
@@ -207,6 +215,8 @@ fn startup_paths() -> Vec<String> {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let engine = Engine::new(app.handle().clone());
             if let Err(e) = engine.start() {
@@ -215,7 +225,7 @@ pub fn run() {
             app.manage(engine);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, startup_paths])
+        .invoke_handler(tauri::generate_handler![engine_call, engine_stop, startup_paths])
         .build(tauri::generate_context!())
         .expect("error while building RAG Workbench");
 

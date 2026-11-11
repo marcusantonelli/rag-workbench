@@ -581,3 +581,9 @@ ul.plain { margin: 4px 0 0; padding-left: 18px; }
 .file-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--ink) 8%, transparent); overflow: hidden; }
 .file-bar span { display: block; height: 100%; background: var(--primary); transition: width 0.4s ease; }
 .status-building { background: var(--primary-soft); color: var(--primary); }
+/* Update available: a slim bar above the current view */
+.update-banner { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--rule); border-radius: var(--r-sm, 6px);
+  background: var(--primary-soft); }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.update-actions { display: flex; align-items: center; gap: 10px; }
+.update-notes { white-space: pre-wrap; max-height: 260px; overflow: auto; margin: 10px 0 0; font: inherit; font-size: 13px; }

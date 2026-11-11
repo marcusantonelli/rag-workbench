@@ -6,6 +6,7 @@ import { Button, Notice, Progress, Switch } from "../components/ui";
 import { basename, bytes } from "../format";
 import { GGUF_FILTER, pickPaths } from "../platform";
 import { HelperPanel } from "./HelperPanel";
+import { autoCheck, checkForUpdate, installUpdate, setAutoCheck, useUpdates } from "../updates";
 
 const VARIANT_LABEL: Record<string, string> = {
   "cuda-12.4": "CUDA 12.4 (NVIDIA)",
@@ -265,6 +266,8 @@ export function SettingsView() {
         )}
       </section>
 
+      <UpdatesPanel version={info?.version} />
+
       {info && (
         <section className="panel">
           <h2>About</h2>
@@ -276,5 +279,39 @@ export function SettingsView() {
         </section>
       )}
     </div>
+  );
+}
+
+function UpdatesPanel({ version }: { version?: string }) {
+  const u = useUpdates();
+  const [auto, setAuto] = useState(autoCheck);
+  return (
+    <section className="panel">
+      <h2>Updates</h2>
+      {u.phase === "unsupported" ? (
+        <p className="muted">Updates are checked by the installed app.</p>
+      ) : (
+        <>
+          <p className="muted">
+            New versions come from the project's GitHub releases and are checked against its signing key before they
+            install. Nothing installs without you choosing it, and never during a build.
+          </p>
+          <Switch checked={auto} onChange={(on) => { setAuto(on); setAutoCheck(on); }} label="Check for updates when the app starts" />
+          <div className="row">
+            <Button onClick={() => void checkForUpdate(true)} disabled={u.phase === "checking" || u.phase === "downloading" || u.phase === "installing"}>
+              {u.phase === "checking" ? "Checking…" : "Check now"}
+            </Button>
+            {u.phase === "available" && <Button kind="primary" onClick={() => void installUpdate()}>Update to {u.version} and restart</Button>}
+          </div>
+          <p className="muted small">
+            {u.phase === "none" && `RAG Workbench ${version ?? ""} is the latest version.`}
+            {u.phase === "available" && `Version ${u.version} is available.`}
+            {u.phase === "downloading" && "Downloading…"}
+            {u.phase === "installing" && "Installing; the app will restart."}
+            {u.phase === "error" && `Couldn't check or install: ${u.error}`}
+          </p>
+        </>
+      )}
+    </section>
   );
 }

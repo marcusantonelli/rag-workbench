@@ -7,10 +7,12 @@ import { KbView } from "./views/KbView";
 import { SettingsView } from "./views/SettingsView";
 import { CommandLineView } from "./views/CommandLineView";
 import { onFileDrop } from "./platform";
+import { UpdateBanner, useStartupCheck } from "./updates";
 
 export function App() {
   const { screen, kbs, engineError, info, openKb } = useApp();
   const [packHover, setPackHover] = useState(false);
+  useStartupCheck();
 
   // Dropping a .ragpack anywhere opens it (the Build tab handles other files).
   useEffect(
@@ -28,6 +30,7 @@ export function App() {
     <div className="app">
       <Sidebar />
       <main className={`main ${packHover ? "drop-hover" : ""}`}>
+        <UpdateBanner />
         {!info && (
           <div className="booting">
             <p>{engineError ? "Waiting for the engine…" : "Starting…"}</p>

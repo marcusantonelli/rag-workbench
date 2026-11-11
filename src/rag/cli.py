@@ -509,6 +509,26 @@ def cmd_procedure(args) -> int:
     return 0
 
 
+def cmd_update(args) -> int:
+    """Say whether a newer release exists. The desktop app installs updates itself."""
+    from rag import __version__
+    from rag.updates import latest, newer
+
+    try:
+        rel = latest()
+    except Exception as exc:  # noqa: BLE001 - offline, rate-limited, blocked by a proxy
+        print(f"Couldn't check for updates: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({"current": __version__, "latest": rel["version"], "newer": newer(rel["version"]), "url": rel["url"]}))
+    elif newer(rel["version"]):
+        print(f"rag-builder {rel['version']} is available (you have {__version__}): {rel['url']}")
+        print("The desktop app offers it on its own; for the command line alone, install the new release.")
+    else:
+        print(f"rag-builder {__version__} is the latest version.")
+    return 0
+
+
 def cmd_tables(args) -> int:
     from rag.core.db.tables import TablesStore
     from rag.core.workspace import open_any
@@ -718,6 +738,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--max-tokens", type=int, default=4000, help="page size (default 4000)")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_procedure)
+
+    s = sub.add_parser("update", help="check whether a newer release exists (the desktop app updates itself)")
+    s.add_argument("--check", action="store_true", help="only check (the default; the command line never installs)")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_update)
 
     s = sub.add_parser("tables", help="list tables")
     s.add_argument("workspace")

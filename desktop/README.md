@@ -28,11 +28,19 @@ The crawler stays a separate tool (`rag-crawl`).
 
 Download the installer from the GitHub Actions run or release (see "Building the installers"):
 
-- **Windows**: `RAG Workbench_0.4.0_x64-setup.exe` installs for the current user without admin
+- **Windows**: `RAG Workbench_0.4.1_x64-setup.exe` installs for the current user without admin
   rights. The `.msi` is for machine-wide or managed installs. The installers are not code
   signed yet, so SmartScreen will warn; choose More info, then Run anyway.
-- **Linux**: `.deb` for Debian/Ubuntu (`sudo apt install ./RAG.Workbench_0.4.0_amd64.deb`), or the
+- **Linux**: `.deb` for Debian/Ubuntu (`sudo apt install ./RAG.Workbench_0.4.1_amd64.deb`), or the
   `.AppImage` for anything else (`chmod +x` and run it).
+
+From 0.4.1 the app updates itself: a few seconds after it starts it checks the project's latest
+GitHub release, and when a newer one exists a bar at the top shows the version and what's new.
+**Update and restart** downloads it, checks its signature, stops the engine and the model
+servers, installs and restarts; it waits while a build, merge or export runs. Settings → Updates
+turns the check off or runs it by hand. 0.4.1 itself has to be installed by hand once. The
+`.AppImage` and the Windows installers update this way; a `.deb` install is updated with a new
+`.deb`.
 
 On first start, Settings shows the hardware it found. **Download and start** fetches llama.cpp
 for this machine and the model (resumable, checksums verified), then starts it. Offline
@@ -153,6 +161,23 @@ npx tauri build                            # Windows: nsis + msi; Linux: deb + a
 
 Installers land in `desktop/src-tauri/target/release/bundle/`. Windows installers have to be
 built on Windows.
+
+### Releasing with updates
+
+The installed apps check `releases/latest/download/latest.json` on GitHub, so a release is offered
+as an update when:
+
+1. The repository has the secrets `TAURI_SIGNING_PRIVATE_KEY` (the contents of the private key
+   made with `npx tauri signer generate`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The build
+   then signs the installers, and the `release` job writes `latest.json` from the signatures and
+   `docs/release-notes/<version>.md` and attaches it to the draft release. Without the secrets
+   the installers are built as before and no update is published.
+2. The draft is published as a normal release. GitHub's "latest" skips drafts and releases
+   marked as a pre-release, so a pre-release is never offered as an update.
+
+The public half of the key is in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`); an
+update signed with any other key is refused. Keep a backup of the private key: without it,
+installed apps can't be updated and have to be reinstalled by hand.
 
 ## Troubleshooting
 
