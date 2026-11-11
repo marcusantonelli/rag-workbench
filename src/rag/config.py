@@ -130,7 +130,12 @@ DEFAULTS: dict[str, Any] = {
         "procedures": True,
         "procedure_tokens": 1500,
         "procedure_window": 1,
-        "procedure_hits": 3,         # at most this many results from one procedure
+        "procedure_hits": 3,         # at most this many results from one procedure (or section)
+        # Sections (spots file from 0.4.2): a hit in a document with headings comes back with the rest of its
+        # section when that is at most section_tokens long, else the sub-sections (or chunks)
+        # around it, with an outline and a way to read on. Off: neighbouring chunks, as before.
+        "sections": True,
+        "section_tokens": 1200,
     },
     "rerank": {
         # Optional second pass: a small reranker model reorders the best fused candidates before

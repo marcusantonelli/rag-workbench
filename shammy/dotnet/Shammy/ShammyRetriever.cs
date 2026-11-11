@@ -54,15 +54,25 @@ public sealed class RetrievalOptions
     /// <summary>Steps on each side of the hit's step, when they fit (default 1).</summary>
     public int? ProcedureWindow { get; init; }
 
-    /// <summary>At most this many results from one procedure while other results are left (default 3).</summary>
+    /// <summary>At most this many results from one procedure (or section) while other results are left (default 3).</summary>
     public int? ProcedureHits { get; init; }
+
+    /// <summary>With a spots file made by 0.4.2 or later: a hit in a document with headings brings the
+    /// rest of its section, or the sub-sections around it (default true). Such results have
+    /// <see cref="RetrievalProcedure.Kind"/> "section".</summary>
+    public bool? Sections { get; init; }
+
+    /// <summary>A section up to this many tokens comes whole; a longer one as the parts around the hit (default 1200).</summary>
+    public int? SectionTokens { get; init; }
 
     /// <summary>Only these documents: document numbers ("DOC-12", needs the spots file) or parts of file paths.</summary>
     public IReadOnlyList<string>? Documents { get; init; }
 }
 
-/// <summary>The procedure a result belongs to (from the spots file). Level says what was returned:
-/// "procedure" (all of it), "steps" (From..To), "substeps" (From..To inside Step) or "chunks" (part of Step).</summary>
+/// <summary>The procedure (or, when Kind is "section", the section of a document) a result belongs to,
+/// from the spots file. Level says what was returned: "procedure" (all of it), "steps" (From..To),
+/// "substeps" (From..To inside Step) or "chunks" (part of Step). A section's parts are its
+/// sub-sections, labelled by their titles.</summary>
 public sealed record RetrievalProcedure(long Id, string Kind, string? Title, string? Label, int Steps, string? From, string? To,
                                         bool Whole, string Level, string? Step);
 
@@ -213,6 +223,8 @@ public sealed class ShammyRetriever : IDisposable
         Set("procedure_tokens", options.ProcedureTokens);
         Set("procedure_window", options.ProcedureWindow);
         Set("procedure_hits", options.ProcedureHits);
+        Set("sections", options.Sections);
+        Set("section_tokens", options.SectionTokens);
         if (options.Documents is { Count: > 0 } docs) request["documents"] = docs;
         if (options.Rerank is { } r)
         {

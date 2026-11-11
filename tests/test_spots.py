@@ -179,10 +179,18 @@ def test_spot_finds_procedures_and_leaves_manuals_alone(ws):
     assert st["present"] and st["current"]
     db = sqlite3.connect(spots.spots_path(ws.root))
     try:
-        kinds = db.execute("SELECT kind, label, steps FROM procedures ORDER BY proc_id").fetchall()
+        kinds = db.execute("SELECT kind, label, steps FROM procedures WHERE kind != 'section' ORDER BY proc_id").fetchall()
         assert ("numbered", "7.0", 3) in kinds and ("numbered", "8.0", 2) in kinds
         assert any(k == "list" for k, _, _ in kinds)
-        assert len(kinds) == 3                                  # nothing from the manual or FX-100
+        assert len(kinds) == 3                                  # no procedure from the manual or FX-100
+        # the manual is a section: its chapters are parts, labelled by their titles
+        manual = db.execute("SELECT proc_id, title, steps FROM procedures WHERE kind = 'section' AND title = 'Pump user manual'").fetchone()
+        assert manual is not None
+        parts = [r[0] for r in db.execute("SELECT label FROM steps WHERE proc_id = ? ORDER BY step", (manual[0],))]
+        assert parts[-2:] == ["1 Overview", "2 Specifications"]
+        subs = [r[0] for r in db.execute("SELECT label FROM substeps WHERE proc_id = ? ORDER BY step, sub", (manual[0],))]
+        assert subs[-2:] == ["2.1 Power", "2.2 Pressure"]
+        # FX-100 is one chunk: nothing to add, so no section
         numbers = dict(db.execute("SELECT number, revision FROM documents WHERE number IS NOT NULL").fetchall())
         assert numbers.get("WI-0300") == "C" and "FX-100" in numbers
         links = db.execute("SELECT kind, ref, doc_id IS NOT NULL FROM links ORDER BY rowid").fetchall()
@@ -309,26 +317,163 @@ def test_file_names_give_document_numbers_only_when_they_start_with_one():
 
 
 def test_other_sources_search_exactly_as_before(built_ws, tmp_path):
-    """Spreadsheets, CSV, code, SQL, HTML, text, Markdown and scans: no procedures, and the same
-    passages with or without the spots file (only document numbers are added to citations)."""
+    """Spreadsheets, CSV, code and SQL: no procedures or sections, and the same passages with or
+    without the spots file. Documents with headings come back with their section, which always
+    holds the passage that matched; with sections off they come back exactly as before (only
+    document numbers are added to citations)."""
     assert spots.status(built_ws.root)["procedures"] == 0
     copy = tmp_path / "copy"
     shutil.copytree(built_ws.root, copy)
     w = Workspace.open(copy)
     store, s = _searcher(w)
+    _, off = _searcher(w, sections=False)
     queries = ["air leak rate limit", "run-in yield by lot", "calibration due date", "GetLotYield",
                "motor mount gap limits", "safety order", "SELECT lot_id FROM yields"]
     try:
         with_spot = [s.search(q, k=6).to_dict()["results"] for q in queries]
+        sections_off = [off.search(q, k=6).to_dict()["results"] for q in queries]
+        texts = dict(store.conn.execute("SELECT chunk_id, text FROM chunks").fetchall())
         spots.spots_path(copy).unlink()
         without = [s.search(q, k=6).to_dict()["results"] for q in queries]
     finally:
         s.close()
+        off.close()
         store.close()
-    for a, b in zip(with_spot, without):
-        assert [(x["chunk_id"], x.get("chunk_ids"), x["text"]) for x in a] == \
-               [(x["chunk_id"], x.get("chunk_ids"), x["text"]) for x in b]
-        assert not any("procedure" in x or "related" in x for x in a)
+    key = lambda x: (x["chunk_id"], x.get("chunk_ids"), x["text"])  # noqa: E731
+    for a, b, c in zip(with_spot, sections_off, without):
+        assert [key(x) for x in b] == [key(x) for x in c]
+        assert not any("procedure" in x or "related" in x for x in b)
+        for x in a:
+            assert texts[x["chunk_id"]] in x["text"]
+            if x["source"]["file_type"] not in spots.SECTION_TYPES:
+                assert "procedure" not in x
+            elif "procedure" in x:
+                assert x["procedure"]["kind"] == "section"
+    # a spreadsheet, CSV, code or SQL passage reads the same either way (sections taking more or
+    # less of the result budget can change which of them make the cut, not what they hold)
+    before = {x["chunk_id"]: key(x) for r in without for x in r}
+    flat = [x for r in with_spot for x in r if x["source"]["file_type"] not in spots.SECTION_TYPES]
+    assert flat and all(key(x) == before[x["chunk_id"]] for x in flat if x["chunk_id"] in before)
+    assert any("procedure" in x for r in with_spot for x in r)
+
+
+@pytest.mark.parametrize("engine", ["reference", "native"])
+def test_a_manual_answers_with_its_section(ws, engine):
+    if engine == "native":
+        pytest.importorskip("shammy")
+    store, s = _searcher(ws, engine)
+    try:
+        res = s.search("outlet rated bar gauge", k=3, documents=["manual"])
+        top = res.to_dict()["results"][0]
+        assert top["procedure"]["kind"] == "section" and top["procedure"]["whole"]
+        assert "6 bar" in top["text"] and "230 V" in top["text"] and "40 litres" in top["text"]
+        assert "### 2 Specifications" in top["text"] and "#### 2.2 Pressure" in top["text"]
+        assert "Pump user manual (whole section)" in res.to_markdown()
+    finally:
+        s.close()
+        store.close()
+
+
+def _handbook() -> str:
+    """A long manual without numbered headings: chapters with sections and a few sub-sections."""
+    topics = ["Unpacking", "Placement", "Electrical supply", "Water connections", "First start", "Daily care",
+              "Seasonal storage", "Noise and vibration", "Error codes", "Spare parts", "Disposal", "Warranty"]
+    out = ["# Garden pump handbook", "", "This handbook covers the garden pump range.", ""]
+    for i, t in enumerate(topics):
+        out.append(f"## {t}\n")
+        body = " ".join(f"The {t.lower()} guidance item {j} explains detail {i * 40 + j} for owners of the pump."
+                        for j in range(30))
+        out.append(body + "\n")
+        if i == 8:
+            for k in range(3):
+                out.append(f"### Code E{k + 1}\n\nCode E{k + 1} means fault {k + 1} and is cleared by a restart.\n")
+    return "\n".join(out)
+
+
+@pytest.fixture(scope="module")
+def book_ws(tmp_path_factory):
+    d = tmp_path_factory.mktemp("book")
+    (d / "Garden pump handbook.md").write_text(_handbook(), encoding="utf-8")
+    w = Workspace.init(tmp_path_factory.mktemp("bookws") / "ws", TEST_EMBEDDING)
+    assert Builder(w).build([d]).failed == 0
+    return w
+
+
+@pytest.mark.parametrize("engine", ["reference", "native"])
+def test_a_long_section_gives_parts_an_outline_and_a_way_on(book_ws, engine):
+    if engine == "native":
+        pytest.importorskip("shammy")
+    store, s = _searcher(book_ws, engine)
+    try:
+        res = s.search("error codes guidance item 5", k=2)
+        top = res.to_dict()["results"][0]
+        p = top["procedure"]
+        assert p["kind"] == "section" and not p["whole"] and p["title"] == "Garden pump handbook"
+        assert top.get("outline") and any(x["shown"] for x in top["outline"]["steps"])
+        md = res.to_markdown()
+        assert "Outline of Garden pump handbook" in md and "Read on: get_procedure_steps(procedure=" in md
+        # reading on covers the whole section once
+        seen, page = [], s.procedure(p["id"])
+        while True:
+            seen += page["chunk_ids"]
+            if not page.get("next"):
+                break
+            page = s.procedure(page["next"]["procedure"], from_=page["next"]["from"],
+                               after_chunk=page["next"].get("after_chunk"))
+        all_ids = [r[0] for r in store.conn.execute("SELECT chunk_id FROM chunks ORDER BY ordinal")]
+        assert sorted(seen) == sorted(set(seen)) and set(seen) == set(all_ids)
+        assert page["markdown"].endswith("(the section ends here)")
+    finally:
+        s.close()
+        store.close()
+
+
+def test_engines_agree_on_sections(book_ws, built_ws):
+    pytest.importorskip("shammy")
+    for w, qs in ((book_ws, ["error codes guidance item 5", "warranty detail 450", "first start", "code E2 restart"]),
+                  (built_ws, ["air leak rate limit", "motor mount gap limits", "safety order", "calibration due date"])):
+        store, ref = _searcher(w, "reference")
+        _, nat = _searcher(w, "native")
+        try:
+            for q in qs:
+                for kw in ({}, {"section_tokens": 300}, {"sections": False}):
+                    ref.cfg.update(kw)
+                    nat.cfg.update(kw)
+                    a, b = ref.search(q, k=4), nat.search(q, k=4)
+                    ra, rb = a.to_dict()["results"], b.to_dict()["results"]
+                    for x, y in zip(ra, rb):
+                        x.pop("score"), y.pop("score")
+                    assert ra == rb, (q, kw)
+                    assert a.to_markdown() == b.to_markdown(), (q, kw)
+                    ref.cfg.update({"section_tokens": 1200, "sections": True})
+                    nat.cfg.update({"section_tokens": 1200, "sections": True})
+        finally:
+            ref.close()
+            nat.close()
+            store.close()
+
+
+def test_an_older_spots_file_is_used_and_then_upgraded(ws, tmp_path):
+    copy = tmp_path / "copy"
+    shutil.copytree(ws.root, copy)
+    db = sqlite3.connect(spots.spots_path(copy))
+    db.execute("DELETE FROM members WHERE proc_id IN (SELECT proc_id FROM procedures WHERE kind = 'section')")
+    db.execute("DELETE FROM procedures WHERE kind = 'section'")
+    db.execute("DELETE FROM spots_meta WHERE key = 'sections'")          # as 0.4.1 wrote it
+    db.commit()
+    db.close()
+    st = spots.status(copy)
+    assert st["current"] and st["outdated"]
+    w = Workspace.open(copy)
+    store, s = _searcher(w)
+    try:
+        assert s.search("remove the filter", k=3).to_dict()["results"][0]["procedure"]["kind"] == "numbered"
+    finally:
+        s.close()
+        store.close()
+    Builder(w).build([])          # any build brings it up to date
+    st = spots.status(copy)
+    assert st["current"] and not st["outdated"] and st["sections"] >= 2
 
 
 # -- long procedures ------------------------------------------------------------------------------

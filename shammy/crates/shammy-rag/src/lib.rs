@@ -65,6 +65,7 @@ fn d_neighbors() -> i64 { 1 }
 fn d_budget() -> i64 { 6000 }
 fn d_proc_tokens() -> i64 { 1500 }
 fn d_proc_hits() -> usize { 3 }
+fn d_section_tokens() -> i64 { 1200 }
 
 /// One search. Only `query` is required; the defaults are the Workbench's.
 #[derive(Clone, Debug, Deserialize)]
@@ -111,6 +112,12 @@ pub struct Request {
     /// places nothing else took.
     #[serde(default = "d_proc_hits")]
     pub procedure_hits: usize,
+    /// With a spots file from 0.4.2: answer a hit in a document with headings with its section (whole when
+    /// it is at most `section_tokens` long, else the sub-sections or chunks around the hit).
+    #[serde(default = "d_true")]
+    pub sections: bool,
+    #[serde(default = "d_section_tokens")]
+    pub section_tokens: i64,
     /// Only these documents: a document number ("DOC-12", needs the spots file) or part of the path.
     #[serde(default)]
     pub documents: Vec<String>,
@@ -321,7 +328,7 @@ impl Retriever {
         };
         Ok(Info { path: self.dir.display().to_string(), vector_store: store.into(), dims: self.dims,
                   model: meta("embed_model"), query_instruction: meta("query_instruction"), chunks, vectors,
-                  procedures: self.spots.as_ref().map(|s| s.count("procedures")) })
+                  procedures: self.spots.as_ref().map(|s| s.procedures_count()) })
     }
 
     fn vector_ids(&self, conn: &Connection, vector: &[f32], k: usize, file_type: Option<&str>, threads: usize) -> Result<Vec<i64>> {
@@ -440,9 +447,12 @@ impl Retriever {
     fn plan(&self, conn: &Connection, spots: &spots::Spots, req: &Request, cid: i64) -> Result<Option<Plan>> {
         let Some((pid, step, sub)) = spots.member(cid)? else { return Ok(None) };
         let Some(proc_) = spots.procedure(pid)? else { return Ok(None) };
+        if !(if proc_.kind == "section" { req.sections } else { req.procedures }) {
+            return Ok(None);
+        }
         let steps = spots.steps(pid)?;
         let Some(idx) = steps.iter().position(|s| s.step == step) else { return Ok(None) };
-        let (cap, win) = (req.procedure_tokens, req.procedure_window);
+        let (cap, win) = (cap_for(req, &proc_), req.procedure_window);
         let base = Plan { pid, proc_, steps, idx, level: "procedure", lo: 0, hi: 0, subs: Vec::new(), chunks: Vec::new(), at: None };
         if base.proc_.tokens <= cap {
             let hi = base.steps.len() - 1;
@@ -502,7 +512,7 @@ impl Retriever {
         if members.is_empty() {
             return Ok(None);
         }
-        let numbered = plan.proc_.kind == "numbered";
+        let numbered = plan.proc_.kind == "numbered" || plan.proc_.kind == "section";
         let nonempty_s = |v: &Option<String>| v.clone().filter(|t| !t.is_empty());
         let step_titles: HashMap<i64, Option<String>> =
             steps.iter().map(|s| (s.step, nonempty_s(&s.title).or_else(|| nonempty_s(&s.label)))).collect();
@@ -584,7 +594,7 @@ impl Retriever {
                 continue;
             }
             let (lo, hi) = (p.lo.min(idx), p.hi.max(idx));
-            if p.steps[lo..=hi].iter().map(|s| s.tokens).sum::<i64>() > 2 * req.procedure_tokens {
+            if p.steps[lo..=hi].iter().map(|s| s.tokens).sum::<i64>() > 2 * cap_for(req, &p.proc_) {
                 return Ok(None);
             }
             let wider = Plan { lo, hi, ..p.clone() };
@@ -881,7 +891,7 @@ impl Retriever {
             let mut proc_info = Value::Null;
             let mut outline = None;
             let mut window = None;
-            let mut plan = match (&self.spots, req.expand && req.procedures) {
+            let mut plan = match (&self.spots, req.expand) {
                 (Some(spots), true) => self.plan(&conn, spots, req, *cid)?,
                 _ => None,
             };
@@ -988,6 +998,11 @@ impl Retriever {
     }
 }
 
+/// How much one result may hold: `procedure_tokens`, or `section_tokens` for a section.
+fn cap_for(req: &Request, p: &spots::Procedure) -> i64 {
+    if p.kind == "section" { req.section_tokens } else { req.procedure_tokens }
+}
+
 fn nonempty(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
@@ -1000,6 +1015,21 @@ fn procedure_note(p: &Value) -> String {
     let b = nonempty(&p["to"]).unwrap_or_else(|| "?".into());
     let step = nonempty(&p["step"]);
     let level = p["level"].as_str().unwrap_or("");
+    if p["kind"].as_str() == Some("section") {
+        let span = if p["whole"].as_bool().unwrap_or(false) {
+            "whole section".to_string()
+        } else if level == "substeps" {
+            let st = step.unwrap_or_else(|| "?".into());
+            if a == b { format!("in {st}: {a}") } else { format!("in {st}: {a} to {b}") }
+        } else if level == "chunks" {
+            format!("part of {a}")
+        } else if a == b {
+            format!("{a}, of {n} part{}", if n == 1 { "" } else { "s" })
+        } else {
+            format!("{a} to {b}, of {n} parts")
+        };
+        return format!("{name} ({span})");
+    }
     let span = if p["whole"].as_bool().unwrap_or(false) {
         format!("whole, {n} step{}", if n == 1 { "" } else { "s" })
     } else if level == "substeps" {
@@ -1031,7 +1061,8 @@ fn outline_note(p: &Value, o: &Value) -> String {
     if o["after"].as_bool().unwrap_or(false) {
         items.push("…".into());
     }
-    let name = nonempty(&p["title"]).or_else(|| nonempty(&p["label"])).unwrap_or_else(|| "the procedure".into());
+    let whole = if p["kind"].as_str() == Some("section") { "the section" } else { "the procedure" };
+    let name = nonempty(&p["title"]).or_else(|| nonempty(&p["label"])).unwrap_or_else(|| whole.into());
     format!("Outline of {name}: {}", items.join("; "))
 }
 
@@ -1062,6 +1093,8 @@ pub fn procedure_markdown(page: &Value) -> String {
     }
     if page["next"].is_object() {
         out.push(more_note(&page["next"]));
+    } else if page["procedure"]["kind"].as_str() == Some("section") {
+        out.push("(the section ends here)".into());
     } else {
         out.push("(the procedure ends here)".into());
     }

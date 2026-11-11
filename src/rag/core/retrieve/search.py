@@ -73,11 +73,24 @@ def fts_query(query: str) -> str:
 
 
 def procedure_note(p: dict[str, Any]) -> str:
-    """"8.0 Filter Replacement: (steps 8.1-8.2 of 4)" for a result's source line."""
+    """"8.0 Filter Replacement: (steps 8.1-8.2 of 4)" for a result's source line; for a section of
+    a document, "Installation (Wiring to Testing, of 6 parts)"."""
     name = p.get("title") or p.get("label") or "procedure"
     n = p.get("steps") or 0
     a, b = p.get("from") or "?", p.get("to") or "?"
     level = p.get("level")
+    if p.get("kind") == "section":
+        if p.get("whole"):
+            span = "whole section"
+        elif level == "substeps":
+            span = f"in {p.get('step') or '?'}: {a}" + ("" if a == b else f" to {b}")
+        elif level == "chunks":
+            span = f"part of {a}"
+        elif a == b:
+            span = f"{a}, of {n} part" + ("" if n == 1 else "s")
+        else:
+            span = f"{a} to {b}, of {n} parts"
+        return f"{name} ({span})"
     if p.get("whole"):
         span = f"whole, {n} step" + ("" if n == 1 else "s")
     elif level == "substeps":
@@ -98,7 +111,8 @@ def outline_note(p: dict[str, Any], o: dict[str, Any]) -> str:
         items.insert(0, "…")
     if o.get("after"):
         items.append("…")
-    return f"Outline of {p.get('title') or p.get('label') or 'the procedure'}: " + "; ".join(items)
+    whole = "the section" if p.get("kind") == "section" else "the procedure"
+    return f"Outline of {p.get('title') or p.get('label') or whole}: " + "; ".join(items)
 
 
 def more_note(m: dict[str, Any]) -> str:
@@ -110,9 +124,10 @@ def more_note(m: dict[str, Any]) -> str:
 
 
 def procedure_markdown(page: dict[str, Any]) -> str:
-    """The compact form of a page of a procedure."""
+    """The compact form of a page of a procedure (or section)."""
     if page.get("procedure") is None:
         return "(the procedure ends here)"
+    end = "(the section ends here)" if page["procedure"].get("kind") == "section" else "(the procedure ends here)"
     s = page["source"]
     loc = []
     if s.get("document"):
@@ -121,7 +136,7 @@ def procedure_markdown(page: dict[str, Any]) -> str:
     out = [f"[P{page['procedure']['id']}] {s['file']} · " + " · ".join(loc), page["text"]]
     if page.get("outline"):
         out.append(outline_note(page["procedure"], page["outline"]))
-    out.append(more_note(page["next"]) if page.get("next") else "(the procedure ends here)")
+    out.append(more_note(page["next"]) if page.get("next") else end)
     return "\n".join(out)
 
 
@@ -292,6 +307,7 @@ class Searcher:
                 max_result_tokens=int(s.get("max_result_tokens", 6000)), markdown=True, rerank=self.reranker,
                 procedures=bool(s.get("procedures", True)), procedure_tokens=int(s.get("procedure_tokens", 1500)),
                 procedure_window=int(s.get("procedure_window", 1)), procedure_hits=int(s.get("procedure_hits", 3)),
+                sections=bool(s.get("sections", True)), section_tokens=int(s.get("section_tokens", 1200)),
                 documents=list(documents or []))
             return SearchResult(
                 query=query, results=out["results"], tables=out["tables"], timings_ms={**timings, **out["timings_ms"]},
@@ -349,6 +365,12 @@ class Searcher:
                 break
         return lo, hi
 
+    def _cap(self, proc: dict[str, Any]) -> int:
+        """How much one result may hold: procedure_tokens, or section_tokens for a section."""
+        if proc["kind"] == "section":
+            return int(self.cfg.get("section_tokens", 1200))
+        return int(self.cfg.get("procedure_tokens", 1500))
+
     def _plan(self, spots: SpotsIndex, cid: int) -> dict[str, Any] | None:
         """What to return for a hit inside a procedure, at the largest size that fits
         procedure_tokens: the whole procedure; the hit's step and the steps around it; the hit's
@@ -359,11 +381,13 @@ class Searcher:
             return None
         pid, step, sub = found
         proc = spots.procedure(pid)
+        if proc is None or not s.get("sections" if proc["kind"] == "section" else "procedures", True):
+            return None
         steps = spots.steps(pid)
         idx = next((i for i, st in enumerate(steps) if st["step"] == step), None)
-        if proc is None or idx is None:
+        if idx is None:
             return None
-        cap = int(s.get("procedure_tokens", 1500))
+        cap = self._cap(proc)
         win = int(s.get("procedure_window", 1))
         plan: dict[str, Any] = {"pid": pid, "proc": proc, "steps": steps, "idx": idx}
         if proc["tokens"] <= cap:
@@ -407,7 +431,7 @@ class Searcher:
         members = [m for m in members if m[0] in rows]
         if not members:
             return None
-        numbered = proc["kind"] == "numbered"
+        numbered = proc["kind"] in ("numbered", "section")
         step_titles = {st["step"]: st["title"] or st["label"] for st in steps}
         sub_titles: dict[int, dict[int, str | None]] = {}
         blocks: list[str] = []
@@ -650,8 +674,7 @@ class Searcher:
             text = row["text"]
             span = [cid]
             proc_info = outline = window = None
-            plan = (self._plan(spots, cid)
-                    if expand and spots is not None and s.get("procedures", True) else None)
+            plan = self._plan(spots, cid) if expand and spots is not None else None
             if plan is not None:
                 if plan["level"] == "steps":
                     merged = self._merge(spots, plan, procs, result, included, budget, used)
@@ -709,7 +732,7 @@ class Searcher:
         """A hit in the step just before or after a window of steps already returned widens that
         window instead of coming back as a separate piece (up to twice procedure_tokens). Returns
         the tokens used after merging, or None when it wasn't merged."""
-        cap = int(self.cfg.get("procedure_tokens", 1500))
+        cap = self._cap(plan["proc"])
         idx = plan["idx"]
         for prev in procs:
             p = prev["plan"]

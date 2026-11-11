@@ -142,7 +142,23 @@ rag spots docs-kb --check
 
 Packs exported from 0.4.1 carry the spots file; the retrieval server uses it when it's there and
 searches exactly as before when it isn't. It counts as a procedure only when the numbered steps,
-numbered list or flowchart read as instructions, so manuals and web pages stay plain sections.
+numbered list or flowchart read as instructions.
+
+### Sections (from 0.4.2)
+
+Everything else in a document with headings (PDF, Word, Markdown, HTML, text, slides) is recorded
+as sections. A manual with long chapters gets a section per chapter, its sub-headings as parts; a
+document of many short sections (most reports, specifications and web pages) is one section with
+its headings as parts. A hit then comes back with its context, as much as fits in `[search]
+section_tokens` (1200 by default): the whole section when it is that short, else the parts around
+the match, with an outline of the section and a `Read on:` line, exactly as for a procedure
+(`rag procedure` reads on through a section too; `from` is a part's title). The source line says
+what was included, for example `Garden pump handbook (Error codes, of 12 parts)`.
+
+Spreadsheets, CSV files, code and SQL have no sections and search as before. `[search] sections =
+false` turns sections off (hits then come back with their neighbouring chunks, as in 0.4.1). A
+spots file made by 0.4.1 is still used for its procedures, and the next build (or `rag spots`)
+adds the sections.
 
 Query tables from spreadsheets and documents:
 
@@ -192,7 +208,7 @@ rag unpack docs-kb.ragpack D:\RAG\docs-kb
 | `rag merge DEST SRC... [--on-conflict newer\|keep\|replace] [--keep-copies] [--dry-run]` | Copy compatible packs or workspaces into DEST (created if missing). No re-embedding. |
 | `rag convert WS [--to shammy\|sqlite-vec]` | Move a workspace's vectors to the other store. Nothing is embedded again. Packs exported from a Shammy workspace are format `ragpack/2`, which the retrieval server can't read yet. |
 | `rag compact WS` | Rewrite `vectors.shammy` without deleted rows. Builds do this on their own when a quarter of the rows are deleted. |
-| `rag spots WS [--check] [--json]` | Build the spots file (procedures, steps, references) from the stored chunks; `--check` only says whether it's there and current. Builds, merges and exports do this on their own. |
+| `rag spots WS [--check] [--json]` | Build the spots file (procedures, sections, steps, references) from the stored chunks; `--check` only says whether it's there and current. Builds, merges and exports do this on their own. |
 | `rag procedure WS\|PACK ID [--from STEP] [--after-chunk N] [--max-tokens N] [--json]` | A page of a procedure, as the agent's `get_procedure_steps` gets it, ending with the call for the next page. |
 | `rag search WS\|PACK "question" [-k N] [--type pdf] [--doc DOC-12] [--json] [--rerank] [--rerank-url URL]` | The passages the agent would get, with sources. `--doc` (repeatable) keeps only those documents, by number or part of the path. `--rerank` reorders the best 20 candidates with a reranker model at `--rerank-url` (default `http://127.0.0.1:8082`, or `RAG_RERANK_URL`); `--no-rerank` overrides a workspace that has it on. |
 | `rag tables WS\|PACK` | List tables. |

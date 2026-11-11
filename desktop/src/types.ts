@@ -102,8 +102,10 @@ export interface KbSummary {
   config_fingerprint: string | null;
   /** 1 = file and headings in each embedded chunk; 2 = also the document's title, number and revision. */
   embed_context?: number | null;
-  /** The spots file (structure.spots): procedures, steps and references found in the chunks. */
-  structure?: { present: boolean; current: boolean; built_at?: string; documents?: number; procedures?: number; steps?: number; links?: number; error?: string };
+  /** The spots file (structure.spots): procedures, sections, steps and references found in the chunks.
+   * outdated: made by 0.4.1 (procedures only); still used, and rebuilt by the next build. */
+  structure?: { present: boolean; current: boolean; outdated?: boolean; built_at?: string; documents?: number; procedures?: number;
+    sections?: number; steps?: number; links?: number; error?: string };
 }
 
 export interface RecentKb {
@@ -186,7 +188,7 @@ export interface SearchHit {
   /** The hit's procedure, when the knowledge base has a current spots file and the hit is in one. */
   procedure?: {
     id: number;
-    kind: "numbered" | "list" | "flowchart";
+    kind: "numbered" | "list" | "flowchart" | "section";
     title: string | null;
     label: string | null;
     steps: number;

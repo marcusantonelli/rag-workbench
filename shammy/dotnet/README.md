@@ -106,15 +106,21 @@ return page.Markdown;   // the steps, then "Read on: ..." for the next page, or 
 
 A tool description that tells the agent when to use it:
 
-> Returns more of a procedure that a search result belongs to. Call it when a search result ends
-> with a "Read on: get_procedure_steps(...)" line and you need steps it didn't include, or when the
-> user asks for the whole procedure; pass the procedure and from (and after_chunk, when given)
-> exactly as that line shows. Each page ends with the call for the next one. Prefer this to
-> searching again for the next step.
+> Returns more of a procedure, or of a section of a document, that a search result belongs to.
+> Call it when a search result ends with a "Read on: get_procedure_steps(...)" line and you need
+> steps or parts it didn't include, or when the user asks for the whole procedure or section; pass
+> the procedure and from (and after_chunk, when given) exactly as that line shows. Each page ends
+> with the call for the next one. Prefer this to searching again for what comes next.
 
-Results that are already complete (a whole procedure, a manual section, a table, a web page)
-never show the line, so the agent only meets the tool when there is more to read. It needs the
-pack's `structure.spots` (packs exported by 0.4.1 carry it).
+Results that are already complete (a whole procedure, a short section, a table) never show the
+line, so the agent only meets the tool when there is more to read. It needs the pack's
+`structure.spots` (packs exported by 0.4.1 carry it; from 0.4.2 it also holds sections, so the
+same call reads on through a long manual chapter, where `from` is a sub-section's title).
+
+From 0.4.2 a hit in any document with headings (a manual, a report, a web page) comes back with its
+section the same way: the whole section when it is at most `RetrievalOptions.SectionTokens`
+(1200) long, else the sub-sections around the hit, with an outline. `RetrievalHit.Procedure.Kind`
+is then `"section"`; `RetrievalOptions.Sections = false` gives the 0.4.1 behaviour.
 
 ## Test
 

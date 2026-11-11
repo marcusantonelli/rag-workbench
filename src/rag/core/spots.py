@@ -15,8 +15,10 @@ build it is stale until rebuilt, and a stale one is ignored rather than trusted.
 
 Detection is conservative. A group of numbered headings counts as a procedure only when its title
 or its text reads as instructions; numbered lists ("1. Open …") and flowcharts count as procedures
-inside one section. Everything else (manual chapters, web pages) stays plain sections, for which
-search behaves as it always has.
+inside one section. Everything else in a document with headings (manual chapters, reports, web
+pages) becomes sections (from 0.4.2): a top-level section with its sub-sections as parts, so a hit
+comes back with the rest of a short section, or the parts around it with an outline and a way to
+read on, instead of a lone chunk.
 """
 
 from __future__ import annotations
@@ -35,11 +37,17 @@ from rag.core.structure import (_FILE_NUMBER, CAUTION, DOC_REF, LIST_STEP, NOTE,
 
 SPOTS_NAME = "structure.spots"
 FORMAT = "spots/1"
+# From 0.4.2 the file also holds sections (procedures of kind "section", meta sections = 1). The
+# tables are unchanged, so 0.4.1 readers still use the file; 0.4.2 rebuilds one without sections.
+SECTIONS_META = "sections"
+# documents whose headings make sections (code, spreadsheets and data files don't)
+SECTION_TYPES = {"pdf", "docx", "doc", "md", "markdown", "html", "htm", "txt", "text", "pptx", "rtf", "odt"}
 
 SCHEMA = """
 CREATE TABLE spots_meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE documents (doc_id INTEGER PRIMARY KEY, title TEXT, number TEXT, revision TEXT);
--- kind: numbered (numbered headings), list (a numbered list in one section), flowchart
+-- kind: numbered (numbered headings), list (a numbered list in one section), flowchart, or
+-- section (from 0.4.2: a section of a document with headings, its sub-sections as steps)
 CREATE TABLE procedures (proc_id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL, kind TEXT NOT NULL,
                          label TEXT, title TEXT, steps INTEGER NOT NULL, tokens INTEGER NOT NULL);
 -- step 0 is the procedure's own text before its first step
@@ -188,6 +196,65 @@ def _sections(doc_id: int, chunks: list[_Chunk], assigned: set[int]) -> list[_Pr
     return out
 
 
+def _doc_sections(doc_id: int, chunks: list[_Chunk], assigned: set[int], doc_title: str) -> list[_Proc]:
+    """Sections of a document's remaining chunks. A document whose top-level sections are long
+    (a manual's chapters) gets one section per top-level heading, its second-level headings as
+    steps (text under the top heading itself is step 0) and third-level ones as sub-steps. A
+    document of many short top-level sections (most reports, specifications and web pages) is one
+    section as a whole: its top-level headings are the steps, and text before the first heading
+    is step 0. Only text, tables and figures take part; a section of one chunk adds nothing."""
+    usable = [c for c in chunks if c.chunk_id not in assigned and c.kind in ("prose", "table", "figure")]
+    tops: dict[str, int] = defaultdict(int)
+    for c in usable:
+        if c.parts:
+            tops[c.parts[0]] += 1
+    whole = len(tops) >= 2 and sum(tops.values()) / len(tops) < 4
+
+    def path(c: _Chunk) -> list[str]:
+        return [doc_title, *c.parts] if whole else c.parts
+
+    groups: dict[str, _Proc] = {}
+    last: dict[str, tuple[str, Any]] = {}          # section -> (current part title, its key)
+    for c in usable:
+        parts = path(c)
+        if not parts:
+            continue
+        top = parts[0]
+        proc = groups.get(top)
+        if proc is None:
+            num = heading_number(top)
+            proc = groups[top] = _Proc(doc_id, "section", label(num) if num else None, top, key=None)
+        if len(parts) == 1:
+            key: Any = 0
+            title = top
+        else:
+            title = parts[1]
+            cur = last.get(top)
+            key = cur[1] if cur and cur[0] == title else len(proc.steps) + 1
+            last[top] = (title, key)
+        step = proc.steps.setdefault(key, {"label": None, "title": title, "chunks": [], "subs": {}})
+        step["chunks"].append(c)
+        if len(parts) > 2 and key != 0:
+            subs = step["subs"]
+            known = {v[2]: v[0] for v in subs.values()}
+            sk = known.get(parts[2], len(known) + 1)
+            subs[c.chunk_id] = (sk, None, parts[2])
+    return [p for p in groups.values() if sum(len(st["chunks"]) for st in p.steps.values()) >= 2]
+
+
+def _labels(titles: list[str | None]) -> list[str]:
+    """Unique, short labels from titles (a section's parts are found by label when reading on)."""
+    out: list[str] = []
+    for t in titles:
+        base = re.sub(r"\s+", " ", (t or "").strip())[:60].rstrip() or "Untitled"
+        name, n = base, 1
+        while name in out:
+            n += 1
+            name = f"{base} ({n})"
+        out.append(name)
+    return out
+
+
 def _norm_number(s: str) -> str:
     return re.sub(r"[\s_-]", "", s).upper()
 
@@ -200,7 +267,7 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
     src.row_factory = sqlite3.Row
     try:
         fp = fingerprint(src)
-        docs = src.execute("SELECT doc_id, display_path, title FROM documents ORDER BY doc_id").fetchall()
+        docs = src.execute("SELECT doc_id, display_path, title, file_type FROM documents ORDER BY doc_id").fetchall()
         per_doc: dict[int, list[_Chunk]] = defaultdict(list)
         for r in src.execute("SELECT chunk_id, doc_id, ordinal, kind, text, heading_path, n_tokens FROM chunks "
                              "ORDER BY doc_id, ordinal"):
@@ -214,7 +281,9 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
     tmp = out.with_name(out.name + f".tmp{os.getpid()}")
     tmp.unlink(missing_ok=True)
     db = sqlite3.connect(tmp)
-    counts = {"documents": 0, "procedures": 0, "steps": 0, "members": 0, "links": 0}
+    counts = {"documents": 0, "procedures": 0, "sections": 0, "steps": 0, "members": 0, "links": 0}
+    file_types = {d["doc_id"]: (d["file_type"] or "").lower() for d in docs}
+    paths = {d["doc_id"]: d["display_path"] for d in docs}
     try:
         db.executescript(SCHEMA)
         idents: dict[int, Any] = {}
@@ -237,6 +306,10 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
         for doc_id, chunks in per_doc.items():
             procs, assigned = _numbered(doc_id, chunks)
             procs += _sections(doc_id, chunks, assigned)
+            if file_types.get(doc_id) in SECTION_TYPES:
+                taken = assigned | {c.chunk_id for p in procs for st in p.steps.values() for c in st["chunks"]}
+                name = idents[doc_id].title or Path((paths.get(doc_id) or "").replace("\\", "/")).stem or "Document"
+                procs += _doc_sections(doc_id, chunks, taken, name)
             # where each step and procedure of this document is, for "see Section 8.4"
             where: dict[tuple[int, ...], tuple[int, int]] = {}
             member_of: dict[int, tuple[int, int]] = {}
@@ -244,6 +317,17 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                 if proc.kind == "numbered":
                     # the procedure's own text first (step 0), then its steps in number order
                     ordered = sorted(proc.steps.items(), key=lambda kv: (kv[0] != proc.key, kv[0]))
+                elif proc.kind == "section":
+                    # the section's own text first (step 0), then its parts in reading order
+                    ordered = sorted(proc.steps.items(), key=lambda kv: (kv[0] != 0, min(c.ordinal for c in kv[1]["chunks"])))
+                    for (_, st), name in zip(ordered, _labels([st["title"] for _, st in ordered])):
+                        st["label"] = name
+                    for _, st in ordered:
+                        if st["subs"]:
+                            names = dict(zip(sorted({v[0] for v in st["subs"].values()}),
+                                             _labels([next(v[2] for v in st["subs"].values() if v[0] == k)
+                                                      for k in sorted({v[0] for v in st["subs"].values()})])))
+                            st["subs"] = {cid: (v[0], names[v[0]], v[2]) for cid, v in st["subs"].items()}
                 else:
                     ordered = sorted(proc.steps.items(), key=lambda kv: min(c.ordinal for c in kv[1]["chunks"]))
                 tokens = sum(c.tokens for _, s in ordered for c in s["chunks"])
@@ -252,7 +336,7 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                 proc_id = cur.lastrowid
                 n_steps = 0
                 for key, step in ordered:
-                    if proc.kind == "numbered" and key == proc.key:
+                    if (proc.kind == "numbered" and key == proc.key) or (proc.kind == "section" and key == 0):
                         number = 0
                     else:
                         n_steps += 1
@@ -262,6 +346,10 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                     counts["steps"] += 1
                     if isinstance(key, tuple):
                         where[key] = (proc_id, number)
+                    elif proc.kind == "section":
+                        num = heading_number(step["title"] or "")
+                        if num is not None:
+                            where.setdefault(num, (proc_id, number))
                     # sub-steps, when the step has two or more of them
                     subs_of = step.get("subs") or {}
                     keys = sorted({v[0] for v in subs_of.values()})
@@ -277,7 +365,8 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                             db.execute("INSERT INTO substeps VALUES (?, ?, ?, ?, ?, ?)",
                                        (proc_id, number, sub_no[k], info[k][1], info[k][2],
                                         sum(c.tokens for c in step["chunks"] if subs_of.get(c.chunk_id, (None,))[0] == k)))
-                            where.setdefault(k, (proc_id, number))
+                            if isinstance(k, tuple):
+                                where.setdefault(k, (proc_id, number))
                     for c in sorted(step["chunks"], key=lambda c: c.ordinal):
                         sub = sub_no.get(subs_of[c.chunk_id][0], 0) if c.chunk_id in subs_of and sub_no else 0
                         db.execute("INSERT INTO members VALUES (?, ?, ?, ?, ?, ?)",
@@ -286,8 +375,10 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                         counts["members"] += 1
                 if proc.key is not None:
                     where.setdefault(proc.key, (proc_id, 0))
+                elif proc.kind == "section" and heading_number(proc.title or ""):
+                    where.setdefault(heading_number(proc.title or ""), (proc_id, 0))
                 db.execute("UPDATE procedures SET steps = ? WHERE proc_id = ?", (n_steps, proc_id))
-                counts["procedures"] += 1
+                counts["sections" if proc.kind == "section" else "procedures"] += 1
 
             for c in chunks:
                 seen: set[tuple[str, str]] = set()
@@ -310,7 +401,7 @@ def build(rag_db: Path, out: Path | None = None) -> dict[str, int]:
                     db.execute("INSERT INTO links VALUES (?, 'document', ?, NULL, NULL, ?)", (c.chunk_id, ref, target_doc))
                     counts["links"] += 1
 
-        for k, v in {"format": FORMAT, "chunks": fp, "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        for k, v in {"format": FORMAT, SECTIONS_META: "1", "chunks": fp, "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                      **{f"count_{k}": str(v) for k, v in counts.items()}}.items():
             db.execute("INSERT INTO spots_meta VALUES (?, ?)", (k, v))
         db.commit()
@@ -353,8 +444,8 @@ def status(root: Path) -> dict[str, Any]:
     except sqlite3.Error as exc:
         return {"present": True, "current": False, "error": str(exc)}
     out: dict[str, Any] = {"present": True, "current": meta.get("format") == FORMAT and meta.get("chunks") == fp,
-                           "built_at": meta.get("built_at")}
-    for k in ("documents", "procedures", "steps", "links"):
+                           "built_at": meta.get("built_at"), "outdated": meta.get(SECTIONS_META) != "1"}
+    for k in ("documents", "procedures", "sections", "steps", "links"):
         if f"count_{k}" in meta:
             out[k] = int(meta[f"count_{k}"])
     return out

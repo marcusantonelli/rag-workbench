@@ -31,7 +31,8 @@ export function AboutView({ kb }: { kb: KbSummary }) {
     try {
       const r = await call<KbSummary>("kb.spots", { kb: kb.id });
       const n = r.structure?.procedures ?? 0;
-      notify({ tone: "success", title: `Structure built: ${n} procedure${n === 1 ? "" : "s"} found` });
+      const sec = r.structure?.sections ?? 0;
+      notify({ tone: "success", title: `Structure built: ${n} procedure${n === 1 ? "" : "s"}, ${sec} section${sec === 1 ? "" : "s"}` });
       refreshKb(kb.id);
     } catch (e) {
       fail(e);
@@ -42,10 +43,11 @@ export function AboutView({ kb }: { kb: KbSummary }) {
   const structure = (
     <span key="s" className="fact-with-action">
       {!st?.present ? "Not built yet" : !st.current ? "Out of date (the chunks changed since it was built)" :
-        `${st.procedures ?? 0} procedures, ${st.steps ?? 0} steps, ${st.links ?? 0} references`}
+        `${st.procedures ?? 0} procedures, ${st.sections ?? 0} sections, ${st.steps ?? 0} steps, ${st.links ?? 0} references` +
+        (st.outdated ? " (made by an older version, without sections: rebuild to add them)" : "")}
       {!kb.building && (
         <Button kind="ghost" onClick={rebuildSpot} disabled={spotBusy}>
-          {spotBusy ? "Building…" : st?.present && st.current ? "Rebuild" : "Build structure"}
+          {spotBusy ? "Building…" : st?.present && st.current && !st.outdated ? "Rebuild" : "Build structure"}
         </Button>
       )}
     </span>

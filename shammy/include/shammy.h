@@ -113,6 +113,9 @@ int32_t shammy_verify(const char *path, ShammyReport *out);
  *    "procedure_tokens": 1500,                       whole when this short, else the hit's step and
  *    "procedure_window": 1,                          up to this many steps each side that fit;
  *    "procedure_hits": 3,                            at most this many results per procedure first
+ *    "sections": true,                             (0.4.2) a hit in a document with headings brings
+ *    "section_tokens": 1200,                         its section, whole when this short, else the parts
+ *                                                    around it ("procedure".kind is then "section")
  *    "documents": ["DOC-12", "WI-0300"]}              only these documents (number or part of the path)
  *
  * The response is a JSON object: "results" (tag, chunk_id, kind, score, text, source{...},

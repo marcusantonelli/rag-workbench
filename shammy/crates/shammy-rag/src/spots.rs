@@ -11,6 +11,8 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 pub(crate) const SPOTS_NAME: &str = "structure.spots";
+/// The tables are the same since 0.4.1; from 0.4.2 they also hold sections (procedures of kind
+/// "section"), which 0.4.1 readers take for procedures.
 const FORMAT: &str = "spots/1";
 
 #[derive(Clone)]
@@ -146,6 +148,12 @@ impl Spots {
         rows.collect()
     }
 
+    /// Procedures (sections of plain documents not counted).
+    pub(crate) fn procedures_count(&self) -> i64 {
+        self.conn().query_row("SELECT COUNT(*) FROM procedures WHERE kind != 'section'", [], |r| r.get(0)).unwrap_or(0)
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn count(&self, table: &str) -> i64 {
         self.conn().query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap_or(0)
     }

@@ -42,7 +42,20 @@ function remember(key: string, value: string) {
   }
 }
 
+function groupWord(p: NonNullable<SearchHit["procedure"]>): string {
+  return p.kind === "flowchart" ? "flowchart" : p.kind === "section" ? "section" : "procedure";
+}
+
 function procedureNote(p: NonNullable<SearchHit["procedure"]>): string {
+  if (p.kind === "section") {
+    const name = p.title || p.label || "this section";
+    const parts = `${p.steps} part${p.steps === 1 ? "" : "s"}`;
+    if (p.whole) return `The whole section ${name} is included`;
+    if (p.level === "substeps") return `In ${p.step}: ${p.from === p.to ? p.from : `${p.from} to ${p.to}`}, of the section ${name} (${parts})`;
+    if (p.level === "chunks") return `Part of ${p.from}, which is too long to include whole, of the section ${name} (${parts})`;
+    if (p.from === p.to) return `${p.from}, of the section ${name} (${parts})`;
+    return `${p.from} to ${p.to}, of the section ${name} (${parts})`;
+  }
   const name = p.title || p.label || (p.kind === "flowchart" ? "the flowchart" : "the procedure");
   const what = p.kind === "flowchart" ? "flowchart" : "procedure";
   const of = `of the ${what} ${name} (${p.steps} ${p.kind === "flowchart" ? "page" : "step"}${p.steps === 1 ? "" : "s"})`;
@@ -290,20 +303,20 @@ export function SearchView({ kb }: { kb: KbSummary }) {
                 {hit.procedure && (
                   <p className="evidence-note">
                     {shownWhole
-                      ? `The whole procedure ${hit.procedure.title || hit.procedure.label || ""}: ${shownWhole.chunk_ids.length} chunks. `
+                      ? `The whole ${groupWord(hit.procedure)} ${hit.procedure.title || hit.procedure.label || ""}: ${shownWhole.chunk_ids.length} chunks. `
                       : `${procedureNote(hit.procedure)} (${hit.chunk_ids?.length ?? 1} chunk${(hit.chunk_ids?.length ?? 1) === 1 ? "" : "s"}, matched in chunk ${hit.chunk_id}). `}
                     {!hit.procedure.whole && (
                       shownWhole
                         ? <button className="link-button" onClick={() => setWhole(null)}>Show only what the agent got</button>
                         : <button className="link-button" onClick={() => showWhole(hit)} disabled={wholeBusy}>
-                            {wholeBusy ? "Loading…" : "Show the whole procedure"}
+                            {wholeBusy ? "Loading…" : `Show the whole ${groupWord(hit.procedure)}`}
                           </button>
                     )}
                   </p>
                 )}
                 {hit.outline && (
                   <details className="evidence-outline">
-                    <summary>Where this sits in the procedure</summary>
+                    <summary>Where this sits in the {hit.procedure?.kind === "section" ? "document" : "procedure"}</summary>
                     <ol>
                       {hit.outline.before && <li className="muted">…</li>}
                       {hit.outline.steps.map((x, i) => (

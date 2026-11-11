@@ -125,8 +125,10 @@ if (File.Exists(ragFile))
             }
             Expect(page.Next is null && page.Markdown.Length > 0 && pages < 500, "procedure pages");
         }
-        var flat = retriever.Search(question, qv, new RetrievalOptions { K = 3, Procedures = false });
-        Expect(flat.Results.All(r => r.Procedure is null), "procedures off");
+        var noProc = retriever.Search(question, qv, new RetrievalOptions { K = 3, Procedures = false });
+        Expect(noProc.Results.All(r => r.Procedure is null || r.Procedure.Kind == "section"), "procedures off");
+        var flat = retriever.Search(question, qv, new RetrievalOptions { K = 3, Procedures = false, Sections = false });
+        Expect(flat.Results.All(r => r.Procedure is null), "procedures and sections off");
         if (kb.TryGetProperty("rerank_url", out var url))
         {
             var ranked = retriever.Search(question, qv, new RetrievalOptions { K = 3, Rerank = new RerankOptions { Url = url.GetString()! } });
