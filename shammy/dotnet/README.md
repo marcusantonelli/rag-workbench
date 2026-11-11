@@ -5,18 +5,36 @@ through the native library (`shammy.dll` on Windows, `libshammy.so` on Linux).
 
 ## Get the pieces
 
-- **Native library:** `cargo build --release -p shammy-ffi` in `shammy/` gives
-  `target/release/shammy.dll` (or `libshammy.so`). Release builds attach it as
-  `shammy-native-Windows.zip`, with `shammy.h`.
-- **Wrapper:** reference `Shammy/Shammy.csproj` from the server project, or copy `ShammyIndex.cs`
-  into it (it needs `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>`).
-- **Deploy:** put `shammy.dll` next to the server's executable. In the server's `.csproj`:
+There are two DLLs, and only one of them is a .NET assembly:
+
+| File | What it is | How it gets into your server |
+|---|---|---|
+| `shammy.dll` | The **native** library (Rust, C functions). Not a .NET assembly: Visual Studio's *Add Reference* refuses it ("the reference is invalid or unsupported"). | Copied next to the server's executable; the wrapper loads it at run time. |
+| `Shammy.Net.dll` | The **.NET wrapper** (`ShammyIndex`, `ShammyRetriever`). | A project reference to `Shammy/Shammy.csproj`, or its two `.cs` files copied into the server project. |
+
+- **Native library:** release builds attach it as `shammy-native-Windows.zip`, with `shammy.h`
+  (or `cargo build --release -p shammy-ffi` in `shammy/` gives `target/release/shammy.dll`).
+- **Wrapper**, either:
+  - add `Shammy/Shammy.csproj` to the server's solution and reference the *project*
+    (Add → Project Reference), or
+  - copy `Shammy/ShammyIndex.cs` and `Shammy/ShammyRetriever.cs` into the server project and set
+    `<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` in its `.csproj`.
+- **Deploy the native library** next to the server's executable. Put it in a `native/` folder of
+  the server project and add to its `.csproj`:
 
   ```xml
   <ItemGroup>
     <None Include="native/shammy.dll" CopyToOutputDirectory="PreserveNewest" Link="shammy.dll" />
   </ItemGroup>
   ```
+
+  A `DllNotFoundException` for "shammy" at the first search means the file isn't next to the
+  executable (or is the Linux/macOS build); `BadImageFormatException` means a 32-bit process (the
+  library is 64-bit; build the server as x64 or AnyCPU without "Prefer 32-bit").
+
+Before 0.4.1 the wrapper's own assembly was also named `Shammy.dll`. Windows file names ignore
+case, so it and the native `shammy.dll` overwrote each other in the output folder. With a 0.4.0
+wrapper, copy the two `.cs` files instead of referencing the project.
 
 ## Use
 

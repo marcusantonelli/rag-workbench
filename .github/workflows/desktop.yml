@@ -99,6 +99,10 @@ jobs:
           cargo build --release -p shammy-ffi --manifest-path shammy/Cargo.toml
           mkdir -p shammy-native
           cp shammy/include/shammy.h shammy-native/
+          # the .NET wrapper's source, to copy into the server project (see README-dotnet.md)
+          mkdir -p shammy-native/dotnet
+          cp shammy/dotnet/Shammy/ShammyIndex.cs shammy/dotnet/Shammy/ShammyRetriever.cs shammy-native/dotnet/
+          cp shammy/dotnet/README.md shammy-native/README-dotnet.md
           cp shammy/target/release/shammy.dll shammy-native/ 2>/dev/null || cp shammy/target/release/libshammy.so shammy-native/
           (cd shammy-native && 7z a ../shammy-native-${{ runner.os }}.zip . >/dev/null 2>&1 || zip -qr ../shammy-native-${{ runner.os }}.zip .)
 

@@ -2,7 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>Shammy</RootNamespace>
-    <AssemblyName>Shammy</AssemblyName>
+    <AssemblyName>Shammy.Net</AssemblyName>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
